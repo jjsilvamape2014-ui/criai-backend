@@ -364,17 +364,36 @@ async function imageToBuffer(imageUrlOrData) {
   return Buffer.from(res.data);
 }
 
+// Constrói o prompt de movimento para a IA de vídeo.
+// No modo 'product', descreve um anúncio de apresentação de produto (estilo anúncio de marketplace/Shopee).
+function buildVideoPrompt(mode, opts) {
+  if (mode === 'product') {
+    const name = (opts.productName || '').trim();
+    const points = (opts.productDesc || '').trim();
+    let p = 'Professional e-commerce product commercial: ';
+    if (name) p += `${name}, `;
+    p += 'camera slowly rotating around the product, soft studio lighting, clean background, ';
+    p += 'gentle motion highlighting the product details and quality, upscale premium feel, ';
+    p += 'smooth cinematic movement, no text overlay';
+    if (points) p += `. Highlight: ${points}`;
+    return p;
+  }
+  return (opts.prompt || '').trim() || 'animate this image naturally with smooth motion';
+}
+
 // Gera vídeo a partir de uma imagem usando fal.ai (image-to-video)
 // ATENÇÃO: a Stability AI descontinuou a API de vídeo (jul/2025); por isso usamos fal.ai.
 // Requer saldo/créditos na conta fal.ai. Modelo: kling-video v1 standard image-to-video.
-async function generateVideoFal(imageDataOrUrl, prompt) {
+async function generateVideoFal(imageDataOrUrl, prompt, mode, opts) {
   const FAL_KEY = process.env.FAL_KEY;
   if (!FAL_KEY) throw new Error('fal.ai não configurada (necessário saldo)');
+
+  const finalPrompt = buildVideoPrompt(mode, { ...(opts || {}), prompt });
 
   const res = await axios.post(
     'https://queue.fal.run/fal-ai/kling-video/v1/standard/image-to-video',
     {
-      prompt: prompt || 'animate this image naturally with smooth motion',
+      prompt: finalPrompt,
       image_url: imageDataOrUrl,
       duration: '5',
       cfg_scale: 0.5
@@ -400,11 +419,12 @@ router.post('/video', authMiddleware, async (req, res) => {
   // Não aplicar generateLimiter para vídeo (é assíncrono e lento);
   // cada requisição bloqueia a resposta por até ~3min.
   try {
-    const { imageUrl, duration = 5 } = req.body;
+    const { imageUrl, duration = 5, mode, prompt } = req.body;
     const user = req.user;
+    const imageData = req.body.imageData;
 
-    if (!imageUrl && !req.body.imageData) {
-      return res.status(400).json({ error: 'Envie uma imagem de origem (imageUrl)' });
+    if (!imageUrl && !imageData) {
+      return res.status(400).json({ error: 'Envie uma imagem de origem (imageUrl ou imageData)' });
     }
 
     // Verificar créditos de vídeo (comprados primeiro, depois mensais)
@@ -429,8 +449,11 @@ router.post('/video', authMiddleware, async (req, res) => {
       await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { decrement: 1 } } });
     }
 
-    const source = req.body.imageData || imageUrl;
-    const videoDataUrl = await generateVideoFal(source, req.body.prompt);
+    const source = imageData || imageUrl;
+    const videoDataUrl = await generateVideoFal(source, prompt, mode, {
+      productName: req.body.productName,
+      productDesc: req.body.productDesc
+    });
 
     await prisma.generation.update({
       where: { id: generation.id },
