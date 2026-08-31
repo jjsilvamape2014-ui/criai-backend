@@ -109,6 +109,7 @@ async function generateImageFal(prompt, opts) {
 }
 
 // Gera imagem via Stability AI (SD 3.5 / Core) - 25 creditos gratis, autenticacao Bearer + multipart
+// Suporta image-to-image quando uma imagem de referencia e fornecida (campo 'image' + strength)
 async function generateImageStability(prompt, opts) {
   const STABILITY_KEY = process.env.STABILITY_API_KEY;
   if (!STABILITY_KEY) return null;
@@ -122,6 +123,30 @@ async function generateImageStability(prompt, opts) {
     for (const [k, v] of Object.entries(fields)) {
       body += `--${boundary}${LF}Content-Disposition: form-data; name="${k}"${LF}${LF}${v}${LF}`;
     }
+
+    // Image-to-image: adiciona a imagem base e o parâmetro 'strength'
+    if (opts.referenceImage) {
+      const imgBuf = await imageToBuffer(opts.referenceImage);
+      body += `--${boundary}${LF}Content-Disposition: form-data; name="image"; filename="ref.png"${LF}Content-Type: image/png${LF}${LF}`;
+      // Corpo multipart precisa do buffer binário; montamos via concatenação de Buffer
+      const prefix = Buffer.from(body, 'utf8');
+      const suffix = Buffer.from(`${LF}--${boundary}${LF}Content-Disposition: form-data; name="strength"${LF}${LF}${opts.strength || 0.5}${LF}--${boundary}--${LF}`, 'utf8');
+      const finalBody = Buffer.concat([prefix, imgBuf, suffix]);
+      const res = await axios.post('https://api.stability.ai/v2beta/stable-image/generate/core', finalBody, {
+        headers: {
+          Authorization: `Bearer ${STABILITY_KEY}`,
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          Accept: 'image/*'
+        },
+        timeout: 90000,
+        responseType: 'arraybuffer'
+      });
+      if (res.data && res.data.byteLength) {
+        return `data:image/png;base64,${Buffer.from(res.data).toString('base64')}`;
+      }
+      return null;
+    }
+
     body += `--${boundary}--${LF}`;
 
     const res = await axios.post('https://api.stability.ai/v2beta/stable-image/generate/core', body, {
@@ -167,7 +192,7 @@ async function upscaleImage(imageUrl, opts, userPlan) {
 // Gerar imagem
 router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
   try {
-    const { prompt, negativePrompt, model = 'ideogram4', width = 1024, height = 1024, upscale = false, aspectRatio } = req.body;
+    const { prompt, negativePrompt, model = 'ideogram4', width = 1024, height = 1024, upscale = false, aspectRatio, referenceImage, strength } = req.body;
     const user = req.user;
 
     if (!prompt || prompt.length < 3) {
@@ -225,8 +250,14 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
     let imageUrl = null;
     const FAL_KEY = process.env.FAL_KEY;
 
+    // Se o usuário forneceu uma imagem de referência, priorizar image-to-image (adicionar/modificar)
+    // para realmente editar a imagem original. Fallback genérico garante que nunca falha.
+    if (referenceImage) {
+      imageUrl = await generateImageStability(enhancedPrompt, { width, height, negativePrompt, referenceImage, strength });
+    }
+
     // 1) Tentar modelos premium via fal.ai (Ideogram 4.0 / Flux 2 Pro)
-    if (FAL_KEY) {
+    if (!imageUrl && FAL_KEY) {
       try {
         imageUrl = await generateImageFal(enhancedPrompt, {
           model,
@@ -240,9 +271,9 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
       }
     }
 
-    // 2) Fallback: Stability AI (gratuito, 25 creditos sem cartao)
+    // 2) Fallback: Stability AI (gratuito, 25 creditos sem cartao) - suporta image-to-image
     if (!imageUrl) {
-      imageUrl = await generateImageStability(enhancedPrompt, { width, height, negativePrompt });
+      imageUrl = await generateImageStability(enhancedPrompt, { width, height, negativePrompt, referenceImage, strength });
     }
 
     // 3) Fallback: Hugging Face Inference API (gratuito)
