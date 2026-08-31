@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String         @id @default(uuid())
+  email             String         @unique
+  password          String
+  name              String?
+  plan              Plan           @default(FREE)
+  creditsImages     Int            @default(10)  @map("credits_images")
+  creditsVideos     Int            @default(2)   @map("credits_videos")
+  creditsPurchased  Int            @default(0)  @map("credits_purchased")
+  monthlyResetDate  DateTime?      @map("monthly_reset_date")
+  stripeCustomerId  String?        @unique @map("stripe_customer_id")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  generations       Generation[]
+  payments          Payment[]
+
+  @@map("users")
+}
+
+model Generation {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  type        Type     // IMAGE ou VIDEO
+  prompt      String
+  negativePrompt String? @map("negative_prompt")
+  imageUrl    String?  @map("image_url")
+  status      Status   @default(PENDING)
+  cost        Int      @default(1)  // créditos consumidos
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@map("generations")
+}
+
+model Payment {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  stripePaymentId String?  @map("stripe_payment_id")
+  amount        Int      // em centavos
+  currency      String   @default("brl")
+  status        PaymentStatus @default(PENDING)
+  type          PaymentType   @default(CREDITS)
+  creditsAmount Int?     @map("credits_amount")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user          User     @relation(fields: [userId], references: [id])
+
+  @@map("payments")
+}
+
+enum Plan {
+  FREE
+  PREMIUM
+}
+
+enum Type {
+  IMAGE
+  VIDEO
+}
+
+enum Status {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentType {
+  SUBSCRIPTION
+  CREDITS
+}
