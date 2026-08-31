@@ -383,7 +383,8 @@ function buildVideoPrompt(mode, opts) {
 
 // Gera vídeo a partir de uma imagem usando fal.ai (image-to-video)
 // ATENÇÃO: a Stability AI descontinuou a API de vídeo (jul/2025); por isso usamos fal.ai.
-// Requer saldo/créditos na conta fal.ai. Modelo: kling-video v1 standard image-to-video.
+// Requer saldo/créditos na conta fal.ai. Modelo padrão: Kling v2.1 Standard (image-to-video) — 
+// ~US$ 0,25 por vídeo de 5s, ótimo custo-benefício para anúncios de produto.
 async function generateVideoFal(imageDataOrUrl, prompt, mode, opts) {
   const FAL_KEY = process.env.FAL_KEY;
   if (!FAL_KEY) throw new Error('fal.ai não configurada (necessário saldo)');
@@ -391,7 +392,7 @@ async function generateVideoFal(imageDataOrUrl, prompt, mode, opts) {
   const finalPrompt = buildVideoPrompt(mode, { ...(opts || {}), prompt });
 
   const res = await axios.post(
-    'https://queue.fal.run/fal-ai/kling-video/v1/standard/image-to-video',
+    'https://fal.run/fal-ai/kling-video/v2.1/standard/image-to-video',
     {
       prompt: finalPrompt,
       image_url: imageDataOrUrl,
