@@ -8,6 +8,7 @@ const authRoutes = require('./routes/auth');
 const generateRoutes = require('./routes/generate');
 const creditsRoutes = require('./routes/credits').router;
 const paymentRoutes = require('./routes/payment');
+const { startCron, resetMonthlyCredits } = require('./cron');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -35,29 +36,20 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Reset mensal de créditos (executar via cron job)
+// Reset mensal de créditos (também agendado automaticamente pelo cron interno)
 app.post('/api/admin/reset-credits', async (req, res) => {
-  const now = new Date();
-  const updated = await prisma.user.updateMany({
-    where: {
-      plan: 'FREE',
-      OR: [
-        { monthlyResetDate: { lt: now } },
-        { monthlyResetDate: null }
-      ]
-    },
-    data: {
-      creditsImages: 10,
-      creditsVideos: 2,
-      monthlyResetDate: new Date(now.getFullYear(), now.getMonth() + 1, 1)
-    }
-  });
-  res.json({ message: 'Créditos resetados', usersUpdated: updated.count });
+  try {
+    const usersUpdated = await resetMonthlyCredits();
+    res.json({ message: 'Créditos resetados', usersUpdated });
+  } catch (err) {
+    res.status(500).json({ error: 'Erro ao resetar créditos' });
+  }
 });
 
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
   console.log(`📡 API: http://localhost:${PORT}/api`);
+  startCron();
 });
 
 module.exports = { prisma };

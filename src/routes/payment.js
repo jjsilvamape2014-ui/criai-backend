@@ -90,40 +90,9 @@ router.post('/confirm', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Pagamento não confirmado' });
     }
 
-    const user = req.user;
-    if (session.mode === 'subscription') {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          plan: 'PREMIUM',
-          creditsImages: 500,
-          creditsVideos: 50,
-          stripeCustomerId: session.customer
-        }
-      });
-    } else {
-      const credits = parseInt(session.metadata?.credits || 0);
-      if (credits > 0) {
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { creditsPurchased: { increment: credits } }
-        });
-      }
-    }
+    await applyPaidSession(session);
 
-    await prisma.payment.create({
-      data: {
-        userId: user.id,
-        stripePaymentId: session.payment_intent || session.id,
-        amount: session.amount_total,
-        currency: session.currency,
-        status: 'COMPLETED',
-        type: session.mode === 'subscription' ? 'SUBSCRIPTION' : 'CREDITS',
-        creditsAmount: session.mode === 'payment' ? parseInt(session.metadata?.credits) : null
-      }
-    });
-
-    const updated = await prisma.user.findUnique({ where: { id: user.id } });
+    const updated = await prisma.user.findUnique({ where: { id: req.user.id } });
     res.json({ success: true, user: updated });
   } catch (err) {
     console.error(err);
@@ -131,58 +100,95 @@ router.post('/confirm', authMiddleware, async (req, res) => {
   }
 });
 
+// Aplica os efeitos de um pagamento confirmado (ativos + créditos) de forma idempotente.
+async function applyPaidSession(session) {
+  const userId = session.client_reference_id || session.metadata?.userId;
+  if (!userId) return;
+
+  const isSubscription = session.mode === 'subscription';
+
+  if (isSubscription) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        plan: 'PREMIUM',
+        creditsImages: 500,
+        creditsVideos: 50,
+        stripeCustomerId: session.customer
+      }
+    });
+  } else {
+    const credits = parseInt(session.metadata?.credits || 0);
+    if (credits > 0) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { creditsPurchased: { increment: credits } }
+      });
+    }
+  }
+
+  // Registra o pagamento apenas UMA vez (idempotente por stripePaymentId)
+  const paymentId = session.payment_intent || session.id;
+  if (paymentId) {
+    const existing = await prisma.payment.findFirst({
+      where: { stripePaymentId: paymentId }
+    });
+    if (!existing) {
+      await prisma.payment.create({
+        data: {
+          userId,
+          stripePaymentId: paymentId,
+          amount: session.amount_total,
+          currency: session.currency,
+          status: 'COMPLETED',
+          type: isSubscription ? 'SUBSCRIPTION' : 'CREDITS',
+          creditsAmount: !isSubscription ? parseInt(session.metadata?.credits) : null
+        }
+      });
+    }
+  }
+}
+
 // Webhook Stripe (atualizar créditos após pagamento)
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
-  let event;
 
+  // Em produção a STRIPE_WEBHOOK_SECRET DEVE estar configurada
+  if (!process.env.STRIPE_WEBHOOK_SECRET) {
+    console.warn('[webhook] STRIPE_WEBHOOK_SECRET não configurada; ignorando assinatura');
+    return res.status(400).send('Webhook secret not configured');
+  }
+
+  let event;
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    const userId = session.client_reference_id || session.metadata?.userId;
+  // responds immediately após validar a assinatura
+  res.json({ received: true });
 
-    if (session.mode === 'subscription') {
-      // Ativar premium
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          plan: 'PREMIUM',
-          creditsImages: 500,
-          creditsVideos: 50,
-          stripeCustomerId: session.customer
-        }
-      });
-    } else {
-      // Adicionar créditos comprados
-      const credits = parseInt(session.metadata?.credits || 0);
-      if (credits > 0) {
-        await prisma.user.update({
-          where: { id: userId },
-          data: { creditsPurchased: { increment: credits } }
+  if (event.type === 'checkout.session.completed') {
+    try {
+      await applyPaidSession(event.data.object);
+    } catch (err) {
+      console.error('[webhook] erro ao aplicar sessão paga:', err.message);
+    }
+  } else if (event.type === 'customer.subscription.deleted') {
+    // Cobertura básica: quando o assinante cancela/não renova, volta para FREE
+    try {
+      const customerId = event.data.object.customer;
+      if (customerId) {
+        await prisma.user.updateMany({
+          where: { stripeCustomerId: customerId },
+          data: { plan: 'FREE' }
         });
       }
+    } catch (err) {
+      console.error('[webhook] erro ao rebaixar para FREE:', err.message);
     }
-
-    // Registrar pagamento
-    await prisma.payment.create({
-      data: {
-        userId,
-        stripePaymentId: session.payment_intent || session.id,
-        amount: session.amount_total,
-        currency: session.currency,
-        status: 'COMPLETED',
-        type: session.mode === 'subscription' ? 'SUBSCRIPTION' : 'CREDITS',
-        creditsAmount: session.mode === 'payment' ? parseInt(session.metadata?.credits) : null
-      }
-    });
   }
-
-  res.json({ received: true });
 });
 
 module.exports = router;
