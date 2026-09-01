@@ -83,6 +83,25 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // 2) Registrar o pedido no histórico
     cerebro.pushHistory(session, 'user', message, null);
 
+    // 2b) Precisamos de informação antes de gerar (ex: qual nome colocar na logo)
+    if (cmd.needName) {
+      cerebro.pushHistory(session, 'assistant', cmd.reply, null);
+      const creditsNow = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { creditsImages: true, creditsVideos: true, creditsPurchased: true }
+      });
+      return res.json({
+        success: true,
+        sessionId: session.id,
+        reply: cmd.reply,
+        needName: true,
+        imageUrl: null,
+        memory: session.memory,
+        history: session.history.slice(-20),
+        credits: creditsNow
+      });
+    }
+
     // 3) Compor o prompt técnico acumulado (memória fotográfica da conversa)
     const finalPrompt = cerebro.composePrompt(session.memory, cmd, message);
     const { width, height } = cerebro.aspectSizes(cmd.aspect_ratio || null);

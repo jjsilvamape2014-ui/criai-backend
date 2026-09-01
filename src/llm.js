@@ -150,13 +150,40 @@ function parseHeuristic(message, memory, aspect) {
     };
   }
 
-  // Inserir a logo do usuário na imagem (a logo assinada vem como imagem de referência)
-  if (/(colocar|coloca|inserir|insira|põe|adicionar|adiciona).*(logo|marca|assinatura)/.test(lower) || /(logo|logomarca).*(na imagem|na foto|acima|abaixo|aqui)/.test(lower)) {
+  // Colocar "logo" no produto — sempre SOMENTE o NOME (como assinatura/wordmark limpo),
+  // nunca uma imagem de logo. Se o usuário não disser o nome, pergunta antes (needName).
+  if (/(colocar|coloca|inserir|insira|põe|adicionar|adiciona|usar).*(logo|logomarca|marca|assinatura)/.test(lower) || /(logo|logomarca|marca).*(na imagem|na foto|no produto|acima|abaixo|aqui)/.test(lower)) {
+    // tenta extrair o nome/marca mencionado pelo usuário (ex: "colocar a logo Criativa AI na imagem")
+    const nameRaw = lower.match(/(?:logo|logomarca|marca|assinatura)\s+(?:da\s+)?(?:minha\s+)?(?:empresa\s+|marca\s+)?([a-z0-9à-ú_&.\s-]{2,40})$/i);
+    const cleanName = (s) => (s || '')
+      .replace(/^(na|no|nas|nos|em|sobre|com|de|da|do|das|dos|aqui|mesma|minha|meu)\s+/i, '')
+      .replace(/\s+(na imagem|na foto|no produto|na caneca|na camiseta|aqui|em cima|embaixo|no copo|no saco|na embalagem|no topo|no canto)\.?$/i, '')
+      .trim();
+    const nameInMsg = cleanName(nameRaw ? nameRaw[1] : null);
+    const quoted = msg.match(/["'“”]([^"'“”]{2,30})["'“”]/i);
+
+    if (nameInMsg && nameInMsg.length >= 2 && !/(imagem|foto|produto|caneca|camiseta|copo|saco|embalagem|aqui|topo|canto)/.test(nameInMsg)) {
+      return {
+        reply: `Vou colocar apenas o nome "${nameInMsg}" na imagem, como assinatura limpa e profissional.`,
+        prompt_delta: `superimpose only the text "${nameInMsg}" as a clean minimalist wordmark brand on the product/photo, subtle transparent watermark style, no logo image, no other text`,
+        replace_prompt: false,
+        strength: 0.55,
+        aspect_ratio: aspect
+      };
+    }
+    if (quoted) {
+      return {
+        reply: `Vou colocar apenas o nome "${quoted[1]}" na imagem, como assinatura limpa e profissional.`,
+        prompt_delta: `superimpose only the text "${quoted[1]}" as a clean minimalist wordmark brand on the product/photo, subtle transparent watermark style, no logo image, no other text`,
+        replace_prompt: false,
+        strength: 0.55,
+        aspect_ratio: aspect
+      };
+    }
+    // Não sabemos o nome → pergunta (não gera nem gasta crédito)
     return {
-      reply: 'Vou aplicar a sua logo na imagem de forma limpa e profissional.',
-      prompt_delta: 'superimpose the provided logo/brand mark discreetly in a corner of the image, clean and professional, keep the rest of the image unchanged',
-      replace_prompt: false,
-      strength: 0.55,
+      reply: 'Qual nome ou marca devo colocar na imagem? Ex: "colocar a logo Criativa AI".',
+      needName: true,
       aspect_ratio: aspect
     };
   }
@@ -240,16 +267,25 @@ async function parseEditRequest(message, memory) {
     '  "replace_prompt": boolean — true only when the user wants a brand new image from scratch,',
     '  "new_prompt": full ENGLISH image prompt when replace_prompt is true, otherwise ""',
     '  "strength": number 0-1 (0.6 for edits, 0.35 for subtle, 1.0 for brand new),',
-    '  "aspect_ratio": "1:1" | "16:9" | "9:16" ("" to keep current)',
+    '  "aspect_ratio": "1:1" | "16:9" | "9:16" ("" to keep current),',
+    '  "needName": boolean — true ONLY when the user asks to put a brand/logo but did not give a name (then reply asks which name; prompt_delta="")',
     '}',
     'Current image prompt so far: "' + ((memory && memory.currentPrompt) || '') + '"',
-    'Rules: never invent unsupported capabilities. For background removal keep a clean white background. Always keep the main subject and style unless asked to change them.'
+    'Rules: never invent unsupported capabilities. When the user asks to add a LOGO/BRAND, ALWAYS render ONLY the name as text — a clean minimalist wordmark/watermark on the product — never an image logo. If no brand name was given, set needName=true and ask for the name instead of inventing one. For background removal keep a clean white background. Always keep the main subject and style unless asked to change them.'
   ].join('\n');
 
   const llmText = await callLLM(systemPrompt, `User request: ${message}`);
   const parsed = parseJsonLoose(llmText);
 
   if (parsed && typeof parsed.reply === 'string') {
+    if (parsed.needName) {
+      return {
+        reply: parsed.reply || 'Qual nome ou marca devo colocar na imagem?',
+        needName: true,
+        aspect_ratio: parsed.aspect_ratio || aspect || null,
+        fromLLM: true
+      };
+    }
     return {
       reply: parsed.reply || 'Feito.',
       prompt_delta: (parsed.prompt_delta || '').trim(),
