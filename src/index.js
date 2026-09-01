@@ -8,6 +8,7 @@ const authRoutes = require('./routes/auth');
 const generateRoutes = require('./routes/generate');
 const creditsRoutes = require('./routes/credits').router;
 const paymentRoutes = require('./routes/payment');
+const cerebroRoutes = require('./routes/cerebro');
 const { startCron, resetMonthlyCredits } = require('./cron');
 
 const app = express();
@@ -30,6 +31,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/generate', generateRoutes);
 app.use('/api/credits', creditsRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/cerebro', cerebroRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -247,57 +247,10 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
       data: { prompt: enhancedPrompt }
     });
 
-    let imageUrl = null;
-    const FAL_KEY = process.env.FAL_KEY;
-
-    // Se o usuário forneceu uma imagem de referência, priorizar image-to-image (adicionar/modificar)
-    // para realmente editar a imagem original. Fallback genérico garante que nunca falha.
-    if (referenceImage) {
-      imageUrl = await generateImageStability(enhancedPrompt, { width, height, negativePrompt, referenceImage, strength });
-    }
-
-    // 1) Tentar modelos premium via fal.ai (Ideogram 4.0 / Flux 2 Pro)
-    if (!imageUrl && FAL_KEY) {
-      try {
-        imageUrl = await generateImageFal(enhancedPrompt, {
-          model,
-          width,
-          height,
-          aspectRatio,
-          negativePrompt
-        });
-      } catch (e) {
-        console.error('fal.ai falhou, caindo para Hugging Face:', e.message);
-      }
-    }
-
-    // 2) Fallback: Stability AI (gratuito, 25 creditos sem cartao) - suporta image-to-image
-    if (!imageUrl) {
-      imageUrl = await generateImageStability(enhancedPrompt, { width, height, negativePrompt, referenceImage, strength });
-    }
-
-    // 3) Fallback: Hugging Face Inference API (gratuito)
-    if (!imageUrl) {
-      const modelId = MODELS.image[model] || MODELS.image.flux;
-      const hfResponse = await axios.post(
-        `https://api-inference.huggingface.co/models/${modelId}`,
-        { inputs: enhancedPrompt, parameters: { negative_prompt: negativePrompt, width, height } },
-        {
-          headers: {
-            'Authorization': `Bearer ${process.env.HF_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          responseType: 'arraybuffer',
-          timeout: 90000
-        }
-      );
-      // Se HF retornar JSON de erro (ex: modelo carregando), trata como falha
-      if (hfResponse.data[0] && hfResponse.data[0].error) {
-        throw new Error(hfResponse.data[0].error);
-      }
-      const imageBase64 = Buffer.from(hfResponse.data).toString('base64');
-      imageUrl = `data:image/png;base64,${imageBase64}`;
-    }
+    // Gera usando a cadeia de provedores (fal.ai -> Stability AI -> Hugging Face)
+    let imageUrl = await generateImageFromProviders(enhancedPrompt, {
+      model, width, height, aspectRatio, negativePrompt, referenceImage, strength
+    });
 
     if (!imageUrl) {
       throw new Error('Nenhum provedor gerou imagem');
@@ -362,6 +315,68 @@ async function imageToBuffer(imageUrlOrData) {
   }
   const res = await axios.get(imageUrlOrData, { responseType: 'arraybuffer', timeout: 30000 });
   return Buffer.from(res.data);
+}
+
+// Cadeia de provedores de geração de imagem (fal.ai -> Stability AI -> Hugging Face).
+// Usada pelo /image (padrão) e pelo Cérebro Visual (chat de edição).
+async function generateImageFromProviders(prompt, opts = {}) {
+  const {
+    model,
+    width,
+    height,
+    aspectRatio,
+    negativePrompt,
+    referenceImage,
+    strength
+  } = opts;
+
+  let imageUrl = null;
+  const FAL_KEY = process.env.FAL_KEY;
+
+  // Se o usuário forneceu uma imagem de referência, priorizar image-to-image (adicionar/modificar)
+  // para realmente editar a imagem original. Fallback genérico garante que nunca falha.
+  if (referenceImage) {
+    imageUrl = await generateImageStability(prompt, { width, height, negativePrompt, referenceImage, strength });
+  }
+
+  // 1) Tentar modelos premium via fal.ai (Ideogram 4.0 / Flux 2 Pro)
+  if (!imageUrl && FAL_KEY) {
+    try {
+      imageUrl = await generateImageFal(prompt, { model, width, height, aspectRatio, negativePrompt });
+    } catch (e) {
+      console.error('fal.ai falhou, caindo para Hugging Face:', e.message);
+    }
+  }
+
+  // 2) Fallback: Stability AI (gratuito, 25 creditos sem cartao) - suporta image-to-image
+  if (!imageUrl) {
+    imageUrl = await generateImageStability(prompt, { width, height, negativePrompt, referenceImage, strength });
+  }
+
+  // 3) Fallback: Hugging Face Inference API (gratuito)
+  if (!imageUrl) {
+    const modelId = MODELS.image[model] || MODELS.image.flux;
+    const hfResponse = await axios.post(
+      `https://api-inference.huggingface.co/models/${modelId}`,
+      { inputs: prompt, parameters: { negative_prompt: negativePrompt, width, height } },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.HF_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        responseType: 'arraybuffer',
+        timeout: 90000
+      }
+    );
+    // Se HF retornar JSON de erro (ex: modelo carregando), trata como falha
+    if (hfResponse.data[0] && hfResponse.data[0].error) {
+      throw new Error(hfResponse.data[0].error);
+    }
+    const imageBase64 = Buffer.from(hfResponse.data).toString('base64');
+    imageUrl = `data:image/png;base64,${imageBase64}`;
+  }
+
+  return imageUrl;
 }
 
 // Constrói o prompt de movimento para a IA de vídeo.
@@ -493,4 +508,6 @@ router.get('/history', authMiddleware, async (req, res) => {
   }
 });
 
+router.optimizePrompt = optimizePrompt;
+router.generateImageFromProviders = generateImageFromProviders;
 module.exports = router;
