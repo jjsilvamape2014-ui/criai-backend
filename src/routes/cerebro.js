@@ -39,10 +39,11 @@ async function refundCredits(user) {
   });
 }
 
-// POST /api/cerebro/chat  — interpreta o comando e gera a nova versão da imagem
+// POST /api/cerebro/chat — interpreta o comando e gera a nova versão da imagem
+// Aceita: message, sessionId, image (principal, dataURL/string) ou images: [urls/dataURLs] (até 4)
 router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
   try {
-    const { sessionId, message, image } = req.body || {};
+    const { sessionId, message, image, images } = req.body || {};
     const user = req.user;
 
     if (!message || message.trim().length < 2) {
@@ -57,9 +58,17 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     const sid = typeof sessionId === 'string' && sessionId ? sessionId : cerebro.newSessionId();
     const session = cerebro.getOrCreateSession(user.id, sid);
 
-    // Guarda a imagem de referência (vem do upload ou da última gerada)
-    if (image && !session.memory.baseImage) {
+    // Guarda imagem(s) de referência — aceita uma lista de até 4 imagens para edição real
+    const refsFromClient = Array.isArray(images) && images.length > 0
+      ? images.filter((u) => typeof u === 'string' && u).slice(0, 4)
+      : [];
+
+    if (refsFromClient.length > 0) {
+      session.memory.refImages = refsFromClient;
+      if (!session.memory.baseImage) session.memory.baseImage = refsFromClient[0];
+    } else if (image && !session.memory.baseImage) {
       session.memory.baseImage = image;
+      session.memory.refImages = [image];
     }
 
     // 1) Entender o que o usuário quer (LLM se houver saldo, senão heurística)
@@ -90,13 +99,15 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     });
     await consumeCredit(user);
 
-    // 5) Gerar a nova versão (usa a base original como referência para edição real)
+    // 5) Gerar a nova versão — usa a base original (ou 1ª das até 4 referências) como
+    // entrada real de image-to-image (remover pessoa, trocar cor, colocar logo, etc)
     let imageUrl = null;
+    const editSource = session.memory.refImages[0] || session.memory.baseImage || undefined;
     try {
       imageUrl = await generateRoutes.generateImageFromProviders(finalPrompt, {
         width,
         height,
-        referenceImage: session.memory.baseImage || undefined,
+        referenceImage: editSource,
         strength: cmd.strength
       });
     } catch (e) {
@@ -118,6 +129,8 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       data: { status: 'COMPLETED', imageUrl }
     });
 
+    session.memory.baseImage = imageUrl;
+    if (session.memory.refImages[0]) session.memory.refImages[0] = imageUrl;
     session.memory.edits.push({
       message,
       delta: cmd.prompt_delta,

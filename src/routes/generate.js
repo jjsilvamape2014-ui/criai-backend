@@ -52,60 +52,102 @@ function optimizePrompt(rawPrompt) {
   return `${trimmed}${enhancement}${noText}`;
 }
 
-// Gera imagem via fal.ai (modelos premium: Ideogram 4.0, Flux 2 Pro)
+// Gera imagem via fal.ai (modelos premium: Flux Pro v1.1 / Flux 2 Pro, Ideogram 4.0)
+// Flux Pro v1.1 suporta image-to-image (edição real) quando uma imagem de referência é enviada.
 async function generateImageFal(prompt, opts) {
-  const model = opts.model || 'ideogram4';
+  const model = opts.model || 'fluxpro';
   const FAL_KEY = process.env.FAL_KEY;
+  if (!FAL_KEY) return null;
 
-  // Ideogram 4.0 - excelente para texto em imagem e fidelidade de prompt
+  const headers = { Authorization: `Key ${FAL_KEY}`, 'Content-Type': 'application/json' };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  let endpoint;
+  let payload;
+
   if (model === 'ideogram4' || model === 'ideogram') {
-    const payload = {
+    endpoint = 'https://queue.fal.run/fal-ai/ideogram/v4';
+    payload = {
       prompt,
       image_size: { width: opts.width || 1024, height: opts.height || 1024 },
       num_images: 1,
       rendering_speed: 'BALANCED',
       expand_prompt: false
     };
-    const res = await axios.post('https://queue.fal.run/fal-ai/ideogram/v4', payload, {
-      headers: {
-        Authorization: `Key ${FAL_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 120000
-    });
-    const images = res.data.images || res.data.data || [];
-    let url = null;
-    if (images.length) {
-      url = typeof images[0] === 'string' ? images[0] : (images[0].url || images[0].image_url);
-    }
-    return url;
-  }
-
-  // Flux 2 Pro - melhor fotorrealismo (via fal.ai)
-  if (model === 'flux2pro' || model === 'fluxpro') {
-    const payload = {
+  } else {
+    // Flux Pro v1.1 (fotorrealismo + suporte a edição com imagem de referência)
+    endpoint = 'https://queue.fal.run/fal-ai/flux-pro/v1.1';
+    const ratio = opts.aspectRatio || (opts.width > opts.height ? '16:9' : opts.height > opts.width ? '9:16' : '1:1');
+    payload = {
       prompt,
-      image_size: { width: opts.width || 1024, height: opts.height || 1024 },
       num_images: 1,
       output_format: 'png',
-      aspect_ratio: opts.aspectRatio || '1:1'
+      aspect_ratio: ratio
     };
-    const res = await axios.post('https://queue.fal.run/fal-ai/flux-pro/v1.1', payload, {
-      headers: {
-        Authorization: `Key ${FAL_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 120000
-    });
-    const images = res.data.images || res.data.data || [];
-    let url = null;
-    if (images.length) {
-      url = typeof images[0] === 'string' ? images[0] : (images[0].url || images[0].image_url);
+    if (opts.referenceImage) {
+      payload.image = opts.referenceImage;
     }
-    return url;
   }
 
-  return null;
+  const extractImages = (data) => {
+    if (!data) return null;
+    const images = data.images || data.data || (data.image ? (Array.isArray(data.image) ? data.image : [data.image]) : []);
+    if (!images.length) return null;
+    const im = images[0];
+    return typeof im === 'string' ? im : (im.url || im.image_url || null);
+  };
+
+  const res = await axios.post(endpoint, payload, { headers, timeout: 60000 });
+  const data = res.data || {};
+
+  // fal.ai é assíncrono: o POST devolve IN_QUEUE/IN_PROGRESS + status_url/response_url.
+  // Fluxo correto: sondar status_url até COMPLETED e então baixar o resultado em response_url.
+  if (data.status_url) {
+    const deadline = Date.now() + (opts.timeout || 240000);
+    let status = data.status || 'IN_QUEUE';
+    while (Date.now() < deadline) {
+      await sleep(2500);
+      try {
+        const pollRes = await axios.get(data.status_url, { headers, timeout: 30000, validateStatus: (s) => s < 500 });
+        const pd = pollRes.data || {};
+        status = pd.status || status;
+      } catch (e) {
+        // erro transitório na sondagem → continua aguardando
+        const st = e.response && e.response.status;
+        if (!st || st >= 500) continue;
+        console.error('fal.ai status erro:', e.message);
+        return null;
+      }
+      if (status === 'COMPLETED') break;
+      if (status === 'ERROR' || status === 'CANCELLED') {
+        console.error('fal.ai job falhou:', status);
+        return null;
+      }
+    }
+
+    if (status !== 'COMPLETED') return null;
+
+    // COMPLETED → buscar o resultado em response_url (com pequenas re-tentativas)
+    if (data.response_url) {
+      for (let tries = 0; tries < 3; tries++) {
+        try {
+          const final = await axios.get(data.response_url, { headers, timeout: 60000, validateStatus: (s) => s < 500 });
+          if (final.status === 200) {
+            const out = extractImages(final.data);
+            if (out) return out;
+            if (final.data && final.data.status === 'COMPLETED') { /* aguarda outro ciclo */ }
+          }
+        } catch (e) {
+          console.error('fal.ai fetch resultado falhou:', e.message);
+        }
+        await sleep(2000);
+      }
+    }
+    return null;
+  }
+
+  // Alguns endpoints respondem síncrono com as imagens direto no corpo do POST
+  return extractImages(data);
 }
 
 // Gera imagem via Stability AI (SD 3.5 / Core) - 25 creditos gratis, autenticacao Bearer + multipart
@@ -333,13 +375,23 @@ async function generateImageFromProviders(prompt, opts = {}) {
   let imageUrl = null;
   const FAL_KEY = process.env.FAL_KEY;
 
-  // Se o usuário forneceu uma imagem de referência, priorizar image-to-image (adicionar/modificar)
-  // para realmente editar a imagem original. Fallback genérico garante que nunca falha.
+  // Se há uma imagem de referência, priorizar flux-pro v1.1 (image-to-image real) para
+  // realmente editar a imagem original (remover pessoa, trocar cor, colocar logo, etc).
+  // Stability AI também suporta img2img; Hugging Face é só texto→imagem (fallback final).
   if (referenceImage) {
-    imageUrl = await generateImageStability(prompt, { width, height, negativePrompt, referenceImage, strength });
+    if (FAL_KEY) {
+      try {
+        imageUrl = await generateImageFal(prompt, { model, width, height, aspectRatio, negativePrompt, referenceImage });
+      } catch (e) {
+        console.error('fal.ai img2img falhou:', e.message);
+      }
+    }
+    if (!imageUrl) {
+      imageUrl = await generateImageStability(prompt, { width, height, negativePrompt, referenceImage, strength });
+    }
   }
 
-  // 1) Tentar modelos premium via fal.ai (Ideogram 4.0 / Flux 2 Pro)
+  // 1) Sem referência: modelos premium via fal.ai (Flux Pro v1.1 / Ideogram 4.0)
   if (!imageUrl && FAL_KEY) {
     try {
       imageUrl = await generateImageFal(prompt, { model, width, height, aspectRatio, negativePrompt });

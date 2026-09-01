@@ -21,6 +21,7 @@ function createSession(userId, sessionId) {
     updatedAt: Date.now(),
     memory: {
       baseImage: null, // imagem original (dataURL/URL) fornecida pelo usuário
+      refImages: [], // até 4 imagens de referência anexadas na conversa
       currentPrompt: '', // prompt técnico acumulado da edição
       edits: [] // [{ message, delta, replaced, reply, ts }]
     },

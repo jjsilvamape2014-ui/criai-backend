@@ -150,6 +150,28 @@ function parseHeuristic(message, memory, aspect) {
     };
   }
 
+  // Inserir a logo do usuário na imagem (a logo assinada vem como imagem de referência)
+  if (/(colocar|coloca|inserir|insira|põe|adicionar|adiciona).*(logo|marca|assinatura)/.test(lower) || /(logo|logomarca).*(na imagem|na foto|acima|abaixo|aqui)/.test(lower)) {
+    return {
+      reply: 'Vou aplicar a sua logo na imagem de forma limpa e profissional.',
+      prompt_delta: 'superimpose the provided logo/brand mark discreetly in a corner of the image, clean and professional, keep the rest of the image unchanged',
+      replace_prompt: false,
+      strength: 0.55,
+      aspect_ratio: aspect
+    };
+  }
+
+  // Remover ruído/textos/nomes indesejados
+  if (/(remover|remove|tirar|limpar|limpa).*(ru[íi]do|textos?|nomes?|palavras?|escritas?|legendas?)/.test(lower)) {
+    return {
+      reply: 'Vou remover o ruído e os textos/nomes indesejados da imagem.',
+      prompt_delta: 'remove all noise, unwanted text, names, words, captions, watermarks and artifacts; clean sharp professional result, keep the main subject intact',
+      replace_prompt: false,
+      strength: 0.6,
+      aspect_ratio: aspect
+    };
+  }
+
   // Deixar branco / fundo limpo
   if (/(deixar|ficar|tudo).*(branco)|fundos?\s*branc|background branco/.test(lower) || /white background|make it white/.test(lower)) {
     return {
