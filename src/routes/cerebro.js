@@ -147,7 +147,12 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     //      Sobreposição exata — garante "exatamente" a logo do cliente.
     if (isLogoRequest && logoImageAvailable) {
       try {
-        imageUrl = await logo.compositeLogo(session.memory.refImages[0], session.memory.refImages[1], logo.detectLogoPosition(message));
+        const position = logo.detectLogoPosition(message);
+        imageUrl = await logo.compositeLogo(session.memory.refImages[0], session.memory.refImages[1], position);
+        if (imageUrl) {
+          const label = { 'bottom-right': 'inferior direito', 'top-right': 'superior direito', 'bottom-left': 'inferior esquerdo', 'top-left': 'superior esquerdo', top: 'topo', bottom: 'inferior (base)', left: 'lado esquerdo', right: 'lado direito', center: 'centro' }[position] || 'inferior direito';
+          cmd.reply = `Feito! Coloquei a sua logo (exatamente a imagem que você enviou) no ${label} da foto.`;
+        }
       } catch (e) {
         console.error('Cérebro Visual: composição da logo falhou:', e.message);
       }
