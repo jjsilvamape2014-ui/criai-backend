@@ -15,6 +15,10 @@ const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
 
+// Confia no proxy da Railway para identificar o IP real do usuário
+// (evita aviso ERR_ERL_UNEXPECTED_X_FORWARDED_FOR e rate-limit incorreto)
+app.set('trust proxy', 1);
+
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000' }));
 app.use(express.json({ limit: '10mb' }));
 
