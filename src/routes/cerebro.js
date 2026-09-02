@@ -113,6 +113,38 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // 2) Registrar o pedido no histórico
     cerebro.pushHistory(session, 'user', message, null);
 
+    // 2a) Estamos coletando resposta de uma pergunta anterior → este comando é a
+    //     resposta; consumimos o estado de coleta.
+    const wasCollecting = session.memory.collecting;
+    const pendInfo = session.memory.pending;
+    if (wasCollecting) session.memory.collecting = null;
+    session.memory.pending = null;
+
+    // Se a pergunta era para criar uma peça nova do zero, tratamos a resposta como
+    // a especificação dessa peça e forçamos a geração (replace_prompt com o que o
+    // usuário respondeu + identidade projetual já coletada).
+    if (wasCollecting && pendInfo && pendInfo.creating) {
+      const proj = session.memory.project || {};
+      const ctx = [];
+      if (proj.brand) ctx.push(`${proj.brand}`);
+      if (proj.colors && proj.colors.length) ctx.push(`paleta: ${proj.colors.join(', ')}`);
+      if (proj.style) ctx.push(`estilo: ${proj.style}`);
+      if (proj.objective) ctx.push(`objetivo: ${proj.objective}`);
+      const build = `Create a professional commercial marketing piece. Subject/context decided with the user: "${message}". Brand identity: ${ctx.join(' | ') || 'none specified — use a clean modern professional look'}. High quality, balanced composition, no watermark.`;
+      let newPrompt = build;
+      try {
+        const enh = await enhanceImagePrompt(build, { project: proj });
+        if (enh.prompt) newPrompt = enh.prompt;
+      } catch (e) {}
+      cmd = {
+        reply: 'Perfeito! Vou criar a peça com as informações que você me deu.',
+        replace_prompt: true,
+        new_prompt: newPrompt,
+        strength: 1,
+        fromLLM: true
+      };
+    }
+
     // 2b) Precisamos de informação antes de gerar (ex: qual nome colocar na logo) —
     //     mas se o usuário já enviou a logo real (2ª imagem), usa ela e não pergunta o nome.
     const isLogoRequest = /(logo|logomarca|marca d|marca da)/i.test(message);
@@ -134,6 +166,37 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         credits: creditsNow
       });
     }
+
+    // 2c) O Cérebro decidiu que precisa perguntar algo essencial → responde sem gerar
+    //     e guarda as perguntas pendentes para continuar quando o usuário responder.
+    //     Proteção anti-loop: se já estávamos coletando, força geração com o que temos.
+    const alreadyCollecting = session.memory.collecting;
+    if (cmd.ask && cmd.ask.length > 0 && !alreadyCollecting) {
+      session.memory.pending = {
+        ask: cmd.ask,
+        askedAt: Date.now(),
+        creating: !!cmd.replace_prompt // é criação de peça nova → a resposta deve gerar
+      };
+      session.memory.collecting = true;
+      cerebro.pushHistory(session, 'assistant', cmd.reply, null);
+      const creditsNow = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { creditsImages: true, creditsVideos: true, creditsPurchased: true }
+      });
+      return res.json({
+        success: true,
+        sessionId: session.id,
+        reply: cmd.reply,
+        ask: cmd.ask,
+        needInfo: true,
+        imageUrl: null,
+        memory: session.memory,
+        history: session.history.slice(-20),
+        credits: creditsNow
+      });
+    }
+    // Se já estávamos coletando, garante que o flag é limpo antes de gerar
+    session.memory.collecting = null;
 
     // 3) Compor o prompt técnico acumulado (memória fotográfica da conversa)
     let finalPrompt = cerebro.composePrompt(session.memory, cmd, message);

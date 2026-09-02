@@ -350,12 +350,15 @@ async function parseEditRequest(message, memory) {
     '  "strength": number 0-1 (edits 0.6, subtle 0.35, brand new 1.0),',
     '  "aspect_ratio": "1:1" | "16:9" | "9:16" ("" keep current),',
     '  "needName": boolean — true ONLY when the user asks for a brand/logo but gave no name (then reply asks the name, prompt_delta="")',
+    '  "ask": array of 1-2 short questions in PORTUGUESE ("..."), or [] — when TRUE essential information is missing to do a GREAT job and only 1 question unblocks the whole request.',
     '}',
+    '',
+    'Use "ask" sparingly and ONLY when an essential, single piece of info is missing and would clearly change the result (e.g. creating a brand-new piece: "qual é o nome/marca da empresa?", "qual o objetivo: post p/ Instagram, banner, logo, anúncio?", "deseja incluir algum texto?"). If the request is editable with what we have, ask: []. Never ask more than once for the same field (check KNOWN PROJECT CONTEXT and recent replies against it). If the user says "não sei", "tanto faz", "você escolhe", or keeps it open, do NOT ask — proceed.',
     '',
     'Rules:',
     '- Combine all instructions in the user message into a single, coherent, non-contradictory prompt_delta. If the user says "troca o caminhão mas mantém o caminhão", interpret intent: replace the specific truck with another similar one, keep the composition.',
     '- TEXT in the image: when the user asks to write text (name, phrase, number, MPa unit, phone), ALWAYS put it as literal text in quotes (ex: "XYZ TECNOLOGIA EM CONCRETO") and specify exact spelling, capitalization and accentuation. Preserve facts like "20 MPa" exactly.',
-    '- LOGO/BRAND: render ONLY the name as clean minimalist wordmark on the piece (never an image logo). If no name given, needName=true.',
+    '- LOGO/BRAND: render ONLY the name as clean minimalist wordmark on the piece (never an image logo). If no name given, ask for it.',
     '- Keep the main subject, style and brand colors unless the user asks to change them.',
     '- Never invent capabilities. Photorealistic/commercial quality for marketing pieces.'
   ].join('\n');
@@ -363,6 +366,9 @@ async function parseEditRequest(message, memory) {
   const userBlock = [
     `User request: ${message}`,
     memory && memory.currentPrompt ? `Current full prompt so far: "${memory.currentPrompt}"` : '',
+    memory && memory.collecting
+      ? `ALREADY ASKED these questions (do not ask again): ${JSON.stringify(memory.pending && memory.pending.ask ? memory.pending.ask : memory.collecting)}`
+      : '',
     'Previous edits in this session: ' + JSON.stringify((memory && memory.edits ? memory.edits.slice(-4) : []).map((e) => ({ command: e.message })))
   ].filter(Boolean).join('\n');
 
@@ -374,6 +380,18 @@ async function parseEditRequest(message, memory) {
       return {
         reply: parsed.reply || 'Qual nome ou marca devo colocar na imagem?',
         needName: true,
+        aspect_ratio: parsed.aspect_ratio || aspect || null,
+        projectUpdate: extractProjectUpdate(message),
+        fromLLM: true
+      };
+    }
+    // Pergunta(s) essencial(is) para gerar bem → bloco e não gera até responder
+    const asks = Array.isArray(parsed.ask) ? parsed.ask.filter((q) => typeof q === 'string' && q.trim()).slice(0, 2) : [];
+    if (asks.length > 0 && !(memory && memory.collecting)) {
+      return {
+        reply: asks.join('\n'),
+        ask: asks,
+        replace_prompt: !!parsed.replace_prompt,
         aspect_ratio: parsed.aspect_ratio || aspect || null,
         projectUpdate: extractProjectUpdate(message),
         fromLLM: true
@@ -391,6 +409,24 @@ async function parseEditRequest(message, memory) {
     };
   }
 
+  // Fallback heurístico: se é pra criar uma peça nova do zero mas faltam dados
+  // essenciais e o usuário não está respondendo a uma pergunta anterior, pergunte.
+  const isNewPiece = /(criar|cria|crie|fazer|faça|faca|gera|gere|montar|desenhar)\s+.*(banner|logo|logomarca|post|anúncio|anuncio|capa|cartaz|cartão|cartao|flyer|folheto|folder|panfleto|pôster|poster)/i.test(message);
+  const projMiss = (memory && memory.project) || {};
+  const missingNew = [];
+  if (!projMiss.brand && /logo|logomarca|marca/.test(message)) missingNew.push('Qual é o nome/marca da empresa?');
+  if (!projMiss.objective) missingNew.push('Qual o objetivo desta peça (post p/ Instagram, banner de site, anúncio, capa...)?');
+  if (!projMiss.colors || !projMiss.colors.length) missingNew.push('Quais cores devo usar (cores da sua marca)?');
+  if (missingNew.length && isNewPiece && !(memory && memory.collecting)) {
+    return {
+      reply: missingNew.slice(0, 2).join('\n'),
+      ask: missingNew.slice(0, 2),
+      replace_prompt: true,
+      aspect_ratio: aspect,
+      fromLLM: false
+    };
+  }
+
   return { ...parseHeuristic(message, memory, aspect), projectUpdate: extractProjectUpdate(message), fromLLM: false };
 }
 
@@ -401,9 +437,21 @@ function extractProjectUpdate(message) {
   const m = (message || '').toLowerCase();
   const proj = {};
 
-  const brand = m.match(/(?:marca|logo|assinatura|empresa)\s+(?:da\s+|do\s+|d[ao]s?\s+)?["']?([a-z0-9à-úçãéíóúâêô &_.-]{2,40})/i);
+  // Pré-limpa frases que introduzem o nome da marca para capturar o nome real
+  // (ex: "a empresa se chama XYZ" -> "XYZ"; "chama-se XYZ" -> "XYZ")
+  const wasNameReply = /(?:se chama|chama-se|chama|chamo-me|me chamo|se chamar|nome da empresa|o nome é)\b/.test(m);
+  const cleanMsg = m
+    .replace(/(?:a |o )?empresa (?:se chama|chama-se|chama|é|e a|e)/g, ' ')
+    .replace(/(?:se chama|chama-se|chama|chamo-me|me chamo|se chamar)/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+
+  let brand = cleanMsg.match(/(?:marca|logo|assinatura|empresa|nome da marca)\s+(?:da\s+|do\s+|d[ao]s?\s+|é\s+|e\s+)?["']?([a-z0-9à-úçãéíóúâêô &_.-]{2,40})/i);
+  // Resposta direta a pergunta de marca: o texto limpo começa com o nome
+  if (!brand && wasNameReply) {
+    const lead = cleanMsg.match(/^["']?([a-z0-9à-úçãéíóúâêô &_.-]{2,40})/i);
+    if (lead) brand = [null, lead[1]];
+  }
   if (brand && brand[1] && !/(imagem|foto|produto|caneca|camiseta|aqui|topo|canto|marca d)/.test(brand[1])) {
-    // Trunca em marcadores de frase (ex: "XYZ tecnologia em concreto com ..." -> "xyz tecnologia")
     let name = brand[1].trim().replace(/[.,;"']+$/g, '');
     name = name.split(/\s+(?:em|com|para|no|na|nos|nas|de|da|do|das|dos|por|que|ou|e\s)/i)[0].trim();
     if (name.length >= 2) proj.brand = name;

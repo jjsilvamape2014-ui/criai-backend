@@ -31,7 +31,9 @@ function createSession(userId, sessionId) {
         objective: '', // objetivo da peça (ex: "post LinkedIn", "banner site", "recrutamento")
         constraints: [], // restrições que persistem (ex: ["sem preto", "usar 20 MPa"])
         typography: '' // tipografia/linguagem visual (ex: "sans-serif moderna")
-      }
+      },
+      pending: null, // { ask: [perguntas], askedAt, answeredFields: {} } p/ conversa orientada
+      collecting: null // campo que estamos aguardando o usuário responder agora (ex: "texto"|"cores"|"objetivo")
     },
     history: [] // [{ role, message, imageUrl, ts }]
   };
