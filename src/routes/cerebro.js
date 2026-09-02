@@ -97,6 +97,19 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       cmd = { reply: 'Entendi! Vou ajustar a imagem.', prompt_delta: null, replace_prompt: false, strength: 0.65, aspect_ratio: null, fromLLM: false };
     }
 
+    // 1b) Atualiza a memória de projeto (marca, cores, estilo, objetivo) com o que
+    //     foi reconhecido no pedido — mantém coerência visual entre as versões.
+    if (cmd.projectUpdate && session.memory.project) {
+      const up = cmd.projectUpdate;
+      const proj = session.memory.project;
+      if (up.brand) proj.brand = up.brand;
+      if (Array.isArray(up.colors) && up.colors.length) {
+        proj.colors = [...new Set([...(proj.colors || []), ...up.colors])];
+      }
+      if (up.style) proj.style = up.style;
+      if (up.objective) proj.objective = up.objective;
+    }
+
     // 2) Registrar o pedido no histórico
     cerebro.pushHistory(session, 'user', message, null);
 
@@ -130,7 +143,11 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     //     Isso transforma pedidos vagos/absurdos em imagens de alta qualidade.
     if (cmd.replace_prompt) {
       try {
-        const enh = await enhanceImagePrompt(cmd.new_prompt || message);
+        // Inclui o contexto de projeto (marca/cores/estilo) na reescrita para que a
+        // nova imagem nasça já coerente com a identidade visual construída.
+        const enh = await enhanceImagePrompt(cmd.new_prompt || message, {
+          project: session.memory.project
+        });
         if (enh.prompt) {
           finalPrompt = enh.prompt;
           session.memory.currentPrompt = enh.prompt;

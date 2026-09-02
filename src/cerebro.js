@@ -23,7 +23,15 @@ function createSession(userId, sessionId) {
       baseImage: null, // imagem original (dataURL/URL) fornecida pelo usuário
       refImages: [], // até 4 imagens de referência anexadas na conversa
       currentPrompt: '', // prompt técnico acumulado da edição
-      edits: [] // [{ message, delta, replaced, reply, ts }]
+      edits: [], // [{ message, delta, replaced, reply, ts }]
+      project: {
+        brand: '', // nome da marca (ex: "XYZ Tecnologia")
+        colors: [], // cores da identidade visual (ex: ["azul escuro", "vermelho", "cinza"])
+        style: '', // estilo visual (ex: "profissional", "industrial", "institucional")
+        objective: '', // objetivo da peça (ex: "post LinkedIn", "banner site", "recrutamento")
+        constraints: [], // restrições que persistem (ex: ["sem preto", "usar 20 MPa"])
+        typography: '' // tipografia/linguagem visual (ex: "sans-serif moderna")
+      }
     },
     history: [] // [{ role, message, imageUrl, ts }]
   };
@@ -62,6 +70,7 @@ function pushHistory(session, role, message, imageUrl) {
 }
 
 // Compõe o prompt técnico acumulado a partir do comando interpretado
+// Inclui contexto do projeto (marca, cores, estilo, restrições) para manter coerência visual
 function composePrompt(memory, cmd, userMessage) {
   if (cmd.replace_prompt) {
     memory.currentPrompt = (cmd.new_prompt || userMessage || '').trim();
@@ -73,6 +82,22 @@ function composePrompt(memory, cmd, userMessage) {
   if (cmd.prompt_delta) {
     memory.currentPrompt = `${memory.currentPrompt.replace(/,?\s*$/, '')}, ${cmd.prompt_delta}`;
   }
+
+  // Aplica contexto do projeto se houver (mantém coerência visual entre versões)
+  const proj = memory.project || {};
+  const ctx = [];
+  if (proj.brand) ctx.push(`brand: ${proj.brand}`);
+  if (proj.colors && proj.colors.length) ctx.push(`colors: ${proj.colors.join(', ')}`);
+  if (proj.style) ctx.push(`style: ${proj.style}`);
+  if (proj.objective) ctx.push(`purpose: ${proj.objective}`);
+  if (proj.constraints && proj.constraints.length) ctx.push(`constraints: ${proj.constraints.join('; ')}`);
+  if (proj.typography) ctx.push(`typography: ${proj.typography}`);
+
+  // Prefixa contexto do projeto (uma vez) no início do prompt
+  if (ctx.length && !memory.currentPrompt.startsWith('[')) {
+    memory.currentPrompt = `[Project: ${ctx.join(' | ')}] ${memory.currentPrompt}`;
+  }
+
   return memory.currentPrompt;
 }
 

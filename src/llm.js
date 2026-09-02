@@ -318,27 +318,55 @@ function parseHeuristic(message, memory, aspect) {
   };
 }
 
-// Interpreta o pedido do usuário -> comando técnico de edição
+// Interpreta o pedido do usuário -> comando técnico de edição.
+// Faz interpretação multi-camada (como o ChatGPT): preservar/remover/substituir,
+// identidade da marca, objetivo da peça e hierarquia visual — tudo mantendo a
+// memória de projeto entre as versões.
 async function parseEditRequest(message, memory) {
   const aspect = detectAspect(message, (memory && memory.currentPrompt) ? null : null);
-
-  const systemPrompt = [
-    'You are a creative image-editing assistant that translates a user request (usually in Portuguese) into a technical instruction.',
-    'The user is iterating on an AI-generated image. Return ONLY a JSON object with exactly these fields:',
-    '{',
-    '  "reply": short confirmation in PORTUGUESE (1 sentence) — never mention the prompt itself, just what was done,',
-    '  "prompt_delta": short ENGLISH suffix to append to the image prompt describing the change (keep quoted text if the user asked for specific text),',
-    '  "replace_prompt": boolean — true only when the user wants a brand new image from scratch,',
-    '  "new_prompt": full ENGLISH image prompt when replace_prompt is true, otherwise ""',
-    '  "strength": number 0-1 (0.6 for edits, 0.35 for subtle, 1.0 for brand new),',
-    '  "aspect_ratio": "1:1" | "16:9" | "9:16" ("" to keep current),',
-    '  "needName": boolean — true ONLY when the user asks to put a brand/logo but did not give a name (then reply asks which name; prompt_delta="")',
-    '}',
-    'Current image prompt so far: "' + ((memory && memory.currentPrompt) || '') + '"',
-    'Rules: never invent unsupported capabilities. When the user asks to add a LOGO/BRAND, ALWAYS render ONLY the name as text — a clean minimalist wordmark/watermark on the product — never an image logo. If no brand name was given, set needName=true and ask for the name instead of inventing one. For background removal keep a clean white background. Always keep the main subject and style unless asked to change them.'
+  const proj = (memory && memory.project) || {};
+  const projectContext = [
+    `Brand: "${proj.brand || ''}"`,
+    `Colors: ${(proj.colors || []).join(', ') || 'none recorded'}`,
+    `Style: "${proj.style || ''}"`,
+    `Objective: "${proj.objective || ''}"`,
+    `Typography: "${proj.typography || ''}"`,
+    `Constraints: ${(proj.constraints || []).join('; ') || 'none recorded'}`
   ].join('\n');
 
-  const llmText = await callLLM(systemPrompt, `User request: ${message}`);
+  const systemPrompt = [
+    'You are a world-class creative art director and image editor, like ChatGPT\'s image feature.',
+    'The user is building a visual piece ITERATIVELY (marketing/post/logo/banner). They send references and corrections over many messages. You must interpret the full request — not just copy it — separating preserve / remove / replace / add, respecting brand identity, colors, objective and hierarchy.',
+    '',
+    'KNOWN PROJECT CONTEXT (persist these, they were decided in earlier messages):',
+    projectContext,
+    '',
+    'Return ONLY a JSON object with EXACTLY these fields:',
+    '{',
+    '  "reply": short confirmation in PORTUGUESE (1 sentence), tells the user what was done, never mentions the prompt,',
+    '  "prompt_delta": ENGLISH suffix describing the visual change to append to the full image prompt. Combine multiple simultaneous changes into ONE coherent sentence (e.g. remove texts, apply brand colors, keep the truck).',
+    '  "replace_prompt": boolean — true when the user wants a brand new image/scene from scratch (respect the recorded brand/colors/style),',
+    '  "new_prompt": full ENGLISH image prompt when replace_prompt is true, otherwise ""',
+    '  "strength": number 0-1 (edits 0.6, subtle 0.35, brand new 1.0),',
+    '  "aspect_ratio": "1:1" | "16:9" | "9:16" ("" keep current),',
+    '  "needName": boolean — true ONLY when the user asks for a brand/logo but gave no name (then reply asks the name, prompt_delta="")',
+    '}',
+    '',
+    'Rules:',
+    '- Combine all instructions in the user message into a single, coherent, non-contradictory prompt_delta. If the user says "troca o caminhão mas mantém o caminhão", interpret intent: replace the specific truck with another similar one, keep the composition.',
+    '- TEXT in the image: when the user asks to write text (name, phrase, number, MPa unit, phone), ALWAYS put it as literal text in quotes (ex: "XYZ TECNOLOGIA EM CONCRETO") and specify exact spelling, capitalization and accentuation. Preserve facts like "20 MPa" exactly.',
+    '- LOGO/BRAND: render ONLY the name as clean minimalist wordmark on the piece (never an image logo). If no name given, needName=true.',
+    '- Keep the main subject, style and brand colors unless the user asks to change them.',
+    '- Never invent capabilities. Photorealistic/commercial quality for marketing pieces.'
+  ].join('\n');
+
+  const userBlock = [
+    `User request: ${message}`,
+    memory && memory.currentPrompt ? `Current full prompt so far: "${memory.currentPrompt}"` : '',
+    'Previous edits in this session: ' + JSON.stringify((memory && memory.edits ? memory.edits.slice(-4) : []).map((e) => ({ command: e.message })))
+  ].filter(Boolean).join('\n');
+
+  const llmText = await callLLM(systemPrompt, userBlock, { temperature: 0.5, maxTokens: 900 });
   const parsed = parseJsonLoose(llmText);
 
   if (parsed && typeof parsed.reply === 'string') {
@@ -347,6 +375,7 @@ async function parseEditRequest(message, memory) {
         reply: parsed.reply || 'Qual nome ou marca devo colocar na imagem?',
         needName: true,
         aspect_ratio: parsed.aspect_ratio || aspect || null,
+        projectUpdate: extractProjectUpdate(message),
         fromLLM: true
       };
     }
@@ -357,11 +386,44 @@ async function parseEditRequest(message, memory) {
       new_prompt: (parsed.new_prompt || '').trim(),
       strength: typeof parsed.strength === 'number' ? Math.min(1, Math.max(0, parsed.strength)) : 0.6,
       aspect_ratio: parsed.aspect_ratio || aspect || null,
+      projectUpdate: extractProjectUpdate(message),
       fromLLM: true
     };
   }
 
-  return { ...parseHeuristic(message, memory, aspect), fromLLM: false };
+  return { ...parseHeuristic(message, memory, aspect), projectUpdate: extractProjectUpdate(message), fromLLM: false };
+}
+
+// Extrai rapidamente fato(s) de identidade visual da mensagem para atualizar a
+// memória de projeto (marca, cores, estilo, objetivo, restrições). Heurística leve
+// complementar ao LLM — não remove informação, apenas adiciona o que reconhecer.
+function extractProjectUpdate(message) {
+  const m = (message || '').toLowerCase();
+  const proj = {};
+
+  const brand = m.match(/(?:marca|logo|assinatura|empresa)\s+(?:da\s+|do\s+|d[ao]s?\s+)?["']?([a-z0-9à-úçãéíóúâêô &_.-]{2,40})/i);
+  if (brand && brand[1] && !/(imagem|foto|produto|caneca|camiseta|aqui|topo|canto|marca d)/.test(brand[1])) {
+    // Trunca em marcadores de frase (ex: "XYZ tecnologia em concreto com ..." -> "xyz tecnologia")
+    let name = brand[1].trim().replace(/[.,;"']+$/g, '');
+    name = name.split(/\s+(?:em|com|para|no|na|nos|nas|de|da|do|das|dos|por|que|ou|e\s)/i)[0].trim();
+    if (name.length >= 2) proj.brand = name;
+  }
+
+  const colorMap = { azul: 'azul', vermelho: 'vermelho', cinza: 'cinza', preto: 'preto', branco: 'branco', amarelo: 'amarelo', verde: 'verde', roxo: 'roxo', laranja: 'laranja', rosa: 'rosa', dourado: 'dourado', prata: 'prata', marrom: 'marrom', lilás: 'lilás' };
+  const visto = new Set((proj.colors || []));
+  for (const [pt, en] of Object.entries(colorMap)) {
+    if (new RegExp(pt).test(m)) visto.add(en);
+  }
+  if (visto.size) proj.colors = [...visto];
+
+  if (/(profissional|institucional|executivo|clean|moderno|minimalista|industrial|tecnológico|tecnologica)/.test(m)) {
+    proj.style = m.match(/(profissional|institucional|executivo|clean|moderno|minimalista|industrial|tecnológico|tecnologica)/)?.[0] || proj.style || '';
+  }
+
+  const obj = m.match(/(?:para|post de|banner de|anúncio de|material de|peça de|conteúdo de)\s+(linkedin|instagram|facebook|site|recrutamento|vendas|divulgação|campanha|imprensa|comercial|e-mail|whatsapp|impressão)/i);
+  if (obj) proj.objective = obj[1].toLowerCase();
+
+  return Object.keys(proj).length ? proj : null;
 }
 
 // Reescreve o pedido do usuário em um prompt profissional de imagem em inglês,
@@ -372,9 +434,19 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
   const trimmed = (rawPrompt || '').trim();
   if (!trimmed || trimmed.length < 3) return { prompt: trimmed, reply: '' };
 
+  const proj = (opts.project || {});
+  const projectLines = [
+    proj.brand ? `Brand/company: ${proj.brand}` : '',
+    (proj.colors && proj.colors.length) ? `Brand colors (use these): ${proj.colors.join(', ')}` : '',
+    proj.style ? `Visual style: ${proj.style}` : '',
+    proj.objective ? `Piece purpose: ${proj.objective}` : '',
+    (proj.constraints && proj.constraints.length) ? `Constraints: ${proj.constraints.join('; ')}` : ''
+  ].filter(Boolean).join(' | ');
+
   const systemPrompt = [
     'You are a world-class prompt engineer for AI image generation (FLUX).',
     'The user describes in Portuguese (or English) what image they want — prompts can be vague, absurd or creative.',
+    projectLines ? 'KNOWN PROJECT IDENTITY (respect these unless contradicted by the user): ' + projectLines : '',
     'Rewrite it into ONE detailed English image prompt, exactly as ChatGPT would before rendering:',
     '- structure: scene/background -> main subject (specific, with details) -> style/medium -> lighting -> composition/framing -> mood',
     '- make it explicit and concrete (materials, textures, colors, camera angle, depth of field)',
@@ -385,7 +457,7 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
     'Rules: NEVER add “photorealistic, 8k, masterpiece, trending” spam. 2-5 sentences max. No explanations.',
     'Then, on the next line after a separator “###CONF:” append a 1-sentence friendly confirmation in PORTUGUESE telling the user what was generated (never mention the prompt).',
     'Format: <english prompt>\\n###CONF:<portuguese confirmation>'
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
   const llmText = await callLLM(systemPrompt, `User request: ${trimmed}`, {
     temperature: 0.7,
