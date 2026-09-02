@@ -234,7 +234,7 @@ async function upscaleImage(imageUrl, opts, userPlan) {
 // Gerar imagem
 router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
   try {
-    const { prompt, negativePrompt, model = 'ideogram4', width = 1024, height = 1024, upscale = false, aspectRatio, referenceImage, strength } = req.body;
+    const { prompt, negativePrompt, model = 'fluxpro', width = 1024, height = 1024, upscale = false, aspectRatio, referenceImage, strength } = req.body;
     const user = req.user;
 
     if (!prompt || prompt.length < 3) {

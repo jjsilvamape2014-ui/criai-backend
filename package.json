@@ -20,11 +20,15 @@
     "express-rate-limit": "^7.2.0",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^4.6.0",
+    "sharp": "^0.33.4",
     "stripe": "^14.20.0",
     "uuid": "^9.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.0",
     "prisma": "^5.10.0"
+  },
+  "allowScripts": {
+    "sharp@0.33.4": true
   }
 }
