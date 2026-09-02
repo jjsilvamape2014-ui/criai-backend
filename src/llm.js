@@ -1,28 +1,51 @@
 const axios = require('axios');
 
+// Provedor configurável via LLM_PROVIDER; sem ele, detecta pela chave:
+//   sk- = OpenAI; AIza.../AQ. = Gemini; gsk_ = Groq
 function getProvider() {
   const key = process.env.LLM_API_KEY || '';
   if (!key) return null;
-  // sk- = OpenAI; AIza... e AQ. (novo formato) = Google Gemini
-  return key.startsWith('sk-') ? 'openai' : 'gemini';
+  if (process.env.LLM_PROVIDER) return process.env.LLM_PROVIDER;
+  if (key.startsWith('gsk_')) return 'groq';
+  if (key.startsWith('sk-')) return 'openai';
+  return 'gemini';
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const DEFAULT_MODEL = {
+  gemini: 'gemini-flash-latest',
+  openai: 'gpt-4o-mini',
+  groq: 'llama-3.3-70b-versatile',
+  openrouter: 'meta-llama/llama-3.3-70b-instruct'
+};
+
+const BASE_URL = {
+  openai: 'https://api.openai.com/v1',
+  groq: 'https://api.groq.com/openai/v1',
+  openrouter: 'https://openrouter.ai/api/v1'
+};
+
+const JSON_MODE_OK = {
+  gemini: false,
+  openai: true,
+  groq: true,
+  openrouter: false
+};
 
 async function callLLM(systemPrompt, userText, opts = {}) {
   const key = process.env.LLM_API_KEY;
   const provider = getProvider();
   if (!key || !provider) return null;
 
-  const defaultModel = provider === 'gemini' ? 'gemini-flash-latest' : 'gpt-4o-mini';
-  const model = process.env.LLM_MODEL || defaultModel;
+  const model = process.env.LLM_MODEL || DEFAULT_MODEL[provider] || DEFAULT_MODEL.openai;
   const maxAttempts = opts.maxAttempts || 2;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      let res;
-      if (provider === 'gemini') {
-        res = await axios.post(
+  // Gemini usa corpo diferente (generateContent)
+  if (provider === 'gemini') {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const res = await axios.post(
           `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
           {
             contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userText}` }] }],
@@ -34,32 +57,73 @@ async function callLLM(systemPrompt, userText, opts = {}) {
         if (!candidates || !candidates.length) return null;
         const parts = (candidates[0].content && candidates[0].content.parts) || [];
         return parts.map((p) => p.text || '').join('');
+      } catch (e) {
+        const status = e.response && e.response.status;
+        const detail = (e.response && e.response.data && JSON.stringify(e.response.data).slice(0, 300)) || e.message;
+        const retryable = !status || status >= 500;
+        if (!retryable || attempt === maxAttempts) {
+          console.error(`LLM[gemini] falhou (tentativa ${attempt}/${maxAttempts}):`, detail);
+          return null;
+        }
+        console.warn(`LLM[gemini] sobrecarregado (HTTP ${status}), tentando novamente (${attempt}/${maxAttempts})...`);
+        await sleep(2000 * attempt);
       }
+    }
+    return null;
+  }
 
-      // OpenAI / compatible
-      res = await axios.post(
-        'https://api.openai.com/v1/chat/completions',
-        {
-          model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userText }
-          ],
-          temperature: opts.temperature || 0.2,
-          response_format: { type: 'json_object' }
-        },
-        { timeout: 60000, headers: { Authorization: `Bearer ${key}` } }
-      );
-      return (res.data.choices[0] && res.data.choices[0].message && res.data.choices[0].message.content) || null;
+  // OpenAI / Groq / OpenRouter — API OpenAI-compatível
+  const base = process.env.LLM_BASE_URL || BASE_URL[provider] || BASE_URL.openai;
+  const headers = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
+  if (provider === 'openrouter') headers['HTTP-Referer'] = 'https://criativa.ai';
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const payload = {
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userText }
+        ],
+        temperature: opts.temperature || 0.2,
+        max_tokens: 1024
+      };
+      if (JSON_MODE_OK[provider]) payload.response_format = { type: 'json_object' };
+
+      const res = await axios.post(`${base}/chat/completions`, payload, { timeout: 60000, headers });
+
+      // Groq/OpenRouter erram o trata array melhor: pega a 1ª escolha
+      const choice = res.data && res.data.choices && res.data.choices[0];
+      const content = choice && choice.message && choice.message.content;
+      return content || null;
     } catch (e) {
       const status = e.response && e.response.status;
       const detail = (e.response && e.response.data && JSON.stringify(e.response.data).slice(0, 300)) || e.message;
       const retryable = !status || status >= 500;
+      // JSON mode no formato correto nem sempre é suportado (400) → tenta sem response_format
+      if (status === 400) {
+        console.warn(`LLM sem suporte a response_format, tentando sem JSON mode... (${detail})`);
+        try {
+          const res = await axios.post(`${base}/chat/completions`, {
+            model,
+            messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userText }],
+            temperature: opts.temperature || 0.2,
+            max_tokens: 1024
+          }, { timeout: 60000, headers });
+          const choice = res.data && res.data.choices && res.data.choices[0];
+          return (choice && choice.message && choice.message.content) || null;
+        } catch (e2) {
+          const s2 = e2.response && e2.response.status;
+          const d2 = (e2.response && e2.response.data && JSON.stringify(e2.response.data).slice(0, 300)) || e2.message;
+          console.error(`LLM retry-sem-json falhou (tentativa ${attempt}/${maxAttempts}):`, d2);
+          if (s2 && s2 < 500) return null;
+        }
+      }
       if (!retryable || attempt === maxAttempts) {
-        console.error(`LLM falhou (tentativa ${attempt}/${maxAttempts}):`, detail);
+        console.error(`LLM[${provider}] falhou (tentativa ${attempt}/${maxAttempts}):`, detail);
         return null;
       }
-      console.warn(`LLM sobrecarregado (HTTP ${status}), tentando novamente (${attempt}/${maxAttempts})...`);
+      console.warn(`LLM[${provider}] sobrecarregado (HTTP ${status}), tentando novamente (${attempt}/${maxAttempts})...`);
       await sleep(2000 * attempt);
     }
   }
