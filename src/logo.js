@@ -1,14 +1,19 @@
 const sharp = require('sharp');
+const axios = require('axios');
 
 // Converte dataURL (base64) ou URL em Buffer para o sharp. Retorna null se inválido.
-function toBuffer(source) {
+// URLs são baixadas via axios (segue redirects) porque os links fal.media são temporários
+// e o sharp sozinho falha com "Input file is missing" em URLs que redirecionam/expiraram.
+async function toBuffer(source) {
   if (!source || typeof source !== 'string') return null;
   const m = source.match(/^data:([a-zA-Z0-9/+.-]+);base64,(.+)$/s);
   if (m) {
     return Buffer.from(m[2], 'base64');
   }
   if (/^https?:\/\//.test(source)) {
-    return source; // sharp aceita URLs diretamente
+    const res = await axios.get(source, { responseType: 'arraybuffer', timeout: 45000 });
+    if (res.data && res.data.byteLength) return Buffer.from(res.data);
+    return null;
   }
   return source; // caminho de arquivo
 }
@@ -64,8 +69,8 @@ function positionOffsets(position, baseW, baseH, logoW, logoH, margin) {
 // baseImage e logoImage podem ser dataURL (base64), URL ou caminho. Retorna dataURL da composição.
 async function compositeLogo(baseImage, logoImage, position) {
   try {
-    const baseSrc = toBuffer(baseImage);
-    const logoSrc = toBuffer(logoImage);
+    const baseSrc = await toBuffer(baseImage);
+    const logoSrc = await toBuffer(logoImage);
     if (!baseSrc || !logoSrc) return null;
 
     const maxDim = 1536;
