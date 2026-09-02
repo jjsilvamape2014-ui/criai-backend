@@ -3,6 +3,7 @@ const axios = require('axios');
 const rateLimit = require('express-rate-limit');
 const { authMiddleware } = require('../middleware');
 const { PrismaClient } = require('@prisma/client');
+const { enhanceImagePrompt } = require('../llm');
 const router = express.Router();
 const prisma = new PrismaClient();
 
@@ -277,8 +278,17 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
       });
     }
 
-    // Otimizar prompt automaticamente (português -> prompt técnico em inglês)
-    const enhancedPrompt = optimizePrompt(prompt);
+    // Otimizar prompt automaticamente via LLM (estilo ChatGPT): reescreve o
+    // pedido do usuário em um prompt profissional de imagem. Se o LLM falhar,
+    // cai no otimizador leve local por intenção.
+    let enhancedPrompt;
+    try {
+      const enh = await enhanceImagePrompt(prompt);
+      enhancedPrompt = enh.prompt || optimizePrompt(prompt);
+    } catch (e) {
+      console.error('Falha ao melhorar prompt via LLM, usando otimizador local:', e.message);
+      enhancedPrompt = optimizePrompt(prompt);
+    }
     if (negativePrompt && !enhancedPrompt.includes(negativePrompt)) {
       // Nada a fazer - negative prompt é tratado separadamente abaixo
     }

@@ -4,7 +4,7 @@ const { PrismaClient } = require('@prisma/client');
 
 const { authMiddleware } = require('../middleware');
 const generateRoutes = require('./generate');
-const { parseEditRequest } = require('../llm');
+const { parseEditRequest, enhanceImagePrompt } = require('../llm');
 const cerebro = require('../cerebro');
 const logo = require('../logo');
 
@@ -123,8 +123,23 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     }
 
     // 3) Compor o prompt técnico acumulado (memória fotográfica da conversa)
-    const finalPrompt = cerebro.composePrompt(session.memory, cmd, message);
+    let finalPrompt = cerebro.composePrompt(session.memory, cmd, message);
     const { width, height } = cerebro.aspectSizes(cmd.aspect_ratio || null);
+
+    // 3b) Nova imagem do zero: reescreve o pedido em prompt profissional estilo ChatGPT.
+    //     Isso transforma pedidos vagos/absurdos em imagens de alta qualidade.
+    if (cmd.replace_prompt) {
+      try {
+        const enh = await enhanceImagePrompt(cmd.new_prompt || message);
+        if (enh.prompt) {
+          finalPrompt = enh.prompt;
+          session.memory.currentPrompt = enh.prompt;
+          if (enh.reply) cmd.reply = enh.reply;
+        }
+      } catch (e) {
+        console.error('Cérebro Visual: enhance de prompt falhou (usando prompt original):', e.message);
+      }
+    }
 
     // 4) Registrar geração + consumir crédito
     const generation = await prisma.generation.create({

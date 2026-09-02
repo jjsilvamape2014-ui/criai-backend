@@ -86,11 +86,11 @@ async function callLLM(systemPrompt, userText, opts = {}) {
           { role: 'user', content: userText }
         ],
         temperature: opts.temperature || 0.2,
-        max_tokens: 1024
+        max_tokens: opts.maxTokens || 1024
       };
-      if (JSON_MODE_OK[provider]) payload.response_format = { type: 'json_object' };
+      if (JSON_MODE_OK[provider] && opts.json !== false) payload.response_format = { type: 'json_object' };
 
-      const res = await axios.post(`${base}/chat/completions`, payload, { timeout: 60000, headers });
+      const res = await axios.post(`${base}/chat/completions`, payload, { timeout: opts.timeout || 60000, headers });
 
       // Groq/OpenRouter erram o trata array melhor: pega a 1ª escolha
       const choice = res.data && res.data.choices && res.data.choices[0];
@@ -364,4 +364,66 @@ async function parseEditRequest(message, memory) {
   return { ...parseHeuristic(message, memory, aspect), fromLLM: false };
 }
 
-module.exports = { parseEditRequest, callLLM, getProvider };
+// Reescreve o pedido do usuário em um prompt profissional de imagem em inglês,
+// estilo ChatGPT: expande pedidos vagos/absurdos em cena -> sujeito -> estilo ->
+// iluminação -> composição -> restrições. Retorna o prompt enriquecido + uma
+// breve confirmação em PT. Nunca quebra (fallback: prompt original + toques).
+async function enhanceImagePrompt(rawPrompt, opts = {}) {
+  const trimmed = (rawPrompt || '').trim();
+  if (!trimmed || trimmed.length < 3) return { prompt: trimmed, reply: '' };
+
+  const systemPrompt = [
+    'You are a world-class prompt engineer for AI image generation (FLUX).',
+    'The user describes in Portuguese (or English) what image they want — prompts can be vague, absurd or creative.',
+    'Rewrite it into ONE detailed English image prompt, exactly as ChatGPT would before rendering:',
+    '- structure: scene/background -> main subject (specific, with details) -> style/medium -> lighting -> composition/framing -> mood',
+    '- make it explicit and concrete (materials, textures, colors, camera angle, depth of field)',
+    '- keep the absurd/creative request alive (the user WANTS what they asked, even if wild) — do not censor, do not tone it down',
+    '- if it is a product/logo/banner request, aim for professional commercial quality (studio lighting, clean background)',
+    '- keep quoted text (“...” or \"...\") that the user wants printed in the image, verbatim, in quotes',
+    '- end with hard constraints: no text, no watermark, no letters (unless the user asked for text)',
+    'Rules: NEVER add “photorealistic, 8k, masterpiece, trending” spam. 2-5 sentences max. No explanations.',
+    'Then, on the next line after a separator “###CONF:” append a 1-sentence friendly confirmation in PORTUGUESE telling the user what was generated (never mention the prompt).',
+    'Format: <english prompt>\\n###CONF:<portuguese confirmation>'
+  ].join('\n');
+
+  const llmText = await callLLM(systemPrompt, `User request: ${trimmed}`, {
+    temperature: 0.7,
+    maxTokens: 600,
+    maxAttempts: 1,
+    timeout: 45000,
+    json: false
+  });
+
+  if (llmText && llmText.trim()) {
+    // Resposta pode vir com fenced code ou texto extra; extrai a última linha "###CONF:"
+    const cleaned = llmText.replace(/```/g, '').trim();
+    const confMatch = cleaned.match(/###CONF:\s*([\s\S]+)$/);
+    const prompt = confMatch ? cleaned.slice(0, confMatch.index).trim() : cleaned;
+    const reply = (confMatch && confMatch[1].trim()) || '';
+    if (prompt) return { prompt, reply, fromLLM: true };
+  }
+
+  // Fallback sem LLM: usa o otimizador leve por intenção (mantém o pedido do usuário)
+  return { prompt: optimizeFallback(trimmed), reply: '', fromLLM: false };
+}
+
+// Otimizador leve sem LLM (fallback): adiciona toques técnicos por intenção.
+function optimizeFallback(rawPrompt) {
+  const p = rawPrompt.toLowerCase();
+  let enhancement = '';
+  if (/(produto|product|loja|ecommerce|vender|catálogo|celular|camiseta|caneca|garrafa|bolsa|tênis)/.test(p)) {
+    enhancement = ', professional product photography, studio lighting, clean background, commercial quality, high-end e-commerce imagery';
+  } else if (/(realist|foto|camera|paisagem|retrato|cachorro|pessoa|natureza|praia|carro)/.test(p)) {
+    enhancement = ', ultra realistic photograph, natural lighting, sharp focus, professional photography';
+  } else if (/(desenho|ilustra|cartoon|anime|pixel|arte|fantasia)/.test(p)) {
+    enhancement = ', detailed digital illustration, vibrant colors, high detail';
+  } else {
+    enhancement = ', high quality, detailed, visually striking';
+  }
+  const hasQuoted = /"[^"]+"/.test(rawPrompt) || /(escrever|texto dizendo|com o texto|dizer|palavras?)/.test(p);
+  const noText = hasQuoted ? '' : ', no text, no watermark, no letters, no words';
+  return `${rawPrompt}${enhancement}${noText}`;
+}
+
+module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt };
