@@ -1,11 +1,52 @@
 const express = require('express');
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
+const sharp = require('sharp');
 const { authMiddleware } = require('../middleware');
 const { PrismaClient } = require('@prisma/client');
 const { enhanceImagePrompt } = require('../llm');
 const router = express.Router();
 const prisma = new PrismaClient();
+
+// Comprime/redimensiona uma imagem de referência (dataURL, URL ou Buffer) para um
+// tamanho seguro para envio à fal.ai. Fotos de celular em base64 podem passar de vários
+// MB e estourar o payload HTTP/limite da fal → erro 500 no site. Aqui reduzimos para
+// no máximo 1024px no maior lado e formato JPEG/q80 (~150-300KB), bem abaixo do limite.
+async function compressReferenceImage(imageDataOrUrl, maxPx = 1024, quality = 80) {
+  if (!imageDataOrUrl) return imageDataOrUrl;
+  let buffer;
+  try {
+    if (imageDataOrUrl.startsWith('data:')) {
+      const base64 = imageDataOrUrl.split(',')[1];
+      buffer = Buffer.from(base64, 'base64');
+    } else {
+      // URL externa → baixa
+      const res = await axios.get(imageDataOrUrl, { responseType: 'arraybuffer', timeout: 30000 });
+      buffer = Buffer.from(res.data);
+    }
+    if (!buffer || buffer.length === 0) return imageDataOrUrl;
+  } catch (e) {
+    console.error('compressReferenceImage: falha ao obter buffer, usando original:', e.message);
+    return imageDataOrUrl;
+  }
+
+  try {
+    let img = sharp(buffer, { limitInputPixels: false });
+    const meta = await img.metadata();
+    const w = meta.width || maxPx;
+    const h = meta.height || maxPx;
+    const scale = Math.min(1, maxPx / Math.max(w, h));
+    const out = await img
+      .rotate() // corrige orientação EXIF de fotos de celular
+      .resize({ width: Math.round(w * scale), height: Math.round(h * scale), fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality, mozjpeg: true })
+      .toBuffer();
+    return `data:image/jpeg;base64,${out.toString('base64')}`;
+  } catch (e) {
+    console.error('compressReferenceImage: sharp falhou, usando original:', e.message);
+    return imageDataOrUrl;
+  }
+}
 
 // Rate limit por usuário: 1 req/5s free, 1 req/1s premium
 const generateLimiter = rateLimit({
@@ -242,6 +283,17 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Prompt muito curto' });
     }
 
+    // Comprime a imagem de referência para evitar 500 por payload gigante
+    // (fotos de celular em base64 podem estourar o limite da fal.ai).
+    let refImage = referenceImage;
+    if (refImage) {
+      try {
+        refImage = await compressReferenceImage(refImage);
+      } catch (e) {
+        console.error('Falha ao comprimir referência:', e.message);
+      }
+    }
+
     // Verificar créditos
     const totalImageCredits = user.creditsImages + user.creditsPurchased;
     if (totalImageCredits <= 0) {
@@ -301,7 +353,7 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
 
     // Gera usando a cadeia de provedores (fal.ai -> Stability AI -> Hugging Face)
     let imageUrl = await generateImageFromProviders(enhancedPrompt, {
-      model, width, height, aspectRatio, negativePrompt, referenceImage, strength
+      model, width, height, aspectRatio, negativePrompt, referenceImage: refImage, strength
     });
 
     if (!imageUrl) {
@@ -355,6 +407,7 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
       error: 'Erro ao gerar imagem. Tente novamente.',
       details: err.message 
     });
+
   }
 });
 
@@ -406,37 +459,18 @@ async function generateImageFromProviders(prompt, opts = {}) {
     try {
       imageUrl = await generateImageFal(prompt, { model, width, height, aspectRatio, negativePrompt });
     } catch (e) {
-      console.error('fal.ai falhou, caindo para Hugging Face:', e.message);
+      console.error('fal.ai falhou:', e.message);
     }
   }
 
-  // 2) Fallback: Stability AI (gratuito, 25 creditos sem cartao) - suporta image-to-image
+  // 2) Fallback: Stability AI (suporta image-to-image)
   if (!imageUrl) {
     imageUrl = await generateImageStability(prompt, { width, height, negativePrompt, referenceImage, strength });
   }
 
-  // 3) Fallback: Hugging Face Inference API (gratuito)
-  if (!imageUrl) {
-    const modelId = MODELS.image[model] || MODELS.image.flux;
-    const hfResponse = await axios.post(
-      `https://api-inference.huggingface.co/models/${modelId}`,
-      { inputs: prompt, parameters: { negative_prompt: negativePrompt, width, height } },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.HF_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        responseType: 'arraybuffer',
-        timeout: 90000
-      }
-    );
-    // Se HF retornar JSON de erro (ex: modelo carregando), trata como falha
-    if (hfResponse.data[0] && hfResponse.data[0].error) {
-      throw new Error(hfResponse.data[0].error);
-    }
-    const imageBase64 = Buffer.from(hfResponse.data).toString('base64');
-    imageUrl = `data:image/png;base64,${imageBase64}`;
-  }
+  // 3) NOTA: sem fallback via Hugging Face — a Railway não tem DNS para
+  //    api-inference.huggingface.co (getaddrinfo ENOTFOUND), causando 500 no site.
+  //    Se nem fal.ai nem Stability gerarem, devolvemos null e a rota trata.
 
   return imageUrl;
 }
