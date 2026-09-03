@@ -117,6 +117,41 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       });
     }
 
+    // 1) PERGUNTA FORTE (travada ANTES do LLM de interpretação): se o pedido é criar
+    //     uma peça nova do zero (sem imagem anexada) e ainda faltam as informações
+    //     essenciais de identidade, o agente pergunta ANTES de gerar — em vez de
+    //     "chutar" ou deixar o LLM responder no escuro. Não gasta crédito.
+    const noRefForStrong = !(session.memory.refImages && session.memory.refImages.length > 0);
+    if (intent === 'create' && noRefForStrong && !session.memory.collecting) {
+      const projStrong = session.memory.project || {};
+      const wantsBrandStrong = /(logo|logomarca|marca|identidade|assinatura)/i.test(message);
+      const wantsObjStrong = /(banner|post|an[úu]cio|capa|cartaz|flyer|panfleto|p[ôo]ster|folder|comercial|campanha|publicidade|material|cart[ãa]o|impulso|story|logo|imagem|arte|arte final)/i.test(message) || /\b(para|destinado|voltado)\b/i.test(message);
+      const qStrong = [];
+      if (wantsBrandStrong && !projStrong.brand) qStrong.push('Qual é o nome/marca que deve aparecer na peça?');
+      if (wantsObjStrong && !projStrong.objective) qStrong.push('Qual o objetivo/tipo da peça (ex: post p/ Instagram, banner, capa, cartaz, anúncio...)?');
+      if (!(projStrong.colors && projStrong.colors.length)) qStrong.push('Quais cores devo usar (cores da sua marca ou preferência)?');
+      if (qStrong.length) {
+        const asksStrong = qStrong.slice(0, 2);
+        cerebro.pushHistory(session, 'user', message, null);
+        session.memory.pending = { ask: asksStrong, askedAt: Date.now(), creating: true };
+        session.memory.collecting = true;
+        const replyStrong = asksStrong.join('\n');
+        cerebro.pushHistory(session, 'assistant', replyStrong, null);
+        return res.json({
+          success: true,
+          sessionId: session.id,
+          reply: replyStrong,
+          ask: asksStrong,
+          needInfo: true,
+          imageUrl: null,
+          videoUrl: null,
+          type: 'create',
+          memory: session.memory,
+          history: session.history.slice(-20)
+        });
+      }
+    }
+
     // 1) Entender o que o usuário quer (LLM se houver saldo, senão heurística)
     let cmd;
     try {
@@ -227,43 +262,9 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // Se já estávamos coletando, garante que o flag é limpo antes de gerar
     session.memory.collecting = null;
 
-    // 2c-bis) PERGUNTA FORTE: criação de peça nova do zero (sem imagem anexada) sem a
-    //     identidade mínima → o agente pergunta ANTES de gastar crédito, em vez de
-    //     adivinhar. Funciona independente do LLM (rede de segurança).
-    const proj = session.memory.project || {};
-    const noRef = !(session.memory.refImages && session.memory.refImages.length > 0);
-    const isNewFresh = cmd.replace_prompt && noRef && !(cmd.ask && cmd.ask.length);
-    if (isNewFresh) {
-      const wantsBrand = /(logo|logomarca|marca|identidade|assinatura)/i.test(message);
-      const wantsObjective = /(banner|post|an[úu]ncio|capa|cartaz|flyer|panfleto|p[ôo]ster|folder|comercial|campanha|publicidade|material|cart[ãa]o|impulso|story|arte|arte final)/i.test(message) || /\b(para|destinado|voltado)\b/i.test(message);
-      const questions = [];
-      if (wantsBrand && !proj.brand) questions.push('Qual é o nome/marca da empresa/pessoa que deve aparecer?');
-      if (wantsObjective && !proj.objective) questions.push(`Qual o objetivo da peça (ex: post p/ Instagram, banner de site, anúncio, capa, cartaz...)?`);
-      if (!proj.colors || !proj.colors.length) questions.push('Quais cores devo usar (cores da sua marca, ou alguma preferência)?');
-      if (questions.length) {
-        const asks = questions.slice(0, 2);
-        session.memory.pending = { ask: asks, askedAt: Date.now(), creating: true };
-        session.memory.collecting = true;
-        const reply = asks.join('\n');
-        cerebro.pushHistory(session, 'assistant', reply, null);
-        const creditsNow = await prisma.user.findUnique({
-          where: { id: user.id },
-          select: { creditsImages: true, creditsVideos: true, creditsPurchased: true }
-        });
-        return res.json({
-          success: true,
-          sessionId: session.id,
-          reply,
-          ask: asks,
-          needInfo: true,
-          imageUrl: null,
-          videoUrl: null,
-          memory: session.memory,
-          history: session.history.slice(-20),
-          credits: creditsNow
-        });
-      }
-    }
+    // 2c-bis) Caso extra de criação do zero detectado pelo LLM (replace_prompt) que
+    //     não passou pela pergunta forte do topo — pode gerar direto (nada a fazer).
+    //     A pergunta forte principal roda ANTES do parseEditRequest.
 
     // 2d) AGENTE: pedido de vídeo → interpreta e gera image-to-video a partir da imagem
     //     anexada (ou da última gerada). O Cérebro decide o movimento pelo pedido.
