@@ -353,7 +353,7 @@ async function parseEditRequest(message, memory) {
     '  "ask": array of 1-2 short questions in PORTUGUESE ("..."), or [] — when TRUE essential information is missing to do a GREAT job and only 1 question unblocks the whole request.',
     '}',
     '',
-    'Use "ask" sparingly and ONLY when an essential, single piece of info is missing and would clearly change the result (e.g. creating a brand-new piece: "qual é o nome/marca da empresa?", "qual o objetivo: post p/ Instagram, banner, logo, anúncio?", "deseja incluir algum texto?"). If the request is editable with what we have, ask: []. Never ask more than once for the same field (check KNOWN PROJECT CONTEXT and recent replies against it). If the user says "não sei", "tanto faz", "você escolhe", or keeps it open, do NOT ask — proceed.',
+    'Use "ask" sparingly and ONLY when an essential, single piece of info is missing and would clearly change the result (e.g. creating a brand-new piece: "qual é o nome/marca da empresa?", "qual o objetivo: post p/ Instagram, banner, logo, anúncio?", "deseja incluir algum texto?"). IMPORANT: when the user has attached a reference IMAGE to edit, this is an EDIT — never ask, just do the edit (ask: []). If the request is editable with what we have, ask: []. Never ask more than once for the same field (check KNOWN PROJECT CONTEXT and recent replies against it). If the user says "não sei", "tanto faz", "você escolhe", or keeps it open, do NOT ask — proceed.',
     '',
     'Rules:',
     '- Combine all instructions in the user message into a single, coherent, non-contradictory prompt_delta. If the user says "troca o caminhão mas mantém o caminhão", interpret intent: replace the specific truck with another similar one, keep the composition.',
@@ -363,8 +363,10 @@ async function parseEditRequest(message, memory) {
     '- Never invent capabilities. Photorealistic/commercial quality for marketing pieces.'
   ].join('\n');
 
+  const hasRef = !!(memory && memory.refImages && memory.refImages.length > 0);
   const userBlock = [
     `User request: ${message}`,
+    hasRef ? 'A REFERENCE IMAGE(s) IS ATTACHED for editing — treat this as an EDIT of that image (e.g. add a hat), NOT a new image. Do not ask questions, do the edit.' : '',
     memory && memory.currentPrompt ? `Current full prompt so far: "${memory.currentPrompt}"` : '',
     memory && memory.collecting
       ? `ALREADY ASKED these questions (do not ask again): ${JSON.stringify(memory.pending && memory.pending.ask ? memory.pending.ask : memory.collecting)}`
@@ -417,7 +419,7 @@ async function parseEditRequest(message, memory) {
   if (!projMiss.brand && /logo|logomarca|marca/.test(message)) missingNew.push('Qual é o nome/marca da empresa?');
   if (!projMiss.objective) missingNew.push('Qual o objetivo desta peça (post p/ Instagram, banner de site, anúncio, capa...)?');
   if (!projMiss.colors || !projMiss.colors.length) missingNew.push('Quais cores devo usar (cores da sua marca)?');
-  if (missingNew.length && isNewPiece && !(memory && memory.collecting)) {
+  if (missingNew.length && isNewPiece && !hasRef && !(memory && memory.collecting)) {
     return {
       reply: missingNew.slice(0, 2).join('\n'),
       ask: missingNew.slice(0, 2),
