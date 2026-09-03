@@ -94,6 +94,16 @@ function optimizePrompt(rawPrompt) {
   return `${trimmed}${enhancement}${noText}`;
 }
 
+// Extrai a URL (ou URLs) de imagem do corpo de resposta das APIs da fal.ai,
+// suportando os vários formatos de saída (images[], data[], image{}).
+function extractImages(data) {
+  if (!data) return null;
+  const images = data.images || data.data || (data.image ? (Array.isArray(data.image) ? data.image : [data.image]) : []);
+  if (!images || !images.length) return null;
+  const im = images[0];
+  return typeof im === 'string' ? im : (im.url || im.image_url || null);
+}
+
 // Gera imagem via fal.ai (modelos premium: Flux Pro v1.1 / Flux 2 Pro, Ideogram 4.0)
 // Flux Pro v1.1 suporta image-to-image (edição real) quando uma imagem de referência é enviada.
 async function generateImageFal(prompt, opts) {
@@ -130,14 +140,6 @@ async function generateImageFal(prompt, opts) {
       payload.image = opts.referenceImage;
     }
   }
-
-  const extractImages = (data) => {
-    if (!data) return null;
-    const images = data.images || data.data || (data.image ? (Array.isArray(data.image) ? data.image : [data.image]) : []);
-    if (!images.length) return null;
-    const im = images[0];
-    return typeof im === 'string' ? im : (im.url || im.image_url || null);
-  };
 
   const res = await axios.post(endpoint, payload, { headers, timeout: 60000 });
   const data = res.data || {};
@@ -190,6 +192,92 @@ async function generateImageFal(prompt, opts) {
 
   // Alguns endpoints respondem síncrono com as imagens direto no corpo do POST
   return extractImages(data);
+}
+
+// Edição instrucional de imagem via Nano Banana Pro (Google Gemini image editing) —
+// preserva o sujeito/pessoa original e aplica a instrução (ex: "coloca um chapéu").
+// Aceita uma (ou mais) imagens de referência em image_urls + prompt de instrução.
+async function generateImageNanoBanana(prompt, opts = {}) {
+  const FAL_KEY = process.env.FAL_KEY;
+  if (!FAL_KEY) return null;
+  const headers = { Authorization: `Key ${FAL_KEY}`, 'Content-Type': 'application/json' };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const imageUrls = (opts.imageUrls || []).filter(Boolean).slice(0, 4);
+  if (!imageUrls.length) return null;
+
+  let endpoint;
+  let payload;
+  if (process.env.FAL_NANO_EDIT_ENDPOINT) {
+    endpoint = process.env.FAL_NANO_EDIT_ENDPOINT;
+    payload = {
+      prompt,
+      num_images: 1,
+      output_format: 'png',
+      image_urls: imageUrls
+    };
+  } else {
+    endpoint = 'https://queue.fal.run/fal-ai/nano-banana-pro/edit';
+    payload = {
+      prompt,
+      num_images: 1,
+      aspect_ratio: 'auto',
+      output_format: 'png',
+      resolution: '1K',
+      limit_generations: true,
+      safety_tolerance: '4',
+      image_urls: imageUrls
+    };
+  }
+
+  try {
+    const res = await axios.post(endpoint, payload, { headers, timeout: 90000 });
+    const data = res.data || {};
+
+    if (data.status_url) {
+      const deadline = Date.now() + (opts.timeout || 180000);
+      let status = data.status || 'IN_QUEUE';
+      while (Date.now() < deadline) {
+        await sleep(2500);
+        try {
+          const pollRes = await axios.get(data.status_url, { headers, timeout: 30000, validateStatus: (s) => s < 500 });
+          const pd = pollRes.data || {};
+          status = pd.status || status;
+        } catch (e) {
+          const st = e.response && e.response.status;
+          if (!st || st >= 500) continue;
+          console.error('nano-banana status erro:', e.message);
+          return null;
+        }
+        if (status === 'COMPLETED') break;
+        if (status === 'ERROR' || status === 'CANCELLED') {
+          console.error('nano-banana job falhou:', status);
+          return null;
+        }
+      }
+      if (status !== 'COMPLETED') return null;
+      if (data.response_url) {
+        for (let tries = 0; tries < 3; tries++) {
+          try {
+            const final = await axios.get(data.response_url, { headers, timeout: 60000, validateStatus: (s) => s < 500 });
+            if (final.status === 200) {
+              const out = extractImages(final.data);
+              if (out) return out;
+            }
+          } catch (e) {
+            console.error('nano-banana fetch resultado falhou:', e.message);
+          }
+          await sleep(2000);
+        }
+      }
+      return null;
+    }
+
+    return extractImages(data);
+  } catch (e) {
+    console.error('nano-banana falhou:', e.response && e.response.data ? JSON.stringify(e.response.data).slice(0, 200) : e.message);
+    return null;
+  }
 }
 
 // Gera imagem via Stability AI (SD 3.5 / Core) - 25 creditos gratis, autenticacao Bearer + multipart
@@ -438,11 +526,18 @@ async function generateImageFromProviders(prompt, opts = {}) {
   let imageUrl = null;
   const FAL_KEY = process.env.FAL_KEY;
 
-  // Se há uma imagem de referência, priorizar flux-pro v1.1 (image-to-image real) para
-  // realmente editar a imagem original (remover pessoa, trocar cor, colocar logo, etc).
-  // Stability AI também suporta img2img; Hugging Face é só texto→imagem (fallback final).
+  // Se há uma imagem de referência, priorizar a edição instrucional (Nano Banana Pro /
+  // Gemini) que PRESERVA o sujeito/pessoa original (ex: "coloca um chapéu na pessoa").
+  // Fallback: flux-pro v1.1 (image-to-image) e Stability AI (img2img).
   if (referenceImage) {
     if (FAL_KEY) {
+      try {
+        imageUrl = await generateImageNanoBanana(prompt, { imageUrls: Array.isArray(referenceImage) ? referenceImage : [referenceImage] });
+      } catch (e) {
+        console.error('nano-banana edição falhou:', e.message);
+      }
+    }
+    if (!imageUrl && FAL_KEY) {
       try {
         imageUrl = await generateImageFal(prompt, { model, width, height, aspectRatio, negativePrompt, referenceImage });
       } catch (e) {
