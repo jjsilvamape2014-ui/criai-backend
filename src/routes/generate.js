@@ -137,7 +137,9 @@ async function generateImageFal(prompt, opts) {
       aspect_ratio: ratio
     };
     if (opts.referenceImage) {
-      payload.image = opts.referenceImage;
+      // Campo correto do flux-pro v1.1 para image-to-image (o "image" é ignorado pela API,
+      // o que fazia o app gerar do zero e desconsiderar a foto anexada).
+      payload.image_url = opts.referenceImage;
     }
   }
 
@@ -701,4 +703,5 @@ router.get('/history', authMiddleware, async (req, res) => {
 
 router.optimizePrompt = optimizePrompt;
 router.generateImageFromProviders = generateImageFromProviders;
+router.generateVideoFal = generateVideoFal;
 module.exports = router;

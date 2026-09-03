@@ -4,7 +4,7 @@ const { PrismaClient } = require('@prisma/client');
 
 const { authMiddleware } = require('../middleware');
 const generateRoutes = require('./generate');
-const { parseEditRequest, enhanceImagePrompt } = require('../llm');
+const { parseEditRequest, enhanceImagePrompt, replyConversation, detectIntent } = require('../llm');
 const cerebro = require('../cerebro');
 const logo = require('../logo');
 
@@ -86,6 +86,25 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     } else if (image && !session.memory.baseImage) {
       session.memory.baseImage = image;
       session.memory.refImages = [image];
+    }
+
+    // 0) AGENTE conversacional: se o pedido é só uma conversa/dúvida (não é uma ação
+    //     de criação/edição/vídeo), responde como chat normal SEM gastar crédito.
+    const intent = detectIntent(message, session.memory);
+    if (intent === 'conversation') {
+      cerebro.pushHistory(session, 'user', message, null);
+      const answer = await replyConversation(message, session.memory) || 'Não entendi ainda — pode me falar o que você quer criar? Posso gerar e editar imagens e vídeos.';
+      cerebro.pushHistory(session, 'assistant', answer, null);
+      return res.json({
+        success: true,
+        sessionId: session.id,
+        reply: answer,
+        imageUrl: null,
+        videoUrl: null,
+        type: 'conversation',
+        memory: session.memory,
+        history: session.history.slice(-20)
+      });
     }
 
     // 1) Entender o que o usuário quer (LLM se houver saldo, senão heurística)
@@ -197,6 +216,50 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     }
     // Se já estávamos coletando, garante que o flag é limpo antes de gerar
     session.memory.collecting = null;
+
+    // 2d) AGENTE: pedido de vídeo → interpreta e gera image-to-video a partir da imagem
+    //     anexada (ou da última gerada). O Cérebro decide o movimento pelo pedido.
+    const isVideoRequest = /\b(v[íi]deo|anima[çc][ãa]o|anima\w*|transforma?\s*em\s*(v[íi]deo|anima)|faz\s*um\s*(v[íi]deo|anima)|tour\s*360|360\s*graus|cena\s*em\s*movimento|imagem\s*em\s*movimento|movimenta\w*)\b/i.test(message);
+    if (isVideoRequest) {
+      const videoSource = session.memory.refImages[0] || session.memory.baseImage;
+      if (!videoSource) {
+        cerebro.pushHistory(session, 'assistant', 'Para criar um vídeo, envie antes a imagem (foto) que quer transformar em vídeo.', null);
+        return res.json({ success: true, sessionId: session.id, reply: 'Para criar um vídeo, envie antes a imagem (foto) que quer transformar em vídeo.', imageUrl: null, videoUrl: null, memory: session.memory, history: session.history.slice(-20) });
+      }
+      if (user.creditsVideos <= 0 && user.creditsPurchased <= 0) {
+        return res.status(403).json({ error: 'Créditos de vídeo esgotados. Assine o plano para gerar vídeos.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+      }
+
+      const generation = await prisma.generation.create({
+        data: { userId: user.id, type: 'VIDEO', prompt: '[agente-video] ' + message.slice(0, 200), status: 'PROCESSING', cost: 1 }
+      });
+      const usedPurchased = user.creditsPurchased > 0;
+      if (usedPurchased) {
+        await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
+      } else {
+        await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { decrement: 1 } } });
+      }
+
+      const motion = /\btour\b|\b360\b|giro|rota|circular|panoram/i.test(message) ? 'orbit' : (/andar|caminhar|andar em dire|personagem se move|ele anda/i.test(message) ? 'walk' : 'subtle');
+      try {
+        const videoUrl = await generateRoutes.generateVideoFal(videoSource, `create a smooth cinematic ${motion === 'orbit' ? '360-degree rotating view' : motion === 'walk' ? 'walking movement' : 'subtle lifelike motion'} of this image`, motion, {});
+        if (videoUrl) {
+          await prisma.generation.update({ where: { id: generation.id }, data: { status: 'COMPLETED', imageUrl: videoUrl } });
+          session.memory.baseImage = videoUrl;
+          session.memory.refImages[0] = videoUrl;
+          const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });
+          cerebro.pushHistory(session, 'assistant', 'Vídeo gerado!', videoUrl);
+          return res.json({ success: true, sessionId: session.id, reply: 'Vídeo criado a partir da sua imagem.', videoUrl, type: 'video', memory: session.memory, history: session.history.slice(-20), credits });
+        }
+      } catch (e) {
+        console.error('Cérebro: geração de vídeo falhou:', e.message);
+      }
+      await prisma.user.update({
+        where: { id: user.id },
+        data: usedPurchased ? { creditsPurchased: { increment: 1 } } : { creditsVideos: { increment: 1 } }
+      });
+      return res.status(502).json({ error: 'Não foi possível gerar o vídeo agora. Tente novamente.', code: 'GEN_FAILED' });
+    }
 
     // 3) Compor o prompt técnico acumulado (memória fotográfica da conversa)
     let finalPrompt = cerebro.composePrompt(session.memory, cmd, message);

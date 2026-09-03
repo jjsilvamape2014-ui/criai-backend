@@ -548,4 +548,44 @@ function optimizeFallback(rawPrompt) {
   return `${rawPrompt}${enhancement}${noText}`;
 }
 
-module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt };
+// Responde uma mensagem puramente conversacional (dúvida, pergunta geral, bate-papo)
+// sem gerar imagem nem gastar crédito — o agente "conversa" como o ChatGPT.
+async function replyConversation(message, memory) {
+  const sys = [
+    'You are the conversational assistant of "Criativa AI", an image/video creation platform (like ChatGPT).',
+    'You also help users design marketing pieces. Be friendly, concise, in PORTUGUESE (pt-BR).',
+    'If the user asks something you cannot do, say so honestly and offer what you CAN do.',
+    'Answer the user\'s question directly. Keep it short (2-5 sentences) unless they ask for details.',
+    'When relevant, mention you can create/edit images and videos by describing what you want.'
+  ].join('\n');
+  try {
+    const text = await callLLM(sys, `User: ${message}`, { temperature: 0.6, maxTokens: 500 });
+    if (text && text.trim()) return text.trim();
+  } catch (e) {
+    console.error('replyConversation falhou:', e.message);
+  }
+  return null;
+}
+
+// Classifica a intenção do pedido do usuário para o agente decidir a ação:
+//   "conversation" (só conversa/dúvida), "create" (gerar do zero),
+//   "edit" (editar imagem anexada), "video" (gerar vídeo), "logo" (nome/marca)
+function detectIntent(message, memory) {
+  const m = (message || '').toLowerCase();
+  const hasRef = !!(memory && memory.refImages && memory.refImages.length > 0);
+
+  if (/\b(v[íi]deo|anima[çc][ãa]o|anima\w*|transforma?\s*em\s*(v[íi]deo|anima)|tour\s*360|360\s*graus|imagem\s*em\s*movimento|movimenta\w*)\b/.test(m)) {
+    return 'video';
+  }
+  if (/(quem é você|quem e voce|você existe|você é uma|o que é|como funciona|me explica|explica|pra que serve|para que serve|obrigad|tudo bem|bom dia|boa tarde|boa noite|oi|ola|olá|como você (está|ta)|pode me ajudar|ajuda|você consegue fazer|você sabe|não sei|tanto faz|muito obrigad)/.test(m) && !hasRef) {
+    return 'conversation';
+  }
+  // Edição quando há imagem anexada e o pedido altera a imagem (não cria do zero)
+  if (hasRef) {
+    const createFromScratch = /(criar|cria|crie|fazer|faça|faca|gera|gere|montar|desenhar)\s+(uma|um|outra)\s+(nova\s+)?(\s*(imagem|arte|peça|peca|banner|logo|post|vídeo|video|capa))/.test(m);
+    if (!createFromScratch) return 'edit';
+  }
+  return 'create';
+}
+
+module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent };
