@@ -91,6 +91,21 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // 0) AGENTE conversacional: se o pedido é só uma conversa/dúvida (não é uma ação
     //     de criação/edição/vídeo), responde como chat normal SEM gastar crédito.
     const intent = detectIntent(message, session.memory);
+    if (intent === 'clarify') {
+      cerebro.pushHistory(session, 'user', message, null);
+      const clarifyReply = 'Entendi, mas me conta um pouco mais para eu acertar de primeira:\n\n• O que você quer criar ou mudar? (imagem, logo, banner, vídeo...)\n• Tem uma foto/marca para eu usar como base?\n\nQuanto mais detalhe você der (tipo de peça, cores, texto, objetivo), melhor fica o resultado.';
+      cerebro.pushHistory(session, 'assistant', clarifyReply, null);
+      return res.json({
+        success: true,
+        sessionId: session.id,
+        reply: clarifyReply,
+        imageUrl: null,
+        videoUrl: null,
+        type: 'clarify',
+        memory: session.memory,
+        history: session.history.slice(-20)
+      });
+    }
     if (intent === 'conversation') {
       cerebro.pushHistory(session, 'user', message, null);
       const answer = await replyConversation(message, session.memory) || 'Não entendi ainda — pode me falar o que você quer criar? Posso gerar e editar imagens e vídeos.';
@@ -216,6 +231,44 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     }
     // Se já estávamos coletando, garante que o flag é limpo antes de gerar
     session.memory.collecting = null;
+
+    // 2c-bis) PERGUNTA FORTE: criação de peça nova do zero (sem imagem anexada) sem a
+    //     identidade mínima → o agente pergunta ANTES de gastar crédito, em vez de
+    //     adivinhar. Funciona independente do LLM (rede de segurança).
+    const proj = session.memory.project || {};
+    const noRef = !(session.memory.refImages && session.memory.refImages.length > 0);
+    const isNewFresh = cmd.replace_prompt && noRef && !(cmd.ask && cmd.ask.length);
+    if (isNewFresh) {
+      const wantsBrand = /(logo|logomarca|marca|identidade|assinatura)/i.test(message);
+      const wantsObjective = /(banner|post|an[úu]ncio|capa|cartaz|flyer|panfleto|p[ôo]ster|folder|comercial|campanha|publicidade|material|cart[ãa]o|impulso|story|arte|arte final)/i.test(message) || /\b(para|destinado|voltado)\b/i.test(message);
+      const questions = [];
+      if (wantsBrand && !proj.brand) questions.push('Qual é o nome/marca da empresa/pessoa que deve aparecer?');
+      if (wantsObjective && !proj.objective) questions.push(`Qual o objetivo da peça (ex: post p/ Instagram, banner de site, anúncio, capa, cartaz...)?`);
+      if (!proj.colors || !proj.colors.length) questions.push('Quais cores devo usar (cores da sua marca, ou alguma preferência)?');
+      if (questions.length) {
+        const asks = questions.slice(0, 2);
+        session.memory.pending = { ask: asks, askedAt: Date.now(), creating: true };
+        session.memory.collecting = true;
+        const reply = asks.join('\n');
+        cerebro.pushHistory(session, 'assistant', reply, null);
+        const creditsNow = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { creditsImages: true, creditsVideos: true, creditsPurchased: true }
+        });
+        return res.json({
+          success: true,
+          sessionId: session.id,
+          reply,
+          ask: asks,
+          needInfo: true,
+          imageUrl: null,
+          videoUrl: null,
+          memory: session.memory,
+          history: session.history.slice(-20),
+          credits: creditsNow
+        });
+      }
+    }
 
     // 2d) AGENTE: pedido de vídeo → interpreta e gera image-to-video a partir da imagem
     //     anexada (ou da última gerada). O Cérebro decide o movimento pelo pedido.

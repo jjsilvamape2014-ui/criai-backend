@@ -569,22 +569,36 @@ async function replyConversation(message, memory) {
 
 // Classifica a intenção do pedido do usuário para o agente decidir a ação:
 //   "conversation" (só conversa/dúvida), "create" (gerar do zero),
-//   "edit" (editar imagem anexada), "video" (gerar vídeo), "logo" (nome/marca)
+//   "edit" (editar imagem anexada), "video" (gerar vídeo),
+//   "clarify" (pedido ambíguo/declarativo → agente deve perguntar o que o usuário quer)
 function detectIntent(message, memory) {
-  const m = (message || '').toLowerCase();
+  const m = (message || '').toLowerCase().trim();
   const hasRef = !!(memory && memory.refImages && memory.refImages.length > 0);
 
-  if (/\b(v[íi]deo|anima[çc][ãa]o|anima\w*|transforma?\s*em\s*(v[íi]deo|anima)|tour\s*360|360\s*graus|imagem\s*em\s*movimento|movimenta\w*)\b/.test(m)) {
+  // 1) VÍDEO
+  if (/\b(v[íi]deo|anima[çc][ãa]o|anima\w*|tour\s*360|360\s*graus|imagem\s*em\s*movimento|movimenta\w*)\b/.test(m)) {
     return 'video';
   }
-  if (/(quem é você|quem e voce|você existe|você é uma|o que é|como funciona|me explica|explica|pra que serve|para que serve|obrigad|tudo bem|bom dia|boa tarde|boa noite|oi|ola|olá|como você (está|ta)|pode me ajudar|ajuda|você consegue fazer|você sabe|não sei|tanto faz|muito obrigad)/.test(m) && !hasRef) {
+
+  // 2) EDIÇÃO: imagem anexada e o pedido altera A PRÓPRIA imagem (não cria do zero)
+  if (hasRef) {
+    const createNew = /(criar|cria|crie|fazer|faça|faca|gera|gere|montar|desenhar)\s+(uma|um|outra)\s+(nova\s+)?(imagem|arte|peça|peca|banner|logo|post|vídeo|video|capa)/.test(m);
+    if (!createNew) return 'edit';
+  }
+
+  // 3) CONVERSA / cortesia / dúvida (restrito, só quando não há imagem e não pede ação)
+  if (!hasRef && /(^|\s)(oi|ola|olá|opa|eai|e ai|bom dia|boa tarde|boa noite|tudo bem|obrigad|brigad|valeu)\b|(quem é|quem e|quem\s+voce|quem\s+você)\s|(como funciona|o que é|pra que serve|para que serve|me explica|explica como|como uso|como começar|não sei usar|quais as opções|o que posso|o que eu posso|pode me ajudar|você consegue fazer|você sabe|você existe|o que você faz|o que vc faz|me da um exemplo|me dê um exemplo)\b/.test(m)) {
     return 'conversation';
   }
-  // Edição quando há imagem anexada e o pedido altera a imagem (não cria do zero)
-  if (hasRef) {
-    const createFromScratch = /(criar|cria|crie|fazer|faça|faca|gera|gere|montar|desenhar)\s+(uma|um|outra)\s+(nova\s+)?(\s*(imagem|arte|peça|peca|banner|logo|post|vídeo|video|capa))/.test(m);
-    if (!createFromScratch) return 'edit';
+
+  // 4) PEDIDO DECLARATIVO/SOLTO sem verbo de ação claro → perguntar o que o usuário quer.
+  //     Se o usuário já pede um TIPO de peça ("quero um logo", "quero um banner"), é ação → create.
+  const asksForPiece = /(quero|gostaria|preciso|necessito)\s+(de\s+)?(um|uma|um pouco de)\s+(logo|logomarca|banner|imagem|post|arte|pe[çc]a|capa|cartaz|flyer|panfleto|folder|cart[ãa]o|v[íi]deo|video|story|an[úu]ncio|impulso|comercial|marca|identidade)/.test(m);
+  if (!asksForPiece && (/(^|\s)(quero|gostaria|necessito|preciso|talvez|seria bom|desejo)(\s|[.?!]|$)/.test(m) || /\b(me (dá|da|de) um exemplo|exemplo de|ideia de|sugest[ãa]o de|pode me dar|me manda)\b/.test(m)) && !/\b(criar|fazer|gera|gerar|edita|editar|transforma|mudar|trocar|remover|deixar|colocar|desenhar|montar|faz)\b/.test(m)) {
+    return 'clarify';
   }
+
+  // 5) Criação (ação explícita ou restante)
   return 'create';
 }
 
