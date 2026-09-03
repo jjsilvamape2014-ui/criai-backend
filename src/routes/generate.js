@@ -704,4 +704,5 @@ router.get('/history', authMiddleware, async (req, res) => {
 router.optimizePrompt = optimizePrompt;
 router.generateImageFromProviders = generateImageFromProviders;
 router.generateVideoFal = generateVideoFal;
+router.compressReferenceImage = compressReferenceImage;
 module.exports = router;

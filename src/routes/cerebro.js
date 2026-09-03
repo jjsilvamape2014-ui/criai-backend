@@ -318,11 +318,30 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
 
     if (!imageUrl) {
       try {
-        imageUrl = await generateRoutes.generateImageFromProviders(finalPrompt, {
+        // Comprime a imagem de referência (foto do celular em base64 pode estourar o
+        // payload da fal → 500). Reduz para ~1024px/JPEG sem perder o que importa.
+        let safeRef = editSource;
+        if (safeRef) {
+          const comp = await generateRoutes.compressReferenceImage(safeRef, 1024, 80);
+          if (comp) safeRef = comp;
+          if (session.memory.refImages[0]) session.memory.refImages[0] = safeRef;
+        }
+        // Edição de imagem anexada: passa uma INSTRUÇÃO explícita em inglês para o
+        // modelo de edição (Nano Banana/Gemini) entender que é uma edição da FOTO
+        // enviada, preservando o sujeito/pessoa — não uma cena nova.
+        let editPrompt = finalPrompt;
+        if (safeRef && !cmd.replace_prompt) {
+          const delta = (cmd.prompt_delta || message || '').trim();
+          const preserve = /(person|pessoa|pessoas|people|retrato|rosto|pessoa na|nela|nele)/i.test(message) || /(person)/i.test(delta)
+            ? ' Keep the SAME person(s), same face, identity, pose, clothing, body and background exactly as in the source image (only apply the requested change).'
+            : ' Edit this exact photo/image, keeping the main subject, composition and style as in the source image unless the user asked to change them.';
+          editPrompt = `Edit the attached source image as requested: ${delta}.${preserve}`;
+        }
+        imageUrl = await generateRoutes.generateImageFromProviders(editPrompt, {
           width,
           height,
-          referenceImage: editSource,
-          strength: cmd.strength
+          referenceImage: safeRef,
+          strength: 0.3
         });
       } catch (e) {
         console.error('Cérebro Visual: geração falhou:', e.message);
