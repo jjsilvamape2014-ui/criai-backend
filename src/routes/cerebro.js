@@ -51,11 +51,6 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Digite o que quer mudar na imagem.' });
     }
 
-    const totalImageCredits = user.creditsImages + user.creditsPurchased;
-    if (totalImageCredits <= 0) {
-      return res.status(403).json({ error: 'Créditos esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
-    }
-
     const sid = typeof sessionId === 'string' && sessionId ? sessionId : cerebro.newSessionId();
     const session = cerebro.getOrCreateSession(user.id, sid);
 
@@ -312,6 +307,13 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         data: usedPurchased ? { creditsPurchased: { increment: 1 } } : { creditsVideos: { increment: 1 } }
       });
       return res.status(502).json({ error: 'Não foi possível gerar o vídeo agora. Tente novamente.', code: 'GEN_FAILED' });
+    }
+
+    // Checagem de crédito de IMAGEM: deve ocorrer SÓ aqui (antes de gerar/debitar),
+    // e NUNCA no início, para que conversa/perguntas/coleta funcionem sem crédito.
+    const totalImageCredits = user.creditsImages + user.creditsPurchased;
+    if (totalImageCredits <= 0) {
+      return res.status(403).json({ error: 'Créditos esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
     }
 
     // 3) Compor o prompt técnico acumulado (memória fotográfica da conversa)
