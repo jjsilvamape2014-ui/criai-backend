@@ -118,7 +118,10 @@ async function generateImageFal(prompt, opts) {
   let payload;
 
   if (model === 'ideogram4' || model === 'ideogram') {
-    endpoint = 'https://queue.fal.run/fal-ai/ideogram/v4';
+    // NOTA: o caminho /fal-ai/ideogram/v4 NÃO existe na fal.ai (POST entra na fila mas
+    // "conclui" sem gerar imagem — response_url aponta para rota inválida). O v3 existe
+    // e é excelente em renderizar TEXTO em português. Saída: { images: [{ url }] }.
+    endpoint = 'https://queue.fal.run/fal-ai/ideogram/v3';
     payload = {
       prompt,
       image_size: { width: opts.width || 1024, height: opts.height || 1024 },

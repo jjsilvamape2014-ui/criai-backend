@@ -335,7 +335,7 @@ async function parseEditRequest(message, memory) {
   ].join('\n');
 
   const systemPrompt = [
-    'You are a world-class creative art director and image editor, like ChatGPT\'s image feature.',
+    'You are a world-class creative art director and image editor, like a top-tier AI image editor.',
     'The user is building a visual piece ITERATIVELY (marketing/post/logo/banner). They send references and corrections over many messages. You must interpret the full request — not just copy it — separating preserve / remove / replace / add, respecting brand identity, colors, objective and hierarchy.',
     '',
     'KNOWN PROJECT CONTEXT (persist these, they were decided in earlier messages):',
@@ -497,7 +497,7 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
     'You are a world-class prompt engineer for AI image generation (FLUX).',
     'The user describes in Portuguese (or English) what image they want — prompts can be vague, absurd or creative.',
     projectLines ? 'KNOWN PROJECT IDENTITY (respect these unless contradicted by the user): ' + projectLines : '',
-    'Rewrite it into ONE detailed English image prompt, exactly as ChatGPT would before rendering:',
+    'Rewrite it into ONE detailed English image prompt, exactly as a top-tier AI studio would before rendering:',
     '- structure: scene/background -> main subject (specific, with details) -> style/medium -> lighting -> composition/framing -> mood',
     '- make it explicit and concrete (materials, textures, colors, camera angle, depth of field)',
     '- keep the absurd/creative request alive (the user WANTS what they asked, even if wild) — do not censor, do not tone it down',
@@ -552,7 +552,7 @@ function optimizeFallback(rawPrompt) {
 // sem gerar imagem nem gastar crédito — o agente "conversa" como o ChatGPT.
 async function replyConversation(message, memory) {
   const sys = [
-    'You are the conversational assistant of "Criativa AI", an image/video creation platform (like ChatGPT).',
+    'You are the conversational assistant of "Criativa AI", an AI image/video creation platform.',
     'You also help users design marketing pieces. Be friendly, concise, in PORTUGUESE (pt-BR).',
     'If the user asks something you cannot do, say so honestly and offer what you CAN do.',
     'Answer the user\'s question directly. Keep it short (2-5 sentences) unless they ask for details.',
