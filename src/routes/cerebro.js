@@ -20,6 +20,8 @@ const chatLimiter = rateLimit({
 });
 
 async function consumeCredit(user) {
+  // Plano PREMIUM é ilimitado — não consome crédito.
+  if (user.plan === 'PREMIUM') return false;
   if (user.creditsPurchased > 0) {
     await prisma.user.update({
       where: { id: user.id },
@@ -31,9 +33,12 @@ async function consumeCredit(user) {
       data: { creditsImages: { decrement: 1 } }
     });
   }
+  return true;
 }
 
 async function refundCredits(user) {
+  // Plano PREMIUM é ilimitado — nunca consumiu, então não reembolsa.
+  if (user.plan === 'PREMIUM') return;
   await prisma.user.update({
     where: { id: user.id },
     data: { creditsPurchased: { increment: 1 } }
@@ -275,17 +280,17 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         cerebro.pushHistory(session, 'assistant', 'Para criar um vídeo, envie antes a imagem (foto) que quer transformar em vídeo.', null);
         return res.json({ success: true, sessionId: session.id, reply: 'Para criar um vídeo, envie antes a imagem (foto) que quer transformar em vídeo.', imageUrl: null, videoUrl: null, memory: session.memory, history: session.history.slice(-20) });
       }
-      if (user.creditsVideos <= 0 && user.creditsPurchased <= 0) {
+      if (user.plan !== 'PREMIUM' && user.creditsVideos <= 0 && user.creditsPurchased <= 0) {
         return res.status(403).json({ error: 'Créditos de vídeo esgotados. Assine o plano para gerar vídeos.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
       }
 
       const generation = await prisma.generation.create({
         data: { userId: user.id, type: 'VIDEO', prompt: '[agente-video] ' + message.slice(0, 200), status: 'PROCESSING', cost: 1 }
       });
-      const usedPurchased = user.creditsPurchased > 0;
+      const usedPurchased = user.plan !== 'PREMIUM' && user.creditsPurchased > 0;
       if (usedPurchased) {
         await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
-      } else {
+      } else if (user.plan !== 'PREMIUM') {
         await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { decrement: 1 } } });
       }
 
@@ -305,7 +310,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       }
       await prisma.user.update({
         where: { id: user.id },
-        data: usedPurchased ? { creditsPurchased: { increment: 1 } } : { creditsVideos: { increment: 1 } }
+        data: usedPurchased ? { creditsPurchased: { increment: 1 } } : (user.plan === 'PREMIUM' ? {} : { creditsVideos: { increment: 1 } })
       });
       return res.status(502).json({ error: 'Não foi possível gerar o vídeo agora. Tente novamente.', code: 'GEN_FAILED' });
     }
@@ -313,7 +318,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // Checagem de crédito de IMAGEM: deve ocorrer SÓ aqui (antes de gerar/debitar),
     // e NUNCA no início, para que conversa/perguntas/coleta funcionem sem crédito.
     const totalImageCredits = user.creditsImages + user.creditsPurchased;
-    if (totalImageCredits <= 0) {
+    if (user.plan !== 'PREMIUM' && totalImageCredits <= 0) {
       return res.status(403).json({ error: 'Créditos esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
     }
 

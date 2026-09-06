@@ -52,6 +52,27 @@ app.post('/api/admin/reset-credits', async (req, res) => {
   }
 });
 
+// Admin: promove um usuário para o plano PREMIUM (ilimitado). Protegido por ADMIN_KEY.
+app.post('/api/admin/premium', async (req, res) => {
+  try {
+    const { email, adminKey } = req.body || {};
+    if (!email || !adminKey || adminKey !== process.env.ADMIN_KEY) {
+      return res.status(403).json({ error: 'Não autorizado' });
+    }
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { plan: 'PREMIUM', creditsImages: 100000, creditsVideos: 100000, creditsPurchased: 100000 }
+    });
+    res.json({ message: 'Usuário promovido para PREMIUM', email });
+  } catch (err) {
+    res.status(500).json({ error: 'Erro ao promover usuário: ' + err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
   console.log(`📡 API: http://localhost:${PORT}/api`);

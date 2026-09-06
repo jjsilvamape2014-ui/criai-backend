@@ -384,9 +384,10 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
       }
     }
 
-    // Verificar créditos
+    // Verificar créditos (plano PREMIUM é ilimitado)
+    const isUnlimitedImage = user.plan === 'PREMIUM';
     const totalImageCredits = user.creditsImages + user.creditsPurchased;
-    if (totalImageCredits <= 0) {
+    if (!isUnlimitedImage && totalImageCredits <= 0) {
       return res.status(403).json({ 
         error: 'Créditos esgotados',
         code: 'NO_CREDITS',
@@ -406,14 +407,14 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
       }
     });
 
-    // Consumir crédito (primeiro os comprados, depois os mensais)
+    // Consumir crédito (plano PREMIUM não consome; primeiro os comprados, depois os mensais)
     let creditsToDeduct = 1;
-    if (user.creditsPurchased > 0) {
+    if (!isUnlimitedImage && user.creditsPurchased > 0) {
       await prisma.user.update({
         where: { id: user.id },
         data: { creditsPurchased: { decrement: 1 } }
       });
-    } else {
+    } else if (!isUnlimitedImage) {
       await prisma.user.update({
         where: { id: user.id },
         data: { creditsImages: { decrement: 1 } }
@@ -636,8 +637,9 @@ router.post('/video', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Envie uma imagem de origem (imageUrl ou imageData)' });
     }
 
-    // Verificar créditos de vídeo (comprados primeiro, depois mensais)
-    if (user.creditsVideos <= 0 && user.creditsPurchased <= 0) {
+    // Verificar créditos de vídeo (plano PREMIUM é ilimitado)
+    const isUnlimitedVideo = user.plan === 'PREMIUM';
+    if (!isUnlimitedVideo && user.creditsVideos <= 0 && user.creditsPurchased <= 0) {
       return res.status(403).json({ error: 'Créditos de vídeo esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
     }
 
@@ -651,10 +653,10 @@ router.post('/video', authMiddleware, async (req, res) => {
       }
     });
 
-    // Consumir crédito de vídeo
-    if (user.creditsPurchased > 0) {
+    // Consumir crédito de vídeo (plano PREMIUM não consome)
+    if (!isUnlimitedVideo && user.creditsPurchased > 0) {
       await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
-    } else {
+    } else if (!isUnlimitedVideo) {
       await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { decrement: 1 } } });
     }
 
