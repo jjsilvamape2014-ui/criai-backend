@@ -19,7 +19,20 @@ const PORT = process.env.PORT || 3001;
 // (evita aviso ERR_ERL_UNEXPECTED_X_FORWARDED_FOR e rate-limit incorreto)
 app.set('trust proxy', 1);
 
-app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000' }));
+// CORS: aceita uma lista de domínios do front (separados por vírgula em FRONTEND_URL).
+// Requisições sem Origin (curl, server-to-server) são aceitas.
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(null, false);
+    },
+  })
+);
 app.use(express.json({ limit: '10mb' }));
 
 // Rate limiting global
