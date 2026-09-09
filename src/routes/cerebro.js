@@ -655,15 +655,15 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // 5b) REALCE DE QUALIDADE (Magnific Mystic — opcional, pago). Só quando o usuário
     //     pedir explicitamente "melhorar/realçar/mais detalhe" e MAGNIFIC_API_KEY existir.
     //     Re-processa a imagem final em 2K mantendo estrutura (referência = resultado).
-    const wantsEnhance = /(melhorar|real[çc]ar|hiper[- ]?realista|mais detalhe|alta qualidade|ultra[- ]?realista|upscale|dar um toque profissional)/i.test(message);
+    const wantsEnhance = /(melhorar|real[çc]ar|hiper[- ]?realista|mais detalhe|alta qualidade|ultra[- ]?realista|upscale|restaurar|dar um toque profissional)/i.test(message);
     if (imageUrl && wantsEnhance && process.env.MAGNIFIC_API_KEY) {
       try {
         const enhUrl = await generateRoutes.generateImageMystic(
-          'Improve the realism, sharpness and detail of this exact image. Keep every existing text exactly as is, same colors, same composition and layout. Do not change, add or remove elements.',
+          'Restore and upscale this image to ultra-high 4K resolution. Maximize sharpness and extreme clarity. Enhance every detail while strictly preserving the original identity, colors, and composition — and keep every visible text exactly as is (prices, names, words). Add hyper-realistic textures, realistic skin pores (if a person), and crisp edges. Remove all blur, noise, and compression artifacts. 4K UHD, HDR, professional studio quality, extreme detail, sharp focus.',
           {
             width,
             height,
-            resolution: '2k',
+            resolution: '4k',
             referenceImage: imageUrl,
             structureStrength: 55
           }
