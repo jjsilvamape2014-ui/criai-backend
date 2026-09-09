@@ -93,12 +93,16 @@ function multiRefDesignRules(paletteBlock) {
 // Aceita: message, sessionId, image (principal, dataURL/string) ou images: [urls/dataURLs] (até 4)
 router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
   try {
-    const { sessionId, message, image, images } = req.body || {};
+    const { sessionId, message, image, images, portrait } = req.body || {};
     const user = req.user;
 
     if (!message || message.trim().length < 2) {
       return res.status(400).json({ error: 'Digite o que quer mudar na imagem.' });
     }
+
+    // Modo RETRATO: presets de estilo (neo-noir, capa de álbum etc.) aplicados numa
+    // selfie mantendo o rosto. Vem por flag do app OU quando o texto é um preset.
+    const isPortrait = !!(portrait || /(uploaded selfie|uploaded person|original reference image|the picture provided)/i.test(message || ''));
 
     const sid = typeof sessionId === 'string' && sessionId ? sessionId : cerebro.newSessionId();
     const session = cerebro.getOrCreateSession(user.id, sid);
@@ -500,7 +504,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
 
     // 3b) Nova imagem do zero: reescreve o pedido em prompt profissional estilo ChatGPT.
     //     Isso transforma pedidos vagos/absurdos em imagens de alta qualidade.
-    if (cmd.replace_prompt) {
+    if (cmd.replace_prompt && !isPortrait) {
       try {
         // Inclui o contexto de projeto (marca/cores/estilo) na reescrita para que a
         // nova imagem nasça já coerente com a identidade visual construída.
@@ -616,12 +620,43 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         // "troque a cor" deve preservar a composição (força baixa).
         const wantsRedo = /(refaz\w*|recria\w*|recreate|redesign|nova vers|novo layout|refaça|do zero|do início)/i.test(message);
         const genStrength = wantsRedo ? 0.55 : 0.3;
-        imageUrl = await generateRoutes.generateImageFromProviders(editPrompt, {
-          width,
-          height,
-          referenceImage: safeRef,
-          strength: genStrength
-        });
+
+        // 🧑🏻 MODO RETRATO: presets de estilo aplicados à selfie.
+        // 1º tenta Magnific Mystic com structure_reference (preserva o rosto com força);
+        // sem chave (ou em falha), cai no nano-banana instrucional mantendo a pessoa.
+        if (isPortrait && safeRef) {
+          // Formato vertical (3:4) por padrão — retrato; respeita pedido explícito.
+          let rw = 768, rh = 1024;
+          if (cmd.aspect_ratio === '9:16') { rw = 720; rh = 1280; }
+          else if (cmd.aspect_ratio === '16:9') { rw = 1344; rh = 768; }
+          else if (cmd.aspect_ratio === '1:1') { rw = 1024; rh = 1024; }
+          const retPrompt = `${message}\n\nKeep the SAME person: exact face, eyes, nose, mouth, hair and identity from the source photo. Do not invent another face.`;
+          try {
+            const msUrl = await generateRoutes.generateImageMystic(retPrompt, {
+              width: rw,
+              height: rh,
+              resolution: '2k',
+              referenceImage: safeRef,
+              structureStrength: 60
+            });
+            if (msUrl) imageUrl = msUrl;
+          } catch (e) {
+            console.error('Cérebro Visual: retrato Mystic falhou (tentando nano-banana):', e.message);
+          }
+          if (!imageUrl) {
+            imageUrl = await generateRoutes.generateImageFromProviders(
+              `Apply this style to the person in the attached photo, strictly preserving their exact face, eyes and identity: ${message}`,
+              { width: rw, height: rh, referenceImage: safeRef, strength: 0.75 }
+            );
+          }
+        } else {
+          imageUrl = await generateRoutes.generateImageFromProviders(editPrompt, {
+            width,
+            height,
+            referenceImage: safeRef,
+            strength: genStrength
+          });
+        }
 
         // 5x) Auto-logo pós-geração: recria o design e sobrepõe a logo EXATA (PNG,
         //     fundo removido) num canto — a IA faz tudo sozinha, sem o usuário desenhar.
