@@ -1258,7 +1258,7 @@ router.post('/talking-ad', authMiddleware, async (req, res) => {
 
       // 3) Narração em português (fal Kokoro PT-BR)
       emitStatus('Gerando a narração em português…');
-      const audioOut = await falRunAsync('fal-ai/kokoro/brazilian-portuguese', { prompt: finalScript, voice: 'pf_dora', speed: 1.0 }, 90000);
+      const audioOut = await falRunAsync('fal-ai/kokoro/brazilian-portuguese', { prompt: finalScript, voice: 'pf_dora' }, 90000);
       const audioUrl = audioOut && ((audioOut.audio && audioOut.audio.url) || (typeof audioOut.audio === 'string' ? audioOut.audio : null));
       if (!audioUrl) throw new Error('Narração não foi gerada');
 
