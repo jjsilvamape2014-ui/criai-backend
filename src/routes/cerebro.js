@@ -7,6 +7,8 @@ const generateRoutes = require('./generate');
 const { parseEditRequest, enhanceImagePrompt, replyConversation, detectIntent } = require('../llm');
 const cerebro = require('../cerebro');
 const logo = require('../logo');
+const axios = require('axios');
+const sharp = require('sharp');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -43,6 +45,47 @@ async function refundCredits(user) {
     where: { id: user.id },
     data: { creditsPurchased: { increment: 1 } }
   });
+}
+
+// Extrai as cores dominantes de uma imagem de referência (dataURL ou URL) via sharp.
+// O gerador usa essa paleta para harmonizar o design com as cores da marca/logo.
+async function dominantPalette(src, top = 4) {
+  try {
+    let buf;
+    if (src && src.startsWith('data:')) {
+      const b64 = src.split(',')[1];
+      buf = b64 ? Buffer.from(b64, 'base64') : null;
+    } else if (/^https?:\/\//.test(src)) {
+      const res = await axios.get(src, { responseType: 'arraybuffer', timeout: 15000 });
+      buf = res.data;
+    } else {
+      buf = null;
+    }
+    if (!buf) return null;
+    const stats = await sharp(buf).resize(200, 200, { fit: 'inside' }).stats();
+    const dominant = (stats.channels[0] && stats.channels[0].dominant) || [];
+    const hex = dominant.map((d) => d.colorId).filter((h) => typeof h === 'string');
+    return hex.slice(0, top);
+  } catch (e) {
+    return null;
+  }
+}
+
+// Regras de composição para geração com imagens de referência — ensina o modelo a
+// tratar logos como MARCA (pequeno, no canto/topo, sem caixa) e NUNCA colar a
+// referência como quadro retângulo no centro. Reproduz o comportamento "estilo
+// ChatGPT": harmoniza as cores da logo e posiciona a logo como emblema.
+function multiRefDesignRules(paletteBlock) {
+  const lines = [
+    'Composition rules (follow strictly):'
+  ];
+  if (paletteBlock) {
+    lines.push(`- Harmonize the whole piece with these reference color palettes: ${paletteBlock}.`);
+  }
+  lines.push('- Any reference that looks like a LOGO or brand mark must be used ONLY as a small brand logo/emblem placed in the top area or a corner (never centered as a big square box).');
+  lines.push('- Do not paste any reference image as a full plain rectangle in the middle of the design; use references as design content or as brand mark only.');
+  lines.push('- If the user asked to redo/recreate the piece, produce a fresh professional layout with balanced composition and legible, correctly spelled text in the requested language.');
+  return lines.join('\n');
 }
 
 // POST /api/cerebro/chat — interpreta o comando e gera a nova versão da imagem
@@ -326,6 +369,22 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     let finalPrompt = cerebro.composePrompt(session.memory, cmd, message);
     const { width, height } = cerebro.aspectSizes(cmd.aspect_ratio || null);
 
+    // 3a) Paleta de cores das referências (>=2 imagens = flyer/exemplo + logo).
+    //     O gerador harmoniza o design novo com as cores reais da marca/logo.
+    const refCount = (session.memory.refImages || []).length;
+    let paletteBlock = '';
+    if (refCount >= 2) {
+      const palettes = [];
+      for (const ref of session.memory.refImages.slice(0, 4)) {
+        palettes.push(await dominantPalette(ref));
+      }
+      if (palettes.some((p) => p && p.length)) {
+        paletteBlock = palettes
+          .map((p, i) => `ref${i + 1}: ${p && p.length ? p.join(' ') : 'n/a'}`)
+          .join('; ');
+      }
+    }
+
     // 3b) Nova imagem do zero: reescreve o pedido em prompt profissional estilo ChatGPT.
     //     Isso transforma pedidos vagos/absurdos em imagens de alta qualidade.
     if (cmd.replace_prompt) {
@@ -337,11 +396,13 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         });
         if (enh.prompt) {
           finalPrompt = enh.prompt;
+          if (refCount > 0) finalPrompt += '\n' + multiRefDesignRules(paletteBlock);
           session.memory.currentPrompt = enh.prompt;
           if (enh.reply) cmd.reply = enh.reply;
         }
       } catch (e) {
         console.error('Cérebro Visual: enhance de prompt falhou (usando prompt original):', e.message);
+        if (refCount > 0) finalPrompt = finalPrompt + '\n' + multiRefDesignRules(paletteBlock);
       }
     }
 
@@ -398,11 +459,16 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
             : ' Edit this exact photo/image, keeping the main subject, composition and style as in the source image unless the user asked to change them.';
           editPrompt = `Edit the attached source image as requested: ${delta}.${preserve}`;
         }
+        if (refCount > 0) editPrompt += '\n' + multiRefDesignRules(paletteBlock);
+        // "Refazer/recriar a peça" pede um LAYOUT novo (força maior). Um simples
+        // "troque a cor" deve preservar a composição (força baixa).
+        const wantsRedo = /(refaz\w*|recria\w*|recreate|redesign|nova vers|novo layout|refaça|do zero|do início)/i.test(message);
+        const genStrength = wantsRedo ? 0.55 : 0.3;
         imageUrl = await generateRoutes.generateImageFromProviders(editPrompt, {
           width,
           height,
           referenceImage: safeRef,
-          strength: 0.3
+          strength: genStrength
         });
       } catch (e) {
         console.error('Cérebro Visual: geração falhou:', e.message);
