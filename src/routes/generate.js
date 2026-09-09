@@ -1209,7 +1209,7 @@ router.post('/talking-ad', authMiddleware, async (req, res) => {
   const emitStatus = (text) => send('status', { text });
 
   try {
-    const { imageData, imageUrl, productName, productDesc, productPrice, script } = req.body;
+    const { imageData, imageUrl, productName, productDesc, productPrice, script, presenter } = req.body;
     const user = req.user;
     if (!imageData && !imageUrl) {
       send('error', { error: 'Envie a imagem do produto' });
@@ -1246,8 +1246,12 @@ router.post('/talking-ad', authMiddleware, async (req, res) => {
 
       // 2) Imagem do apresentador segurando o produto (usa a foto enviada como base)
       emitStatus('Criando o apresentador com o seu produto…');
+      const isMale = String(presenter || 'mulher').toLowerCase() === 'homem';
+      const presenterCore = isMale
+        ? 'a handsome, charismatic young Brazilian man in his mid-20s, sharp features, confident and charming'
+        : 'a gorgeous, charismatic young Brazilian woman in her mid-20s, naturally beautiful, glowing healthy skin, warm radiant smile';
       presenterImage = await generateImageFromProviders(
-        'Friendly young Brazilian woman presenting the product from the attached photo: she holds it up smiling directly at the camera, product fully visible and centered, clean bright studio background, vertical 9:16 composition, professional soft lighting, realistic photography, authentic warm presenter',
+        `${presenterCore}, photorealistic commercial, presenting the product from the attached photo: holds it up toward the camera and smiles with authentic enthusiasm, product fully visible and centered, looking directly at the viewer, clean bright modern storefront background softly blurred, vertical 9:16 composition, professional soft lighting like a premium TV commercial, natural realistic skin texture, flawless attractive look`,
         { width: 720, height: 1280, referenceImage: source, strength: 0.6 }
       );
       if (!presenterImage) throw new Error('Não consegui criar a imagem do apresentador');
