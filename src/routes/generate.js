@@ -913,9 +913,64 @@ async function generateImageFromProviders(prompt, opts = {}) {
   return imageUrl;
 }
 
+// Estilos prontos de anúncio em vídeo (o Cérebro usa o motion certo para cada um).
+// 'promo' é o estilo "impulso de marketplace" (Shopee) — o queridinho dos anúncios.
+const VIDEO_AD_PRESETS = {
+  afiliado: {
+    label: 'Afiliado (Shopee)',
+    prompt: 'Affiliate marketplace ad presenting the product to sell: dynamic camera moves around the product revealing every detail, energetic upbeat commercial rhythm, vibrant gradient background with subtle moving light, product pops and shines, popular e-commerce ad style, clean and engaging, no gibberish text'
+  },
+  promo: {
+    label: 'Impulso (Shopee)',
+    prompt: 'Punchy marketplace ad: quick energetic push-in zoom toward the product, vibrant saturated colors, subtle flash highlight, bouncy upbeat motion, clean bright background, product pops forward naturally, no text overlay'
+  },
+  brasil: {
+    label: 'Energia BR',
+    prompt: 'Brazilian marketplace ad energy: vibrant festive colors, upbeat rhythm, product bouncing with playful motion, confetti-like light particles, joyful commercial feel, clean background, no gibberish text'
+  },
+  empresa: {
+    label: 'Empresa',
+    prompt: 'Professional company presentation video: elegant epic camera moves over the brand visual, corporate pride mood, subtle animated light glows following the logo, premium clean style, no gibberish text'
+  },
+  logo: {
+    label: 'Logo',
+    prompt: 'Logo presentation commercial: smooth cinematic reveal of the logo, slow zoom and gentle rise, soft depth of field, dark elegant background with subtle light pulses, premium brand identity feel, no gibberish text'
+  },
+  elegant: {
+    label: 'Elegante',
+    prompt: 'Luxury product commercial: slow cinematic drift, soft volumetric light, shallow depth of field, smooth elegant float, premium mood, no text overlay'
+  },
+  lifestyle: {
+    label: 'Lifestyle',
+    prompt: 'Energetic lifestyle commercial: handheld camera motion turning around the product in a real scene, natural light, color pop, dynamic composition, alive and engaging, no text overlay'
+  },
+  orbit: {
+    label: 'Rotação 360°',
+    prompt: 'Showcase video: camera orbiting 360 degrees around the product on a turntable, studio lighting, steady rotation revealing all sides, premium e-commerce presentation, no text overlay'
+  },
+  hero: {
+    label: 'Hero shot',
+    prompt: 'Cinematic hero shot: slow gentle push-in toward the product, dramatic studio lighting, background softly blurred, the product as the star, timeless commercial feel, no text overlay'
+  }
+};
+
 // Constrói o prompt de movimento para a IA de vídeo.
 // No modo 'product', descreve um anúncio de apresentação de produto (estilo anúncio de marketplace/Shopee).
 function buildVideoPrompt(mode, opts) {
+  // Preset escolhido vale A MENOS que o usuário escreva um movimento próprio.
+  if (opts.preset && VIDEO_AD_PRESETS[opts.preset] && !String(opts.prompt || '').trim()) {
+    const name = (opts.productName || '').trim();
+    const points = (opts.productDesc || '').trim();
+    const price = (opts.productPrice || '').trim();
+    let p = VIDEO_AD_PRESETS[opts.preset].prompt;
+    if (name) p = `${name}, ` + p;
+    if (points) p += `. Highlight: ${points}`;
+    // Anúncio de afiliado pede o preço em destaque (etiqueta animada).
+    if (price && (opts.preset === 'afiliado' || opts.preset === 'promo')) {
+      p += `. Include an animated price tag clearly showing the exact price: R$ ${price}.`;
+    }
+    return p;
+  }
   if (mode === 'product') {
     const name = (opts.productName || '').trim();
     const points = (opts.productDesc || '').trim();
@@ -1055,7 +1110,7 @@ router.post('/video', authMiddleware, async (req, res) => {
   // Não aplicar generateLimiter para vídeo (é assíncrono e lento);
   // cada requisição bloqueia a resposta por até ~3min.
   try {
-    const { imageUrl, duration = 5, mode, prompt } = req.body;
+    const { imageUrl, duration = 5, mode, prompt, preset } = req.body;
     const user = req.user;
     const imageData = req.body.imageData;
 
@@ -1073,7 +1128,7 @@ router.post('/video', authMiddleware, async (req, res) => {
       data: {
         userId: user.id,
         type: 'VIDEO',
-        prompt: '[image-to-video]',
+        prompt: `[video${preset ? `:${preset}` : ''}]`,
         status: 'PROCESSING',
         cost: 1
       }
@@ -1087,9 +1142,12 @@ router.post('/video', authMiddleware, async (req, res) => {
     }
 
     const source = imageData || imageUrl;
-    const videoDataUrl = await generateVideoFromProviders(source, prompt, mode, {
+    // O movimento do vídeo vem do preset de anúncio (ou do prompt/campo livre do usuário)
+    const motionPrompt = buildVideoPrompt(mode, req.body);
+    const videoDataUrl = await generateVideoFromProviders(source, motionPrompt, mode, {
       productName: req.body.productName,
-      productDesc: req.body.productDesc
+      productDesc: req.body.productDesc,
+      preset
     });
 
     await prisma.generation.update({
