@@ -110,4 +110,77 @@ async function compositeLogo(baseImage, logoImage, position) {
   }
 }
 
-module.exports = { compositeLogo, detectLogoPosition };
+// Detecta "logo" entre as imagens de referência SEM o usuário precisar dizer qual é.
+// Heurística por metadados: SVG / transparência (alpha) / formato próximo de quadrado
+// valem pontos; imagem muito alta (flyer/pôster) desconta. Retorna o índice ou -1.
+async function detectLogoRef(images) {
+  if (!Array.isArray(images) || images.length < 2) return -1;
+  let best = -1;
+  let bestScore = 0;
+  for (let i = 0; i < images.length; i++) {
+    const buf = await toBuffer(images[i]);
+    if (!buf) continue;
+    try {
+      const meta = await sharp(buf).rotate().metadata();
+      const w = meta.width || 1;
+      const h = meta.height || 1;
+      const ratio = w / h;
+      let score = 0;
+      if (meta.format === 'svg') score += 3;
+      if (meta.hasAlpha) score += 2; // PNG com transparência → logo
+      if (ratio >= 0.7 && ratio <= 1.2) score += 1; // quadrada → logo
+      else if (ratio > 1.2 && ratio <= 2) score += 0.5; // larga → logo horizontal
+      else if (ratio < 0.62) score -= 1.5; // muito alta → flyer/pôster
+      if (score > bestScore) {
+        bestScore = score;
+        best = i;
+      }
+    } catch (e) { /* imagem inválida → ignora */ }
+  }
+  return bestScore >= 1 ? best : -1;
+}
+
+const falSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Remove o fundo da logo via fal.ai (rembg) quando ela vier com fundo sólido.
+// Retorna a URL da logo transparente ou null se falhar (aí o composite usa a original).
+async function removeLogoBackground(source) {
+  const FAL_KEY = process.env.FAL_KEY;
+  if (!FAL_KEY || !source) return null;
+  const headers = { Authorization: `Key ${FAL_KEY}`, 'Content-Type': 'application/json' };
+  try {
+    const res = await axios.post(
+      'https://queue.fal.run/fal-ai/imageutils/rembg',
+      { image_url: source, model: 'u2net', image_size: 'medium' },
+      { headers, timeout: 60000 }
+    );
+    const data = res.data || {};
+    if (data.status_url) {
+      const deadline = Date.now() + 90000;
+      let status = data.status || 'IN_QUEUE';
+      while (Date.now() < deadline) {
+        await falSleep(1500);
+        try {
+          const poll = await axios.get(data.status_url, { headers, timeout: 30000, validateStatus: (s) => s < 500 });
+          status = (poll.data || {}).status || status;
+        } catch (e) {
+          const st = e.response && e.response.status;
+          if (st && st < 500) break;
+        }
+        if (status === 'COMPLETED') break;
+        if (status === 'ERROR' || status === 'CANCELLED') return null;
+      }
+      if (status !== 'COMPLETED') return null;
+    }
+    const out = data.response_url
+      ? (await axios.get(data.response_url, { headers, timeout: 60000, validateStatus: (s) => s < 500 })).data
+      : data;
+    const u = (out && (out.image && (out.image.url || out.image))) || out.image_url;
+    return typeof u === 'string' && /^https?:/i.test(u) ? u : null;
+  } catch (e) {
+    console.error('removeLogoBackground falhou:', e.message);
+    return null;
+  }
+}
+
+module.exports = { compositeLogo, detectLogoPosition, detectLogoRef, removeLogoBackground };

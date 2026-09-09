@@ -516,6 +516,32 @@ async function imageToBuffer(imageUrlOrData) {
   return Buffer.from(res.data);
 }
 
+// Gera imagem via Pollinations.ai — API pública GRÁTIS (sem chave), usa modelos FLUX.
+// Serve como rede de segurança de custo zero na cadeia de provedores: quando a fal.ai
+// paga falhar ou acabar, ainda geramos (ótimo para fotos/artes; texto em PT pode sair
+// fraco, por isso a fal.ai segue como primeira opção para peças com texto).
+async function generateImagePollinations(prompt, opts = {}) {
+  const w = opts.width || 1024;
+  const h = opts.height || 1024;
+  const model = opts.pollinationsModel || 'flux'; // 'flux' é grátis por padrão
+  const seed = Math.floor(Math.random() * 100000);
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&model=${model}&seed=${seed}&nologo=true&enhance=false`;
+  try {
+    const res = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 90000,
+      validateStatus: (s) => s < 500
+    });
+    if (res.data && res.data.byteLength > 2000) {
+      return `data:image/jpeg;base64,${Buffer.from(res.data).toString('base64')}`;
+    }
+    return null;
+  } catch (e) {
+    console.error('pollinations falhou:', e.message);
+    return null;
+  }
+}
+
 // Cadeia de provedores de geração de imagem (fal.ai -> Stability AI -> Hugging Face).
 // Usada pelo /image (padrão) e pelo Cérebro Visual (chat de edição).
 async function generateImageFromProviders(prompt, opts = {}) {
@@ -553,6 +579,9 @@ async function generateImageFromProviders(prompt, opts = {}) {
     if (!imageUrl) {
       imageUrl = await generateImageStability(prompt, { width, height, negativePrompt, referenceImage, strength });
     }
+    if (!imageUrl) {
+      imageUrl = await generateImagePollinations(prompt, { width, height, negativePrompt });
+    }
   }
 
   // 1) Sem referência: modelos premium via fal.ai (Flux Pro v1.1 / Ideogram 4.0)
@@ -567,6 +596,12 @@ async function generateImageFromProviders(prompt, opts = {}) {
   // 2) Fallback: Stability AI (suporta image-to-image)
   if (!imageUrl) {
     imageUrl = await generateImageStability(prompt, { width, height, negativePrompt, referenceImage, strength });
+  }
+
+  // 3) Rede de segurança 100% grátis: Pollinations.ai (FLUX, sem chave) — garante que
+  //    o usuário SEMPRE receba uma imagem, mesmo se os provedores pagos falharem.
+  if (!imageUrl) {
+    imageUrl = await generateImagePollinations(prompt, { width, height, negativePrompt });
   }
 
   // 3) NOTA: sem fallback via Hugging Face — a Railway não tem DNS para

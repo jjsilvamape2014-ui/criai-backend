@@ -418,23 +418,56 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     });
     await consumeCredit(user);
 
-    // 5) Gerar a nova versão — usa a base original (ou 1ª das até 4 referências) como
-    // entrada real de image-to-image (remover pessoa, trocar cor, colocar logo, etc)
+    // 5) MODO AUTOMÁTICO DE LOGO — comando simples, a IA faz tudo sozinha:
+    // quando há 2+ imagens e uma delas parece ser a logo (ou o usuário falou "logo"),
+    // o Cérebro descobre qual é qual, usa a OUTRA como base do design e depois:
+    //   • harmoniza as cores com a paleta real da logo (feito em 3a);
+    //   • remove o fundo da logo → vira PNG transparente;
+    //   • sobrepõe a logo exata em um canto (nunca centralizada).
     let imageUrl = null;
-    const editSource = session.memory.refImages[0] || session.memory.baseImage || undefined;
+    let editSource = session.memory.refImages[0] || session.memory.baseImage || undefined;
+    let smartLogo = null;
 
-    // 5b) Logo real: se o usuário pediu logo E enviou 2+ imagens, a 2ª é a logo.
-    //      Sobreposição exata — garante "exatamente" a logo do cliente.
-    if (isLogoRequest && logoImageAvailable) {
+    if (session.memory.refImages.length >= 2) {
+      const logoRef = isLogoRequest && logoImageAvailable
+        ? 1 // usuário falou "logo" → convenção: 2ª imagem = logo, 1ª = base
+        : await logo.detectLogoRef(session.memory.refImages);
+      if (logoRef >= 0 && logoRef < session.memory.refImages.length) {
+        const baseRef = logoRef === 0 ? 1 : 0; // a outra imagem é o conteúdo/base
+        smartLogo = {
+          logoImg: session.memory.refImages[logoRef],
+          baseImg: session.memory.refImages[baseRef]
+        };
+        editSource = smartLogo.baseImg;
+      }
+    }
+
+    // Pedido que é SÓ "colocar a logo" (sem criar/refazer) → sobrepõe direto na base.
+    const onlyPlace = !!smartLogo &&
+      /(coloc\w* (a|minha|essa|esta)? logo|adicion\w* (a )?logo|po[õe] a logo|logo (no|em)|aplicar a logo)/i.test(message) &&
+      !/(refaz\w*|recria\w*|muda\w*|faz\w* (um|o)|cria\w*|novo|nova|redesign|troca\w*|remove\w*|tira\w*)/i.test(message);
+
+    const POS_LABEL = {
+      'bottom-right': 'inferior direito', 'top-right': 'superior direito',
+      'bottom-left': 'inferior esquerdo', 'top-left': 'superior esquerdo',
+      top: 'topo', bottom: 'inferior (base)', left: 'lado esquerdo',
+      right: 'lado direito', center: 'centro'
+    };
+    const cornerPosition = (msg) => {
+      const p = logo.detectLogoPosition(msg);
+      return p === 'center' ? 'top-left' : p; // nunca centraliza a logo sozinho
+    };
+
+    if (smartLogo && onlyPlace) {
       try {
-        const position = logo.detectLogoPosition(message);
-        imageUrl = await logo.compositeLogo(session.memory.refImages[0], session.memory.refImages[1], position);
+        const pos = cornerPosition(message);
+        const logoClean = (await logo.removeLogoBackground(smartLogo.logoImg)) || smartLogo.logoImg;
+        imageUrl = await logo.compositeLogo(smartLogo.baseImg, logoClean, pos);
         if (imageUrl) {
-          const label = { 'bottom-right': 'inferior direito', 'top-right': 'superior direito', 'bottom-left': 'inferior esquerdo', 'top-left': 'superior esquerdo', top: 'topo', bottom: 'inferior (base)', left: 'lado esquerdo', right: 'lado direito', center: 'centro' }[position] || 'inferior direito';
-          cmd.reply = `Feito! Coloquei a sua logo (exatamente a imagem que você enviou) no ${label} da foto.`;
+          cmd.reply = `Pronto! Reconheci sua logo sozinho, recortei o fundo dela e coloquei no ${POS_LABEL[pos]}.`;
         }
       } catch (e) {
-        console.error('Cérebro Visual: composição da logo falhou:', e.message);
+        console.error('Cérebro Visual: auto-logo (só colocar) falhou:', e.message);
       }
     }
 
@@ -446,7 +479,6 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         if (safeRef) {
           const comp = await generateRoutes.compressReferenceImage(safeRef, 1024, 80);
           if (comp) safeRef = comp;
-          if (session.memory.refImages[0]) session.memory.refImages[0] = safeRef;
         }
         // Edição de imagem anexada: passa uma INSTRUÇÃO explícita em inglês para o
         // modelo de edição (Nano Banana/Gemini) entender que é uma edição da FOTO
@@ -470,6 +502,22 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
           referenceImage: safeRef,
           strength: genStrength
         });
+
+        // 5x) Auto-logo pós-geração: recria o design e sobrepõe a logo EXATA (PNG,
+        //     fundo removido) num canto — a IA faz tudo sozinha, sem o usuário desenhar.
+        if (imageUrl && smartLogo && !onlyPlace) {
+          try {
+            const pos = cornerPosition(message);
+            const logoClean = (await logo.removeLogoBackground(smartLogo.logoImg)) || smartLogo.logoImg;
+            const withLogo = await logo.compositeLogo(imageUrl, logoClean, pos);
+            if (withLogo) {
+              imageUrl = withLogo;
+              cmd.reply = `Pronto! Usei suas imagens de forma inteligente: recriei o design nas cores da sua marca e coloquei a logo (recortada, sem o fundo) no ${POS_LABEL[pos]}.`;
+            }
+          } catch (e2) {
+            console.error('Cérebro Visual: auto-logo (refazer) falhou:', e2.message);
+          }
+        }
       } catch (e) {
         console.error('Cérebro Visual: geração falhou:', e.message);
       }
