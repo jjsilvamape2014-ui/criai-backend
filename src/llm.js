@@ -690,6 +690,31 @@ async function suggestPhraseFromRequest(raw, project) {
   }
 }
 
+// Roteiro pronto para o "Anúncio Falado": a IA escreve a narração do vídeo que
+// apresenta o produto, no tom de vendedor animado de marketplace.
+async function generateAdScript(opts = {}) {
+  const name = (opts.productName || '').trim();
+  const desc = (opts.productDesc || '').trim();
+  const price = (opts.productPrice || '').trim();
+  const sys = [
+    'Você é um redator de anúncios de marketplace brasileiro (Shopee/Mercado Livre).',
+    'Escreva UM roteiro curto de 2 a 3 frases (máx. 40 palavras) para um vídeo apresentando o produto.',
+    'Tom: animado, vendedor que ama o produto; fale com o cliente na 2ª pessoa.',
+    'Comece chamando atenção (ex.: "Olha só que achado!").',
+    price ? 'Mencione o preço como "R$ X".' : '',
+    'Não use emojis. Responda SOMENTE o roteiro.'
+  ].filter(Boolean).join('\n');
+  const user = `Produto: ${name}\nVantagens: ${desc || 'não informadas'}\nPreço: ${price ? 'R$ ' + price : 'não informado'}`;
+  try {
+    const t = await callLLM(sys, user, { temperature: 0.9, maxTokens: 200, json: false });
+    const script = (t || '').trim().replace(/[\r\n]+/g, ' ').slice(0, 400);
+    return script || null;
+  } catch (e) {
+    console.error('generateAdScript falhou:', e.message);
+    return null;
+  }
+}
+
 // Responde uma mensagem puramente conversacional (dúvida, pergunta geral, bate-papo)
 // sem gerar imagem nem gastar crédito — o agente "conversa" como o ChatGPT.
 async function replyConversation(message, memory) {
@@ -819,4 +844,4 @@ async function contentPlan30(project, extra) {
   return null;
 }
 
-module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest };
+module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript };

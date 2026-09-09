@@ -4,7 +4,7 @@ const rateLimit = require('express-rate-limit');
 const sharp = require('sharp');
 const { authMiddleware } = require('../middleware');
 const { PrismaClient } = require('@prisma/client');
-const { enhanceImagePrompt, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest } = require('../llm');
+const { enhanceImagePrompt, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript } = require('../llm');
 const vision = require('../vision');
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -1170,6 +1170,125 @@ router.post('/video', authMiddleware, async (req, res) => {
       } catch (e) {}
     }
     res.status(500).json({ error: 'Erro ao gerar vídeo. Tente novamente.', details: err.message });
+  }
+});
+
+// ===== ANÚNCIO FALADO (avatar apresentando o produto com voz) =====
+// Pipeline: roteiro (IA) → imagem de um apresentador com o produto → narração em
+// PT-BR (fal Kokoro) → lipsync (fal sync-lipsync v3) → vídeo final. SSE ao vivo.
+
+// Submete no fal.queue e espera COMPLETED (mesmo padrão de polling já usado no app).
+async function falRunAsync(endpoint, body, deadlineMs = 180000) {
+  const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
+  if (!process.env.FAL_KEY) throw new Error('FAL_KEY não configurada');
+  const res = await axios.post(`https://queue.fal.run/${endpoint}`, body, { headers, timeout: 60000, validateStatus: (s) => s < 500 });
+  const data = res.data || {};
+  let result = null;
+  const deadline = Date.now() + deadlineMs;
+  if (data.status_url) {
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const pr = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
+      const pd = pr.data || {};
+      if (pd.status === 'COMPLETED' || pd.output) { result = pd; break; }
+      if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
+    }
+  } else if (data.output) {
+    result = data;
+  }
+  if (!result) throw new Error(`fal ${endpoint} não retornou resultado`);
+  return result.output || result;
+}
+
+router.post('/talking-ad', authMiddleware, async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders && res.flushHeaders();
+  const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  const emitStatus = (text) => send('status', { text });
+
+  try {
+    const { imageData, imageUrl, productName, productDesc, productPrice, script } = req.body;
+    const user = req.user;
+    if (!imageData && !imageUrl) {
+      send('error', { error: 'Envie a imagem do produto' });
+      return res.end();
+    }
+    const isUnlimited = user.plan === 'PREMIUM';
+    const total = user.creditsVideos + user.creditsPurchased;
+    if (!isUnlimited && total <= 0) {
+      send('error', { error: 'Créditos de vídeo esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+      return res.end();
+    }
+
+    const source = imageData || imageUrl;
+    const generation = await prisma.generation.create({
+      data: { userId: user.id, type: 'VIDEO', prompt: '[anuncio-falado]', status: 'PROCESSING', cost: 1 }
+    });
+
+    // Consome 1 crédito de vídeo (PREMIUM não consome)
+    if (!isUnlimited && user.creditsPurchased > 0) {
+      await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
+    } else if (!isUnlimited) {
+      await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { decrement: 1 } } });
+    }
+
+    let videoUrl = null;
+    let presenterImage = null;
+    let finalScript = null;
+
+    try {
+      // 1) Roteiro
+      emitStatus('Escrevendo o roteiro do anúncio…');
+      finalScript = script || await generateAdScript(req.body) || null;
+      if (!finalScript) finalScript = `Olha esse achado! ${productName || 'Esse produto'} é incrível — qualidade de primeira com o melhor preço. Corre que é por tempo limitado!`;
+
+      // 2) Imagem do apresentador segurando o produto (usa a foto enviada como base)
+      emitStatus('Criando o apresentador com o seu produto…');
+      presenterImage = await generateImageFromProviders(
+        'Friendly young Brazilian woman presenting the product from the attached photo: she holds it up smiling directly at the camera, product fully visible and centered, clean bright studio background, vertical 9:16 composition, professional soft lighting, realistic photography, authentic warm presenter',
+        { width: 720, height: 1280, referenceImage: source, strength: 0.6 }
+      );
+      if (!presenterImage) throw new Error('Não consegui criar a imagem do apresentador');
+
+      // 3) Narração em português (fal Kokoro PT-BR)
+      emitStatus('Gerando a narração em português…');
+      const audioOut = await falRunAsync('fal-ai/kokoro/brazilian-portuguese', { prompt: finalScript, voice: 'pf_dora', speed: 1.0 }, 90000);
+      const audioUrl = audioOut && ((audioOut.audio && audioOut.audio.url) || (typeof audioOut.audio === 'string' ? audioOut.audio : null));
+      if (!audioUrl) throw new Error('Narração não foi gerada');
+
+      // 4) Lipsync: a imagem fala a narração
+      emitStatus('Animando o apresentador falando…');
+      const videoOut = await falRunAsync('fal-ai/sync-lipsync/v3/image-to-video', { image_url: presenterImage, audio_url: audioUrl }, 240000);
+      videoUrl =
+        (videoOut && videoOut.video && videoOut.video.url) ||
+        (videoOut && typeof videoOut.video === 'string' ? videoOut.video : null) ||
+        (typeof videoOut === 'string' ? videoOut : null);
+      if (!videoUrl) throw new Error('Vídeo do apresentador não foi gerado');
+
+      await prisma.generation.update({ where: { id: generation.id }, data: { status: 'COMPLETED', imageUrl: videoUrl } });
+    } catch (innerErr) {
+      console.error('anúncio falado — etapa falhou:', innerErr.message);
+      // Devolve o crédito (a geração não foi concluída)
+      try {
+        await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { increment: 1 } } });
+        await prisma.generation.update({ where: { id: generation.id }, data: { status: 'FAILED' } });
+      } catch (e2) {}
+      throw innerErr;
+    }
+
+    const credits = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { creditsImages: true, creditsVideos: true, creditsPurchased: true }
+    });
+    emitStatus('Pronto! Montando o resultado…');
+    send('done', { success: true, generationId: generation.id, videoUrl, presenterImage, script: finalScript, credits });
+  } catch (err) {
+    console.error('Erro no anúncio falado:', err.message);
+    if (!res.writableEnded) send('error', { error: 'Não consegui gerar o anúncio falado. Tente novamente.', details: err.message });
+  } finally {
+    if (!res.writableEnded) res.end();
   }
 });
 
