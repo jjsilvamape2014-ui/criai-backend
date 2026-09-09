@@ -170,4 +170,69 @@ async function checkImageQuality(src) {
   }
 }
 
-module.exports = { describeReference, checkImageQuality };
+// QA de TEXTO: confere se os textos obrigatórios pedidos (nome, idade, preço...)
+// APARECERAM corretos na imagem gerada. Retorna { ok, missing? } ou null (não quebra).
+async function checkImageText(src, tokens) {
+  try {
+    if (!isEnabled() || !process.env.FAL_KEY) return null;
+    if (!tokens || !tokens.length) return null;
+    const tag = Array.isArray(tokens) ? tokens.join(' | ') : String(tokens);
+    let key = src;
+    if (src && src.startsWith('data:')) {
+      key = 'txt:' + crypto.createHash('sha1').update(src.split(',')[1] || '').digest('hex') + '|' + tag;
+    } else {
+      key = 'txt:' + src + '|' + tag;
+    }
+    if (cache.has(key)) return cache.get(key);
+
+    const compressed = await compress(src, 640, 66);
+    if (!compressed) return null;
+
+    const prompt = [
+      'You are a strict proofreader checking printed text inside an image.',
+      `These exact texts were requested: "${tag}".`,
+      'Look at the image carefully. For EACH requested text, check if it is visible, complete and correctly spelled.',
+      'Reply EXACTLY one of:',
+      '"OK" if ALL requested texts are present and correctly spelled,',
+      'or "MISSING: <each missing or miswritten text separated by |>" listing ONLY the problems.',
+      'Ignore unrelated text. Reply nothing else.'
+    ].join(' ');
+
+    const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
+    const res = await axios.post(
+      'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
+      { prompt, image_url: compressed, max_tokens: 100 },
+      { headers, timeout: 30000, validateStatus: (s) => s < 500 }
+    );
+    const data = res.data || {};
+    let text = null;
+    if (data.status_url) {
+      const deadline = Date.now() + 45000;
+      while (Date.now() < deadline) {
+        await sleep(2000);
+        const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
+        const pd = pollRes.data || {};
+        if (pd.status === 'COMPLETED' || pd.output) {
+          text = typeof pd.output === 'string' ? pd.output : (pd.output && (pd.output.content || pd.output.text)) || null;
+          break;
+        }
+        if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
+      }
+    } else if (typeof data.output === 'string') {
+      text = data.output;
+    } else if (data.output && (data.output.content || data.output.text)) {
+      text = data.output.content || data.output.text;
+    }
+
+    const raw = (text || '').trim();
+    const out = { ok: !/^MISSING:/i.test(raw), missing: raw.replace(/^MISSING:\s*/i, '').slice(0, 160) || '' };
+    cache.set(key, out);
+    if (cache.size > 200) cache.delete(cache.keys().next().value);
+    return out;
+  } catch (e) {
+    console.error('QA de texto falhou:', e.message);
+    return null;
+  }
+}
+
+module.exports = { describeReference, checkImageQuality, checkImageText };

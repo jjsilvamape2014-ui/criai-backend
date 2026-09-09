@@ -4,7 +4,8 @@ const rateLimit = require('express-rate-limit');
 const sharp = require('sharp');
 const { authMiddleware } = require('../middleware');
 const { PrismaClient } = require('@prisma/client');
-const { enhanceImagePrompt } = require('../llm');
+const { enhanceImagePrompt, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest } = require('../llm');
+const vision = require('../vision');
 const router = express.Router();
 const prisma = new PrismaClient();
 
@@ -516,10 +517,201 @@ async function imageToBuffer(imageUrlOrData) {
   return Buffer.from(res.data);
 }
 
+// ===== PESQUISA DE REFERÊNCIAS + GERAÇÃO COM STATUS AO VIVO =====
+// O Cérebro pesquisa modelos atuais (Freepik) e fontes recomendadas antes de gerar,
+// e o usuário VÊ no app onde a IA está pesquisando — como o ChatGPT mostrando busca.
+
+const FONT_DB = [
+  { match: /(arraial|festa junina|junina|s[ãa]o jo[ãa]o|festa caipira|bandeirinha)/i, fonts: ['Lilita One', 'Pacifico', 'Lobster'] },
+  { match: /(hamburgueria|hamb[uú]rguer|burger|combo|lanche|fast[- ]food)/i, fonts: ['Lilita One', 'Bebas Neue', 'Anton'] },
+  { match: /(pizzaria|pizza|italiano|trattoria)/i, fonts: ['Playfair Display', 'Lobster', 'Oswald'] },
+  { match: /(restaurante|restaurant|almo[çc]o|jantar|buffet|self[- ]service)/i, fonts: ['Playfair Display', 'Cormorant Garamond', 'Poppins'] },
+  { match: /(promo[çc][ãa]o|promo|oferta|desconto|sale|black friday|cupom)/i, fonts: ['Anton', 'Bebas Neue', 'Montserrat'] },
+  { match: /(convite|invitation|anivers[áa]rio|birthday|infantil|cart[ãa]o)/i, fonts: ['Baloo 2', 'Titan One', 'Pacifico'] },
+  { match: /(logo|logomarca|marca|empresa|corporativ)/i, fonts: ['Montserrat', 'Poppins', 'Playfair Display'] },
+  { match: /(faculdade|universidade|escola|curso|vestibular)/i, fonts: ['Montserrat', 'Oswald', 'Roboto'] }
+];
+
+function fontsFor(raw) {
+  const hits = FONT_DB.filter((f) => f.match.test(raw || ''));
+  if (hits.length) {
+    const list = [...new Set(hits.flatMap((h) => h.fonts))];
+    return list.slice(0, 3);
+  }
+  return ['Montserrat', 'Poppins'];
+}
+
+// Busca modelos do Freepik (e fontes por tema) como referência visual. Sem chave ou
+// erro → retorna apenas as fontes, nunca quebra a geração.
+async function researchForPrompt(raw) {
+  const topic = (raw || '').replace(/[“”"']+/g, '').trim().slice(0, 60);
+  const research = { fonts: fontsFor(raw), topic, sources: 0, inspiration: [] };
+  const key = process.env.FREEPIK_API_KEY;
+  if (!key) return research;
+  try {
+    const r = await axios.get('https://api.freepik.com/v1/resources', {
+      params: {
+        locale: 'pt-BR',
+        limit: 4,
+        order: '-relevance',
+        'filters[term][freepik]': topic || 'flyer',
+        'filters[is_premium][freepik]': 'false'
+      },
+      headers: { 'X-Freepik-API-Key': key, 'Accept-Language': 'pt-BR' },
+      timeout: 12000
+    });
+    const items = (r.data && r.data.data) || [];
+    research.inspiration = items
+      .map((it) => ({
+        title: it.title || '',
+        thumb: (it.image && ((it.image.source && it.image.source.url) || it.image.url)) || null,
+        page: it.url || (it.image && it.image.link) || null
+      }))
+      .filter((t) => t.thumb)
+      .slice(0, 3);
+    research.sources = research.inspiration.length;
+  } catch (e) {
+    console.warn('Pesquisa de referências (Freepik) falhou:', e.message);
+  }
+  return research;
+}
+
+// Geração com status em tempo real (SSE). Fluxo igual à rota /image, mas emite
+// eventos mostrando onde a IA está "pesquisando" e cada etapa da criação.
+router.post('/live-image', authMiddleware, generateLimiter, async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders && res.flushHeaders();
+
+  const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  const emitStatus = (text) => send('status', { text });
+
+  try {
+    const { prompt, negativePrompt, model = 'fluxpro', width = 1024, height = 1024, upscale = false, aspectRatio, referenceImage, strength } = req.body;
+    const user = req.user;
+    if (!prompt || String(prompt).trim().length < 3) {
+      send('error', { error: 'Prompt muito curto' });
+      return res.end();
+    }
+
+    const isUnlimitedImage = user.plan === 'PREMIUM';
+    const totalImageCredits = user.creditsImages + user.creditsPurchased;
+    if (!isUnlimitedImage && totalImageCredits <= 0) {
+      send('error', { error: 'Créditos esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+      return res.end();
+    }
+
+    const refImage = referenceImage ? await compressReferenceImage(referenceImage).catch(() => null) : null;
+
+    const generation = await prisma.generation.create({
+      data: { userId: user.id, type: 'IMAGE', prompt, negativePrompt, status: 'PROCESSING', cost: 1 }
+    });
+
+    if (!isUnlimitedImage && user.creditsPurchased > 0) {
+      await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
+    } else if (!isUnlimitedImage) {
+      await prisma.user.update({ where: { id: user.id }, data: { creditsImages: { decrement: 1 } } });
+    }
+
+    // 1) PESQUISA: onde a IA "navega" por modelos/fontes atuais (Freepik p/ referência)
+    emitStatus('Pesquisando modelos atuais e fontes para o seu tema…');
+    const research = await researchForPrompt(prompt);
+    if (research.sources) {
+      send('research', research);
+      emitStatus(`Encontrei ${research.sources} modelos de referência + fontes em destaque`);
+    } else if (research.fonts && research.fonts.length) {
+      send('research', research);
+      emitStatus(`Buscando fontes certas para a peça: ${research.fonts.join(', ')}`);
+    } else {
+      emitStatus('Refinando o tema para buscar referências…');
+    }
+
+    // 2) APRIMORA: reescreve o pedido em prompt profissional (Cérebro)
+    emitStatus('Tradando o pedido do jeito que um designer faria…');
+    let enhancedPrompt;
+    try {
+      const enh = await enhanceImagePrompt(prompt);
+      enhancedPrompt = enh.prompt || optimizePrompt(prompt);
+    } catch (e) {
+      console.error('Falha ao melhorar prompt via LLM, usando otimizador local:', e.message);
+      enhancedPrompt = optimizePrompt(prompt);
+    }
+
+    // 3) Se o usuário pediu "um texto/frase" sem dizer qual, a IA SUGERE uma frase
+    const reqTokens = extractTextTokens(prompt);
+    if (!reqTokens.length) {
+      const phrase = await suggestPhraseFromRequest(prompt, null);
+      if (phrase) {
+        reqTokens.push(phrase);
+        enhancedPrompt = ensureRequiredText(enhancedPrompt, `"${phrase}"`);
+        emitStatus(`Sugeri a frase: “${phrase}”`);
+      }
+    }
+
+    await prisma.generation.update({ where: { id: generation.id }, data: { prompt: enhancedPrompt } });
+
+    // 4) GERA
+    emitStatus('Gerando a arte com a melhor IA disponível…');
+    let imageUrl = await generateImageFromProviders(enhancedPrompt, {
+      model, width, height, aspectRatio, negativePrompt, referenceImage: refImage, strength
+    });
+    if (!imageUrl) throw new Error('Nenhum provedor gerou imagem');
+
+    // 5) QA de TEXTO: textos pedidos precisam APARECER; se faltaram, refaz 1x de graça
+    if (reqTokens.length) {
+      try {
+        emitStatus('Conferindo se os textos pedidos ficaram corretos…');
+        const txtQa = await vision.checkImageText(imageUrl, reqTokens);
+        if (txtQa && txtQa.ok === false) {
+          emitStatus(`Texto incompleto (${(txtQa.missing || 'conferir')}) — refazendo automaticamente…`);
+          await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { increment: 1 } } });
+          const retryUrl = await generateImageFromProviders(ensureRequiredText(enhancedPrompt, prompt), {
+            model, width, height, aspectRatio, negativePrompt, referenceImage: refImage, strength
+          });
+          if (retryUrl) {
+            imageUrl = retryUrl;
+            if (!isUnlimitedImage) {
+              if (user.creditsPurchased > 0) {
+                await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
+              } else {
+                await prisma.user.update({ where: { id: user.id }, data: { creditsImages: { decrement: 1 } } });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('QA de texto falhou (seguindo com a imagem):', e.message);
+      }
+    }
+
+    // 6) UPSCALE opcional
+    if (upscale) {
+      emitStatus('Aplicando upscale de alta qualidade…');
+      imageUrl = await upscaleImage(imageUrl, { upscale: '4k' }, user.plan);
+    }
+
+    await prisma.generation.update({ where: { id: generation.id }, data: { status: 'COMPLETED', imageUrl } });
+    const credits = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { creditsImages: true, creditsVideos: true, creditsPurchased: true }
+    });
+
+    emitStatus('Pronto! Montando o resultado…');
+    send('done', { success: true, generationId: generation.id, imageUrl, credits, research });
+  } catch (err) {
+    console.error('Erro na geração ao vivo:', err.message);
+    if (req.user) {
+      await prisma.user.update({ where: { id: req.user.id }, data: { creditsPurchased: { increment: 1 } } });
+    }
+    send('error', { error: 'Erro ao gerar imagem. Tente novamente.', details: err.message });
+  } finally {
+    if (!res.writableEnded) res.end();
+  }
+});
+
 // Gera imagem via Pollinations.ai — API pública GRÁTIS (sem chave), usa modelos FLUX.
 // Serve como rede de segurança de custo zero na cadeia de provedores: quando a fal.ai
-// paga falhar ou acabar, ainda geramos (ótimo para fotos/artes; texto em PT pode sair
-// fraco, por isso a fal.ai segue como primeira opção para peças com texto).
 async function generateImagePollinations(prompt, opts = {}) {
   const w = opts.width || 1024;
   const h = opts.height || 1024;

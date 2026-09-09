@@ -4,7 +4,7 @@ const { PrismaClient } = require('@prisma/client');
 
 const { authMiddleware } = require('../middleware');
 const generateRoutes = require('./generate');
-const { parseEditRequest, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30 } = require('../llm');
+const { parseEditRequest, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30, extractTextTokens, suggestPhraseFromRequest } = require('../llm');
 const cerebro = require('../cerebro');
 const logo = require('../logo');
 const vision = require('../vision');
@@ -608,6 +608,24 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       } catch (e) {
         console.error('Cérebro Visual: enhance de prompt falhou (usando prompt original):', e.message);
         if (refCount > 0) finalPrompt = finalPrompt + '\n' + multiRefDesignRules(paletteBlock);
+      }
+    }
+
+    // 3c) Se o usuário pediu "um texto/frase" sem dizer o conteúdo, o Cérebro
+    //     SUGERE uma frase elaborada (usa os fatos que lembra) e imprime na peça.
+    if (cmd.replace_prompt) {
+      try {
+        const ownTokens = extractTextTokens(cmd.new_prompt || message);
+        if (!ownTokens.length) {
+          const phrase = await suggestPhraseFromRequest(cmd.new_prompt || message, session.memory.project);
+          if (phrase && !finalPrompt.includes(phrase)) {
+            finalPrompt = `${finalPrompt}\nInclude the exact printed text "${phrase}" clearly in the image.`;
+            session.memory.currentPrompt = finalPrompt;
+            cmd.reply = (cmd.reply || '') + ` Sugeri esta frase para o texto: “${phrase}” — me diga se quer alterar.`;
+          }
+        }
+      } catch (e) {
+        console.error('Cérebro: sugestão de frase falhou (seguindo sem):', e.message);
       }
     }
 

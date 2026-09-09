@@ -492,10 +492,89 @@ function extractProjectUpdate(message) {
   return Object.keys(proj).length ? proj : null;
 }
 
+// Extrai os TEXTOS que o usuário quer impressos na imagem (aspas, idades, preços
+// e nomes próprios) — usados para (a) reforçar no prompt e (b) conferir na QA.
+function extractTextTokens(raw) {
+  const out = new Set();
+  const s = String(raw || '');
+  // Aspas explícitas: "Joan Ravi", “5 anos”
+  (s.match(/["""]([^""""]{2,40})["""]/g) || []).forEach((q) => out.add(q.replace(/["""]/g, '').trim().slice(0, 40)));
+  // Números com unidade / valores: "5 anos", "R$ 12,90", "50%"
+  const num = s.match(/\b\d+\s*(anos?|meses?|dias?|horas?|%|\b)/gi) || [];
+  num.forEach((n) => n.trim() && out.add(n.trim()));
+  const money = s.match(/R\$\s*[\d.,]+\s*/gi) || [];
+  money.forEach((m) => out.add(m.trim()));
+  // Nomes próprios (2+ palavras capitalizadas) — só quando o pedido já é textual
+  // (convite/aniversário/logo/aspas/número), para não capturar frases comuns.
+  const textual = /[""“”]/.test(s) || /\b\d+\s*(anos|meses)\b|\bR\$\s*\d/i.test(s) || /(convite|anivers[áa]rio|invitation|birthday|logo|lembranc[aa]|cart[ãa]o)/i.test(s);
+  if (textual) {
+    const skip = /^(Convite|Preciso|Quero|Gostaria|Queria|Gostava|Fizer|Faz|Cri|Estou|Eu|Ola|Ol[áa]|Oi|O|A|Para|Por favor|Minha|Minha|Nossa|Esse|Essa|Este|Esta|Uma|Um|Como|Quais|Quantos)\b/i;
+    (s.match(/\b([A-ZÀ-Ú][a-zà-úçãõéíóúâêô]{1,}(?:\s+[A-ZÀ-Ú][a-zà-úçãõéíóúâêô]{1,}){0,3})\b/g) || []).forEach((c) => {
+      const clean = (c || '').trim();
+      if (clean.split(/\s+/).length >= 2 && !skip.test(clean) && clean.length <= 40) out.add(clean);
+    });
+  }
+  return [...out].filter(Boolean).slice(0, 5);
+}
+
+// Garante que os textos extraídos estejam presentes no prompt EN (senão, anexa
+// a instrução de imprimir exatamente aquele texto na imagem).
+function ensureRequiredText(enPrompt, rawPrompt) {
+  let out = String(enPrompt || '');
+  for (const tok of extractTextTokens(rawPrompt)) {
+    if (tok.length < 2) continue;
+    if (!RegExp(tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(out)) {
+      out += ` Include the exact printed text "${tok}" clearly visible in the image, spelled correctly.`;
+    }
+  }
+  return out;
+}
+
 // Reescreve o pedido do usuário em um prompt profissional de imagem em inglês,
 // estilo ChatGPT: expande pedidos vagos/absurdos em cena -> sujeito -> estilo ->
 // iluminação -> composição -> restrições. Retorna o prompt enriquecido + uma
 // breve confirmação em PT. Nunca quebra (fallback: prompt original + toques).
+// Conhecimento de marketing de eventos/peças: o Cérebro NÃO depende do usuário
+// explicar o que é cada peça — reconhece o tipo e aplica convenções certas.
+function marketingKnowledge(raw) {
+  const r = String(raw || '');
+  const hints = [];
+  if (/(arraial|festa junina|junina|s[ãa]o jo[ãa]o|festa caipira|bandeirinha|pamonha|canjica|milho verde)/i.test(r)) {
+    hints.push('Brazilian "arraial / Festa Junina / São João" = a COUNTRY PARTY: colorful pennant flags, chita patchwork fabric, hay bales, corn, bonfire, sky lanterns, checkered tablecloths. It is NOT a beach or sand scene.');
+  }
+  if (/(convite|invitation)/i.test(r)) {
+    hints.push('Invitation (convite): elegant, readable layout — the HONOREE NAME, the age/anniversary number and the date MUST be prominent printed text.');
+  }
+  if (/(anivers[áa]rio|birthday)/i.test(r)) {
+    hints.push('Birthday piece: festive and celebratory; honor the name + age in big, clear letters.');
+  }
+  if (/(banner)/i.test(r)) {
+    hints.push('Banner = wide/horizontal promotional graphic with a BIG short headline and strong call-to-action; readable at a distance.');
+  }
+  if (/(flyer|panfleto|folder|folheto)/i.test(r)) {
+    hints.push('Flyer = compact one-page promotion: headline, key info, offer/price and contact, with clean visual hierarchy.');
+  }
+  if (/(logo|logomarca|marca)/i.test(r)) {
+    hints.push('Logo: minimal wordmark or emblem, strong silhouette, professional, printable.');
+  }
+  if (/(faculdade|escola|curso|universidade|vestibular|matr[cí]cula|est[áa]cio|ensino)/i.test(r)) {
+    hints.push('Education marketing: trustworthy and aspirational look, clear offer/CTA (matrícula, vestibular, bolsa).');
+  }
+  if (/(hamburgueria|hamb[uú]rguer|burger|lanche|combo|fast[- ]?food)/i.test(r)) {
+    hints.push('Hamburgueria/promo: appetizing food photography (steam, melting cheese, fresh bun, close-up), warm appetizing palette (red/yellow/orange), bold price or offer ("R$ XX,90", combo), strong CTA (peça pelo WhatsApp).');
+  }
+  if (/(pizzaria|pizza)/i.test(r)) {
+    hints.push('Pizzaria: hero shot of pizza in foreground — melted cheese pull, wood-fired crust, toppings — warm inviting light, rustic Italian mood (red/wood tones), price/offer highlighted, delivery CTA.');
+  }
+  if (/(restaurante|restaurant|self[- ]?service|buffet|almo[çc]o|jantar|menu|card[áa]pio)/i.test(r)) {
+    hints.push('Restaurante: appetizing professional food photography, warm light, dish as the hero, clean layout, clear offer/price emphasis, inviting mood.');
+  }
+  if (/(promo[çc][ãa]o|promo|black friday|desconto|oferta|sale|cupom|imperd[ií]vel)/i.test(r)) {
+    hints.push('Promoção: the OFFER is the hero — big discount %, price clearly printed, urgency tone, bold colors, coupon/CTA. Only include additional texts the user asked for.');
+  }
+  return hints.length ? '\nDOMAIN KNOWLEDGE (follow it strictly):\n- ' + hints.join('\n- ') : '';
+}
+
 async function enhanceImagePrompt(rawPrompt, opts = {}) {
   const trimmed = (rawPrompt || '').trim();
   if (!trimmed || trimmed.length < 3) return { prompt: trimmed, reply: '' };
@@ -517,9 +596,11 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
     '- structure: scene/background -> main subject (specific, with details) -> style/medium -> lighting -> composition/framing -> mood',
     '- make it explicit and concrete (materials, textures, colors, camera angle, depth of field)',
     '- keep the absurd/creative request alive (the user WANTS what they asked, even if wild) — do not censor, do not tone it down',
-    '- if it is a product/logo/banner request, aim for professional commercial quality (studio lighting, clean background)',
-    '- keep quoted text (“...” or \"...\") that the user wants printed in the image, verbatim, in quotes',
-    '- end with hard constraints: no text, no watermark, no letters (unless the user asked for text)',
+    '- if it is a product/logo/banner/flyer/invitation request, aim for professional quality (clean layout, high contrast, readable text)',
+    '- TEXT: whenever the user wants printed text (name, age, price, convite, banner, flyer, logo, slogan, words), the text MUST appear clearly, correctly spelled and styled, exactly as requested. ALWAYS include: all quoted strings, all proper names of people/children/companies, ages, prices, dates and phone numbers as visible text. Never omit, abbreviate or change them.',
+    '- keep quoted text (“...” or \"...\") the user wants printed in the image, verbatim',
+    marketingKnowledge(trimmed),
+    '- end with hard constraints: no watermark, no gibberish letters, no unrelated text (unless the user asked for printed text)',
     'Rules: NEVER add “photorealistic, 8k, masterpiece, trending” spam. 2-5 sentences max. No explanations.',
     'Then, on the next line after a separator “###CONF:” append a 1-sentence friendly confirmation in PORTUGUESE telling the user what was generated (never mention the prompt).',
     'Format: <english prompt>\\n###CONF:<portuguese confirmation>'
@@ -539,7 +620,9 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
     const confMatch = cleaned.match(/###CONF:\s*([\s\S]+)$/);
     const prompt = confMatch ? cleaned.slice(0, confMatch.index).trim() : cleaned;
     const reply = (confMatch && confMatch[1].trim()) || '';
-    if (prompt) return { prompt, reply, fromLLM: true };
+    // Reforço final: textos pedidos (nome/idade/preço) que sumiram no rewrite voltam
+    // como instrução explícita de impressão na imagem.
+    if (prompt) return { prompt: ensureRequiredText(prompt, trimmed), reply, fromLLM: true };
   }
 
   // Fallback sem LLM: usa o otimizador leve por intenção (mantém o pedido do usuário)
@@ -550,7 +633,21 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
 function optimizeFallback(rawPrompt) {
   const p = rawPrompt.toLowerCase();
   let enhancement = '';
-  if (/(produto|product|loja|ecommerce|vender|catálogo|celular|camiseta|caneca|garrafa|bolsa|tênis)/.test(p)) {
+  if (/(arraial|festa junina|junina|s[ãa]o jo[ãa]o|festa caipira|bandeirinha)/.test(p)) {
+    enhancement = ', Brazilian country party theme (arraial/Festa Junina), colorful pennant banners, chita patchwork fabric, corn, bonfire, festive invitation layout';
+  } else if (/(convite|invitation|cart[ãa]o de anivers[áa]rio)/.test(p)) {
+    enhancement = ', elegant invitation card design, festive, clean layout, with the name and age as prominent printed text';
+  } else if (/(banner)/.test(p)) {
+    enhancement = ', wide promotional banner, big bold headline, vibrant colors, professional marketing layout';
+  } else if (/(flyer|panfleto|folder|folheto)/.test(p)) {
+    enhancement = ', promotional flyer layout, clear visual hierarchy, headline, offer and price highlighted, professional print';
+  } else if (/(hamburgueria|hamb[uú]rguer|burger|combo|lanche)/.test(p)) {
+    enhancement = ', appetizing food photography, melting cheese, warm palette, bold price and offer text, professional promo';
+  } else if (/(pizzaria|pizza)/.test(p)) {
+    enhancement = ', hero shot of pizza with melted cheese, warm lighting, rustic Italian mood, offer and price highlighted';
+  } else if (/(restaurante|restaurant|almo[çc]o|jantar|buffet|self[- ]service)/.test(p)) {
+    enhancement = ', appetizing professional food photography, warm light, dish as hero, clean layout, price highlighted';
+  } else if (/(produto|product|loja|ecommerce|vender|catálogo|celular|camiseta|caneca|garrafa|bolsa|tênis)/.test(p)) {
     enhancement = ', professional product photography, studio lighting, clean background, commercial quality, high-end e-commerce imagery';
   } else if (/(realist|foto|camera|paisagem|retrato|cachorro|pessoa|natureza|praia|carro)/.test(p)) {
     enhancement = ', ultra realistic photograph, natural lighting, sharp focus, professional photography';
@@ -559,9 +656,37 @@ function optimizeFallback(rawPrompt) {
   } else {
     enhancement = ', high quality, detailed, visually striking';
   }
-  const hasQuoted = /"[^"]+"/.test(rawPrompt) || /(escrever|texto dizendo|com o texto|dizer|palavras?)/.test(p);
+  const hasQuoted = /"[^"]+"/.test(rawPrompt) || /(escrever|texto dizendo|com o texto|dizer|palavras?)/.test(p) ||
+    /(convite|anivers[áa]rio|birthday|banner|flyer|panfleto|promo[çc][ãa]o|logo|hamburgueria|pizzaria|restaurante|oferta|pre[cç]o|R\$)/.test(p);
   const noText = hasQuoted ? '' : ', no text, no watermark, no letters, no words';
   return `${rawPrompt}${enhancement}${noText}`;
+}
+
+// Sugere uma FRASE PRONTA para o texto da peça quando o usuário pede "um texto"
+// sem dizer qual — usa o tipo de peça + fatos da marca para copy de impacto em PT.
+async function suggestPhraseFromRequest(raw, project) {
+  const s = String(raw || '');
+  const wantsAnyText = /(\btexto\b|\bfrase\b|\bslogan\b|\blema\b|\bchamada\b|\bmanchete\b|\bmensagem\b|legenda|escreve\w*\s+um texto|escrever u[mã]a? frase|um texto (legal|bom|bonito|de impacto|curto)|frase de impacto|texto de impacto)\b/i.test(s);
+  const hasOwnText = /[""“”]/.test(s) || /R\$\s*\d|\b\d+\s*(anos|meses)\b/i.test(s) || /\b(telefone|contato|whatsapp)\b/i.test(s);
+  if (!wantsAnyText || hasOwnText) return null;
+  const facts = (project && project.facts) || [];
+  const factLines = facts.filter((f) => f && f.key && f.value).map((f) => `- ${f.key}: ${f.value}`).join('\n');
+  const sys = [
+    'Você é um copywriter brasileiro sênior.',
+    'Crie UMA frase curta e impactante (máx. 45 caracteres, em pt-BR, SEM emoji) para a peça visual descrita.',
+    'Quando couber, use os fatos da marca na frase (nome da criança/idade, nome da empresa, oferta, slogan).',
+    factLines ? 'Fatos da marca:\n' + factLines : '',
+    'Responda SOMENTE com a frase — sem aspas, sem explicação.'
+  ].filter(Boolean).join('\n');
+  try {
+    const t = await callLLM(sys, `Peça a criar: ${s.slice(0, 280)}`, { temperature: 0.8, maxTokens: 80, json: false });
+    const ph = (t || '').trim().replace(/["'']+/g, '');
+    if (ph.length >= 3 && ph.length <= 60) return ph;
+    return null;
+  } catch (e) {
+    console.error('suggestPhraseFromRequest falhou:', e.message);
+    return null;
+  }
 }
 
 // Responde uma mensagem puramente conversacional (dúvida, pergunta geral, bate-papo)
@@ -693,4 +818,4 @@ async function contentPlan30(project, extra) {
   return null;
 }
 
-module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30 };
+module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest };
