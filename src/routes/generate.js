@@ -542,6 +542,99 @@ async function generateImagePollinations(prompt, opts = {}) {
   }
 }
 
+// Gera imagem via Magnific API (Mystic — hoje a Magnific é a dona do Freepik).
+// ⚠️ PAGO (créditos): 1K ~$0.069, 2K ~$0.119 por imagem. Só age se MAGNIFIC_API_KEY
+// estiver configurada (chave só é criada em planos pagos). Fluxo async: POST →
+// task_id → poll GET /v1/ai/mystic/{task-id} até COMPLETED. Retorna URL ou null.
+function mysticAspect(width, height) {
+  if (!width || !height) return 'square_1_1';
+  const r = width / height;
+  if (Math.abs(r - 1) < 0.15) return 'square_1_1';
+  if (r > 1) return r >= 1.5 ? 'widescreen_16_9' : 'classic_4_3';
+  return r < 2 / 3 ? 'portrait_9_16' : 'portrait_3_4';
+}
+
+async function generateImageMystic(prompt, opts = {}) {
+  const key = process.env.MAGNIFIC_API_KEY;
+  if (!key) return null;
+  const headers = { 'x-magnific-api-key': key, 'Content-Type': 'application/json', Accept: 'application/json' };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  let structureReference = null;
+  if (opts.referenceImage) {
+    try {
+      const buf = await imageToBuffer(opts.referenceImage);
+      // reduz para evitar payload gigante (referência de estrutura é base64)
+      let b = buf;
+      try {
+        b = await sharp(buf, { limitInputPixels: false }).rotate().resize({ width: 1024, height: 1024, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer();
+      } catch (e) {}
+      structureReference = b.toString('base64');
+    } catch (e) {
+      console.error('mystic: falha ao preparar referência:', e.message);
+    }
+  }
+
+  const payload = {
+    prompt: String(prompt || '').slice(0, 4000),
+    resolution: opts.resolution || '1k', // 1k | 2k | 4k (barato por padrão)
+    aspect_ratio: opts.aspectRatio || mysticAspect(opts.width, opts.height),
+    model: opts.mysticModel || 'realism',
+    engine: opts.engine || 'automatic',
+    filter_nsfw: true,
+    fixed_generation: false,
+    creative_detailing: typeof opts.creativeDetailing === 'number' ? opts.creativeDetailing : 33,
+    adherence: typeof opts.adherence === 'number' ? opts.adherence : 50,
+    hdr: typeof opts.hdr === 'number' ? opts.hdr : 50
+  };
+  if (structureReference) payload.structure_reference = structureReference;
+  if (typeof opts.structureStrength === 'number') payload.structure_strength = opts.structureStrength;
+  if (Array.isArray(opts.colorsHex) && opts.colorsHex.length) {
+    payload.styling = {
+      colors: opts.colorsHex.slice(0, 5).map((color, i) => ({ color, weight: +(1 / (i + 1)).toFixed(2) }))
+    };
+  }
+
+  try {
+    const res = await axios.post('https://api.magnific.com/v1/ai/mystic', payload, { headers, timeout: 60000 });
+    const taskId = res.data && res.data.data && res.data.data.task_id;
+    if (!taskId) {
+      console.error('mystic: sem task_id no retorno:', JSON.stringify(res.data).slice(0, 200));
+      return null;
+    }
+    const deadline = Date.now() + (opts.timeout || 150000); // 2K leva ~20-40s
+    while (Date.now() < deadline) {
+      await sleep(3000);
+      try {
+        const poll = await axios.get(`https://api.magnific.com/v1/ai/mystic/${taskId}`, {
+          headers,
+          timeout: 30000,
+          validateStatus: (s) => s < 500
+        });
+        const d = poll.data && poll.data.data;
+        const status = (d && d.status) || 'IN_PROGRESS';
+        if (status === 'COMPLETED') {
+          const gen = d.generated || [];
+          const url = gen.find((u) => typeof u === 'string') || null;
+          if (url) return url;
+        }
+        if (status === 'FAILED' || status === 'CANCELLED') {
+          console.error('mystic: tarefa falhou:', status);
+          return null;
+        }
+      } catch (e) {
+        const st = e.response && e.response.status;
+        if (st && st === 401) { console.error('mystic: chave inválida.'); return null; }
+        if (st && st < 500) { console.error('mystic poll erro:', e.message); return null; }
+      }
+    }
+    return null;
+  } catch (e) {
+    console.error('mystic falhou:', (e.response && e.response.status), (e.response && e.response.data && JSON.stringify(e.response.data).slice(0, 200)) || e.message);
+    return null;
+  }
+}
+
 // Cadeia de provedores de geração de imagem (fal.ai -> Stability AI -> Hugging Face).
 // Usada pelo /image (padrão) e pelo Cérebro Visual (chat de edição).
 async function generateImageFromProviders(prompt, opts = {}) {
@@ -557,6 +650,23 @@ async function generateImageFromProviders(prompt, opts = {}) {
 
   let imageUrl = null;
   const FAL_KEY = process.env.FAL_KEY;
+
+  // 0) Modelo solicitado "mystic" (Magnific, pago) — só age se houver MAGNIFIC_API_KEY.
+  //    Se falhar, cai na cadeia normal (fal → stability → pollinations).
+  if (model === 'mystic') {
+    try {
+      imageUrl = await generateImageMystic(prompt, {
+        width, height,
+        resolution: opts.resolution || '1k',
+        referenceImage,
+        structureStrength: opts.structureStrength,
+        colorsHex: opts.colorsHex
+      });
+    } catch (e) {
+      console.error('mystic (modelo solicitado) falhou:', e.message);
+    }
+    if (imageUrl) return imageUrl;
+  }
 
   // Se há uma imagem de referência, priorizar a edição instrucional (Nano Banana Pro /
   // Gemini) que PRESERVA o sujeito/pessoa original (ex: "coloca um chapéu na pessoa").
@@ -626,6 +736,92 @@ function buildVideoPrompt(mode, opts) {
     return p;
   }
   return (opts.prompt || '').trim() || 'animate this image naturally with smooth motion';
+}
+
+// Gera vídeo via Magnific API — Kling v3 Pro (image-to-video premium, com áudio).
+// ⚠️ PAGO (créditos). Só age se MAGNIFIC_API_KEY estiver configurada. Async:
+// POST devolve task_id + IN_PROGRESS → poll GET /v1/ai/video/kling-v3-pro/{task-id}.
+async function generateVideoMagnific(imageDataOrUrl, prompt, opts = {}) {
+  const key = process.env.MAGNIFIC_API_KEY;
+  if (!key) throw new Error('MAGNIFIC_API_KEY não configurada');
+  const headers = { 'x-magnific-api-key': key, 'Content-Type': 'application/json', Accept: 'application/json' };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Deriva o aspect_ratio da imagem de origem quando o chamador não passou.
+  let aspect = opts.aspectRatio || '16:9';
+  if (!opts.aspectRatio && imageDataOrUrl) {
+    try {
+      const imgBuf = await imageToBuffer(imageDataOrUrl);
+      const meta = await sharp(imgBuf, { limitInputPixels: false }).metadata();
+      if (meta && meta.width && meta.height) {
+        const r = meta.width / meta.height;
+        aspect = Math.abs(r - 1) < 0.15 ? '1:1' : (r > 1 ? '16:9' : '9:16');
+      }
+    } catch (e) {}
+  }
+
+  const payload = {
+    prompt: String(prompt || 'animate this image naturally with smooth motion').slice(0, 2000),
+    start_image_url: imageDataOrUrl,
+    generate_audio: true,
+    multi_shot: false,
+    aspect_ratio: aspect,
+    duration: String(opts.duration || '5'),
+    negative_prompt: 'blur, distort, low quality, artifacts',
+    cfg_scale: typeof opts.cfgScale === 'number' ? opts.cfgScale : 0.5
+  };
+
+  try {
+    const res = await axios.post('https://api.magnific.com/v1/ai/video/kling-v3-pro', payload, { headers, timeout: 90000 });
+    const taskId = res.data && res.data.data && res.data.data.task_id;
+    if (!taskId) {
+      console.error('magnific-video: sem task_id:', JSON.stringify(res.data).slice(0, 200));
+      return null;
+    }
+    const deadline = Date.now() + (opts.timeout || 180000);
+    while (Date.now() < deadline) {
+      await sleep(4000);
+      try {
+        const poll = await axios.get(`https://api.magnific.com/v1/ai/video/kling-v3-pro/${taskId}`, {
+          headers,
+          timeout: 30000,
+          validateStatus: (s) => s < 500
+        });
+        const d = poll.data && poll.data.data;
+        const status = (d && d.status) || 'IN_PROGRESS';
+        if (status === 'COMPLETED') {
+          const gen = d.generated || [];
+          const url = gen.find((u) => typeof u === 'string') || (d.video && (typeof d.video === 'string' ? d.video : d.video.url)) || null;
+          if (url) return url;
+        }
+        if (status === 'FAILED' || status === 'CANCELLED') {
+          console.error('magnific-video: tarefa falhou:', status);
+          return null;
+        }
+      } catch (e) {
+        const st = e.response && e.response.status;
+        if (st === 401) { console.error('magnific-video: chave inválida.'); return null; }
+        if (st && st < 500) { console.error('magnific-video poll erro:', e.message); return null; }
+      }
+    }
+    return null;
+  } catch (e) {
+    console.error('magnific-video falhou:', (e.response && e.response.status), (e.response && e.response.data && JSON.stringify(e.response.data).slice(0, 200)) || e.message);
+    return null;
+  }
+}
+
+// Cadeia de vídeo: Magnific (Kling v3 Pro, se chave existir) → fal.ai (Kling v2.1).
+async function generateVideoFromProviders(source, prompt, mode, opts = {}) {
+  if (process.env.MAGNIFIC_API_KEY) {
+    try {
+      const u = await generateVideoMagnific(source, prompt, { ...opts });
+      if (u) return u;
+    } catch (e) {
+      console.error('vídeo Magnific falhou, tentando fal.ai:', e.message);
+    }
+  }
+  return generateVideoFal(source, prompt, mode, opts);
 }
 
 // Gera vídeo a partir de uma imagem usando fal.ai (image-to-video)
@@ -699,7 +895,7 @@ router.post('/video', authMiddleware, async (req, res) => {
     }
 
     const source = imageData || imageUrl;
-    const videoDataUrl = await generateVideoFal(source, prompt, mode, {
+    const videoDataUrl = await generateVideoFromProviders(source, prompt, mode, {
       productName: req.body.productName,
       productDesc: req.body.productDesc
     });
@@ -744,5 +940,7 @@ router.get('/history', authMiddleware, async (req, res) => {
 router.optimizePrompt = optimizePrompt;
 router.generateImageFromProviders = generateImageFromProviders;
 router.generateVideoFal = generateVideoFal;
+router.generateVideoFromProviders = generateVideoFromProviders;
 router.compressReferenceImage = compressReferenceImage;
+router.generateImageMystic = generateImageMystic;
 module.exports = router;

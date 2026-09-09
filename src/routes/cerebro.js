@@ -4,9 +4,10 @@ const { PrismaClient } = require('@prisma/client');
 
 const { authMiddleware } = require('../middleware');
 const generateRoutes = require('./generate');
-const { parseEditRequest, enhanceImagePrompt, replyConversation, detectIntent } = require('../llm');
+const { parseEditRequest, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue } = require('../llm');
 const cerebro = require('../cerebro');
 const logo = require('../logo');
+const vision = require('../vision');
 const axios = require('axios');
 const sharp = require('sharp');
 
@@ -131,6 +132,32 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       session.memory.refImages = [image];
     }
 
+    // 👁️ VISÃO DO CÉREBRO: quando novas referências chegam, a IA olha cada uma e
+    // grava uma descrição (conteúdo, cores, textos exatos). Isso é injetado no LLM
+    // de interpretação e no prompt, fazendo a IA "entender" a imagem — não só a forma.
+    if (session.memory.refImages.length) {
+      const known = new Set(
+        (session.memory.refDescriptions || []).map((d) => d.src)
+      );
+      const pending = [];
+      for (const ref of session.memory.refImages) {
+        if (!ref || known.has(ref)) continue;
+        pending.push(ref);
+      }
+      if (pending.length) {
+        session.memory.refDescriptions = session.memory.refDescriptions || [];
+        for (const ref of pending) {
+          const caption = await vision.describeReference(ref);
+          if (caption) {
+            session.memory.refDescriptions.push({ src: ref, caption });
+            if (session.memory.refDescriptions.length > 8) {
+              session.memory.refDescriptions = session.memory.refDescriptions.slice(-8);
+            }
+          }
+        }
+      }
+    }
+
     // 0) AGENTE conversacional: se o pedido é só uma conversa/dúvida (não é uma ação
     //     de criação/edição/vídeo), responde como chat normal SEM gastar crédito.
     const intent = detectIntent(message, session.memory);
@@ -169,27 +196,34 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     //     uma peça nova do zero (sem imagem anexada) e ainda faltam as informações
     //     essenciais de identidade, o agente pergunta ANTES de gerar — em vez de
     //     "chutar" ou deixar o LLM responder no escuro. Não gasta crédito.
+    //     BRIEFING GUIADO: uma pergunta por vez; o que já foi perguntado nunca se repete.
     const noRefForStrong = !(session.memory.refImages && session.memory.refImages.length > 0);
     if (intent === 'create' && noRefForStrong && !session.memory.collecting) {
       const projStrong = session.memory.project || {};
+      const askedStrong = session.memory.asked || [];
       const wantsBrandStrong = /(logo|logomarca|marca|identidade|assinatura)/i.test(message);
       const wantsObjStrong = /(banner|post|an[úu]cio|capa|cartaz|flyer|panfleto|p[ôo]ster|folder|comercial|campanha|publicidade|material|cart[ãa]o|impulso|story|logo|imagem|arte|arte final)/i.test(message) || /\b(para|destinado|voltado)\b/i.test(message);
       const qStrong = [];
-      if (wantsBrandStrong && !projStrong.brand) qStrong.push('Qual é o nome/marca que deve aparecer na peça?');
-      if (wantsObjStrong && !projStrong.objective) qStrong.push('Qual o objetivo/tipo da peça (ex: post p/ Instagram, banner, capa, cartaz, anúncio...)?');
-      if (!(projStrong.colors && projStrong.colors.length)) qStrong.push('Quais cores devo usar (cores da sua marca ou preferência)?');
+      if (wantsBrandStrong && !projStrong.brand && !askedStrong.includes('brand')) qStrong.push({ field: 'brand', q: 'Qual é o nome/marca que deve aparecer na peça?' });
+      if (wantsObjStrong && !projStrong.objective && !askedStrong.includes('objective')) qStrong.push({ field: 'objective', q: 'Qual o objetivo/tipo da peça (ex: post p/ Instagram, banner, capa, cartaz, anúncio...)?' });
+      if (!(projStrong.colors && projStrong.colors.length) && !askedStrong.includes('colors')) qStrong.push({ field: 'colors', q: 'Quais cores devo usar (cores da sua marca ou preferência)?' });
       if (qStrong.length) {
-        const asksStrong = qStrong.slice(0, 2);
-        cerebro.pushHistory(session, 'user', message, null);
-        session.memory.pending = { ask: asksStrong, askedAt: Date.now(), creating: true };
+        const firstStrong = qStrong[0];
+        session.memory.asked = [...new Set([...askedStrong, firstStrong.field])];
+        session.memory.pending = {
+          fields: qStrong.map((x) => x.field),
+          askedAt: Date.now(),
+          creating: true,
+          question: firstStrong.field
+        };
         session.memory.collecting = true;
-        const replyStrong = asksStrong.join('\n');
-        cerebro.pushHistory(session, 'assistant', replyStrong, null);
+        cerebro.pushHistory(session, 'user', message, null);
+        cerebro.pushHistory(session, 'assistant', firstStrong.q, null);
         return res.json({
           success: true,
           sessionId: session.id,
-          reply: replyStrong,
-          ask: asksStrong,
+          reply: firstStrong.q,
+          ask: [firstStrong.q],
           needInfo: true,
           imageUrl: null,
           videoUrl: null,
@@ -221,6 +255,11 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       if (up.style) proj.style = up.style;
       if (up.objective) proj.objective = up.objective;
     }
+    // 🧠 MEMÓRIA DE FATOS: preço, telefone, slogan, endereço e produto mencionados
+    // ficam gravados no projeto e reaparecem em toda versão (chave igual = atualiza).
+    if (Array.isArray(cmd.facts) && cmd.facts.length) {
+      cerebro.mergeFacts(session.memory.project, cmd.facts);
+    }
 
     // 2) Registrar o pedido no histórico
     cerebro.pushHistory(session, 'user', message, null);
@@ -232,16 +271,74 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     if (wasCollecting) session.memory.collecting = null;
     session.memory.pending = null;
 
-    // Se a pergunta era para criar uma peça nova do zero, tratamos a resposta como
-    // a especificação dessa peça e forçamos a geração (replace_prompt com o que o
-    // usuário respondeu + identidade projetual já coletada).
+    // BRIEFING GUIADO: quando o usuário responde a pergunta anterior (criando peça
+    // nova do zero), capturamos o campo respondido, aplicamos fatos, e se ainda
+    // faltar informação essencial que nunca perguntamos, perguntamos a próxima.
+    // Se o usuário "dispensa" ("não sei", "tanto faz", "você escolhe") → gera logo.
     if (wasCollecting && pendInfo && pendInfo.creating) {
       const proj = session.memory.project || {};
+      const dismissive = /(não sei|nao sei|tanto faz|você escolhe|vc escolhe|você decide|faz do seu jeito|a seu critério|deixa com você|faz você)\b/i.test(message);
+
+      // Captura o valor da pergunta que estava pendente (que campo ele respondia).
+      if (pendInfo.question) {
+        const fill = extractBriefValue(pendInfo.question, message);
+        if (fill) {
+          if (pendInfo.question === 'colors') {
+            proj.colors = [...new Set([
+              ...(proj.colors || []),
+              ...String(fill.value).split(/[,;e]/).map((s) => s.trim()).filter(Boolean)
+            ])];
+          } else {
+            proj[pendInfo.question] = fill.value;
+          }
+        }
+      }
+
+      // Ainda falta informação essencial que nunca perguntamos → próxima pergunta.
+      const nextPend = (pendInfo.fields || []).find((fld) => {
+        const filled = fld === 'colors' ? !!(proj.colors && proj.colors.length) : !!proj[fld];
+        return !filled && !(session.memory.asked || []).includes(fld);
+      });
+      if (nextPend && !dismissive) {
+        session.memory.asked = [...new Set([...(session.memory.asked || []), nextPend])];
+        const qMap = {
+          brand: 'Qual é o nome/marca que deve aparecer na peça?',
+          colors: 'Quais cores devo usar (da sua marca ou para combinar)?',
+          objective: 'Qual o objetivo/tipo da peça (ex: post p/ Instagram, banner, capa, cartaz, anúncio...)?',
+          style: 'Qual estilo visual você prefere (moderno, profissional, criativo)?',
+          text: 'Qual texto ou chamada deve aparecer na peça?'
+        };
+        session.memory.pending = {
+          fields: pendInfo.fields,
+          askedAt: Date.now(),
+          creating: true,
+          question: nextPend
+        };
+        session.memory.collecting = true;
+        const qText = qMap[nextPend] || 'Me conta mais um detalhe para eu acertar a peça.';
+        cerebro.pushHistory(session, 'assistant', qText, null);
+        return res.json({
+          success: true,
+          sessionId: session.id,
+          reply: qText,
+          ask: [qText],
+          needInfo: true,
+          imageUrl: null,
+          videoUrl: null,
+          type: 'create',
+          memory: session.memory,
+          history: session.history.slice(-20)
+        });
+      }
+
+      // Tudo certo (ou usuário dispensou) → tratamos a resposta como a especificação
+      // da peça e forçamos a geração com a identidade projetual já coletada.
       const ctx = [];
       if (proj.brand) ctx.push(`${proj.brand}`);
       if (proj.colors && proj.colors.length) ctx.push(`paleta: ${proj.colors.join(', ')}`);
       if (proj.style) ctx.push(`estilo: ${proj.style}`);
       if (proj.objective) ctx.push(`objetivo: ${proj.objective}`);
+      if (proj.facts && proj.facts.length) ctx.push(`fatos: ${proj.facts.map((f) => `${f.key}: ${f.value}`).join(', ')}`);
       const build = `Create a professional commercial marketing piece. Subject/context decided with the user: "${message}". Brand identity: ${ctx.join(' | ') || 'none specified — use a clean modern professional look'}. High quality, balanced composition, no watermark.`;
       let newPrompt = build;
       try {
@@ -255,6 +352,10 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         strength: 1,
         fromLLM: true
       };
+    } else if (wasCollecting && pendInfo && !pendInfo.creating) {
+      // Era uma pergunta pontual (não-criadora, ex: nome para a logo). O comando já
+      // foi interpretado com a resposta; só impedimos que o LLM re-pergunte agora.
+      if (cmd.ask && cmd.ask.length) cmd.ask = [];
     }
 
     // 2b) Precisamos de informação antes de gerar (ex: qual nome colocar na logo) —
@@ -284,10 +385,22 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     //     Proteção anti-loop: se já estávamos coletando, força geração com o que temos.
     const alreadyCollecting = session.memory.collecting;
     if (cmd.ask && cmd.ask.length > 0 && !alreadyCollecting) {
+      // Mapeia a pergunta para o campo do projeto (para o briefing guiado não repetir).
+      const inferField = (q) => {
+        const s = (q || '').toLowerCase();
+        if (/nome|marca/.test(s)) return 'brand';
+        if (/cor(es)?/.test(s)) return 'colors';
+        if (/objetivo|tipo|finalidade|post|banner|an[úu]ncio/.test(s)) return 'objective';
+        if (/texto|chamada|escrever/.test(s)) return 'text';
+        if (/estilo/.test(s)) return 'style';
+        return 'objective';
+      };
+      const fields = cmd.ask.map((q) => inferField(q));
       session.memory.pending = {
-        ask: cmd.ask,
+        fields,
         askedAt: Date.now(),
-        creating: !!cmd.replace_prompt // é criação de peça nova → a resposta deve gerar
+        creating: !!cmd.replace_prompt, // é criação de peça nova → a resposta deve gerar
+        question: fields[0]
       };
       session.memory.collecting = true;
       cerebro.pushHistory(session, 'assistant', cmd.reply, null);
@@ -339,7 +452,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
 
       const motion = /\btour\b|\b360\b|giro|rota|circular|panoram/i.test(message) ? 'orbit' : (/andar|caminhar|andar em dire|personagem se move|ele anda/i.test(message) ? 'walk' : 'subtle');
       try {
-        const videoUrl = await generateRoutes.generateVideoFal(videoSource, `create a smooth cinematic ${motion === 'orbit' ? '360-degree rotating view' : motion === 'walk' ? 'walking movement' : 'subtle lifelike motion'} of this image`, motion, {});
+        const videoUrl = await generateRoutes.generateVideoFromProviders(videoSource, `create a smooth cinematic ${motion === 'orbit' ? '360-degree rotating view' : motion === 'walk' ? 'walking movement' : 'subtle lifelike motion'} of this image`, motion, {});
         if (videoUrl) {
           await prisma.generation.update({ where: { id: generation.id }, data: { status: 'COMPLETED', imageUrl: videoUrl } });
           session.memory.baseImage = videoUrl;
@@ -492,6 +605,13 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
           editPrompt = `Edit the attached source image as requested: ${delta}.${preserve}`;
         }
         if (refCount > 0) editPrompt += '\n' + multiRefDesignRules(paletteBlock);
+        // 👁️ VISÃO: descreve o que as imagens anexadas mostram, para o gerador saber
+        // o que já existe nelas (textos, preço, nome, cores) e não inventar por cima.
+        const descLines = (session.memory.refDescriptions || []).map((d) => d.caption).filter(Boolean).slice(0, 3);
+        if (descLines.length) {
+          editPrompt += '\nREFERENCE CONTENT (what the attached images literally show, keep/respect it): ' + descLines.join(' | ');
+          finalPrompt += '\nREFERENCE CONTENT (analysed): ' + descLines.join(' | ');
+        }
         // "Refazer/recriar a peça" pede um LAYOUT novo (força maior). Um simples
         // "troque a cor" deve preservar a composição (força baixa).
         const wantsRedo = /(refaz\w*|recria\w*|recreate|redesign|nova vers|novo layout|refaça|do zero|do início)/i.test(message);
@@ -530,6 +650,31 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         error: 'Não foi possível gerar a nova imagem agora. Tente novamente.',
         code: 'GEN_FAILED'
       });
+    }
+
+    // 5b) REALCE DE QUALIDADE (Magnific Mystic — opcional, pago). Só quando o usuário
+    //     pedir explicitamente "melhorar/realçar/mais detalhe" e MAGNIFIC_API_KEY existir.
+    //     Re-processa a imagem final em 2K mantendo estrutura (referência = resultado).
+    const wantsEnhance = /(melhorar|real[çc]ar|hiper[- ]?realista|mais detalhe|alta qualidade|ultra[- ]?realista|upscale|dar um toque profissional)/i.test(message);
+    if (imageUrl && wantsEnhance && process.env.MAGNIFIC_API_KEY) {
+      try {
+        const enhUrl = await generateRoutes.generateImageMystic(
+          'Improve the realism, sharpness and detail of this exact image. Keep every existing text exactly as is, same colors, same composition and layout. Do not change, add or remove elements.',
+          {
+            width,
+            height,
+            resolution: '2k',
+            referenceImage: imageUrl,
+            structureStrength: 55
+          }
+        );
+        if (enhUrl) {
+          imageUrl = enhUrl;
+          cmd.reply = `${cmd.reply || 'Pronto!'} Apliquei um realce de alta qualidade (2K).`;
+        }
+      } catch (e) {
+        console.error('Cérebro Visual: realce Mystic falhou (mantendo imagem):', e.message);
+      }
     }
 
     // 6) Sucesso: registra na memória e devolve tudo

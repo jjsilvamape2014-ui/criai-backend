@@ -22,6 +22,8 @@ function createSession(userId, sessionId) {
     memory: {
       baseImage: null, // imagem original (dataURL/URL) fornecida pelo usuário
       refImages: [], // até 4 imagens de referência anexadas na conversa
+      refDescriptions: [], // [{ src, caption }] — visão automática de cada referência
+      asked: [], // campos de identidade já perguntados no briefing guiado (evita repetir)
       currentPrompt: '', // prompt técnico acumulado da edição
       edits: [], // [{ message, delta, replaced, reply, ts }]
       project: {
@@ -30,7 +32,8 @@ function createSession(userId, sessionId) {
         style: '', // estilo visual (ex: "profissional", "industrial", "institucional")
         objective: '', // objetivo da peça (ex: "post LinkedIn", "banner site", "recrutamento")
         constraints: [], // restrições que persistem (ex: ["sem preto", "usar 20 MPa"])
-        typography: '' // tipografia/linguagem visual (ex: "sans-serif moderna")
+        typography: '', // tipografia/linguagem visual (ex: "sans-serif moderna")
+        facts: [] // fatos duráveis da peça: [{ key: "price", value: "R$ 12,90" }] — telefone, preço, slogan...
       },
       pending: null, // { ask: [perguntas], askedAt, answeredFields: {} } p/ conversa orientada
       collecting: null // campo que estamos aguardando o usuário responder agora (ex: "texto"|"cores"|"objetivo")
@@ -94,6 +97,7 @@ function composePrompt(memory, cmd, userMessage) {
   if (proj.objective) ctx.push(`purpose: ${proj.objective}`);
   if (proj.constraints && proj.constraints.length) ctx.push(`constraints: ${proj.constraints.join('; ')}`);
   if (proj.typography) ctx.push(`typography: ${proj.typography}`);
+  if (proj.facts && proj.facts.length) ctx.push(`facts: ${proj.facts.map((f) => `${f.key}: ${f.value}`).join('; ')}`);
 
   // Prefixa contexto do projeto (uma vez) no início do prompt
   if (ctx.length && !memory.currentPrompt.startsWith('[')) {
@@ -109,6 +113,23 @@ function aspectSizes(aspect) {
   return { width: 1024, height: 1024 };
 }
 
+// Mescla fatos duráveis de projeto (telefone, preço, slogan, endereço...) —
+// chave igual = atualiza o valor (o que foi dito por último vence); nunca duplica.
+function mergeFacts(project, facts) {
+  if (!project.facts) project.facts = [];
+  for (const f of facts || []) {
+    if (!f || !f.key) continue;
+    const k = String(f.key).trim().toLowerCase();
+    const v = String(f.value).trim();
+    if (!k || !v) continue;
+    const i = project.facts.findIndex((x) => x.key === k);
+    if (i >= 0) project.facts[i].value = v;
+    else project.facts.push({ key: k, value: v });
+  }
+  if (project.facts.length > 12) project.facts = project.facts.slice(-12);
+  return project.facts;
+}
+
 module.exports = {
   STORE,
   newSessionId,
@@ -118,5 +139,6 @@ module.exports = {
   listSessions,
   pushHistory,
   composePrompt,
-  aspectSizes
+  aspectSizes,
+  mergeFacts
 };

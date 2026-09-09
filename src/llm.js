@@ -341,6 +341,14 @@ async function parseEditRequest(message, memory) {
     'KNOWN PROJECT CONTEXT (persist these, they were decided in earlier messages):',
     projectContext,
     '',
+    'FACTS of the piece the user already mentioned in this conversation (keep them in every prompt unless the user changes them):',
+    (proj.facts && proj.facts.length ? proj.facts.map((f) => `${f.key}: ${f.value}`).join('\n') : '(none yet)'),
+    '',
+    'WHAT THE ATTACHED REFERENCE IMAGE(s) SHOW (from automatic vision — trust this as ground truth):',
+    Array.isArray(memory && memory.refDescriptions) && memory.refDescriptions.length
+      ? memory.refDescriptions.map((d, i) => `ref${i + 1}: ${d.caption}`).join('\n')
+      : '(none described)',
+    '',
     'Return ONLY a JSON object with EXACTLY these fields:',
     '{',
     '  "reply": short confirmation in PORTUGUESE (1 sentence), tells the user what was done, never mentions the prompt,',
@@ -351,9 +359,11 @@ async function parseEditRequest(message, memory) {
     '  "aspect_ratio": "1:1" | "16:9" | "9:16" ("" keep current),',
     '  "needName": boolean — true ONLY when the user asks for a brand/logo but gave no name (then reply asks the name, prompt_delta="")',
     '  "ask": array of 1-2 short questions in PORTUGUESE ("..."), or [] — when TRUE essential information is missing to do a GREAT job and only 1 question unblocks the whole request.',
+    '  "facts": array of {key, value} — facts about the piece to remember across the conversation (price, phone, slogan, address, product, date). Use keys: brand, price, phone, slogan, address, product, text, offer, date, audience. [] if nothing durable.',
     '}',
     '',
-    'Use "ask" sparingly and ONLY when an essential, single piece of info is missing and would clearly change the result (e.g. creating a brand-new piece: "qual é o nome/marca da empresa?", "qual o objetivo: post p/ Instagram, banner, logo, anúncio?", "deseja incluir algum texto?"). IMPORANT: when the user has attached a reference IMAGE to edit, this is an EDIT — never ask, just do the edit (ask: []). If the request is editable with what we have, ask: []. Never ask more than once for the same field (check KNOWN PROJECT CONTEXT and recent replies against it). If the user says "não sei", "tanto faz", "você escolhe", or keeps it open, do NOT ask — proceed.',
+    'IMPORTANT about "facts": when the user mentions a price, phone, slogan/name, address, product or offer — even inside an edit — capture it here so it persists into future versions.',
+    'Use "ask" sparingly and ONLY when an essential, single piece of info is missing and would clearly change the result (e.g. creating a brand-new piece: "qual é o nome/marca da empresa?", "qual o objetivo: post p/ Instagram, banner, logo, anúncio?", "deseja incluir algum texto?"). IMPORANT: when the user has attached a reference IMAGE to edit, this is an EDIT — never ask, just do the edit (ask: []). If the request is editable with what we have, ask: []. Never ask more than once for the same field (check KNOWN PROJECT CONTEXT and recent replies against it). If the user says "não sei", "tanto faz", "você escolhe", or keeps it open, do NOT ask — proceed. If you have to ask, ask ONE question at a time.',
     '',
     'Rules:',
     '- Combine all instructions in the user message into a single, coherent, non-contradictory prompt_delta. If the user says "troca o caminhão mas mantém o caminhão", interpret intent: replace the specific truck with another similar one, keep the composition.',
@@ -378,17 +388,21 @@ async function parseEditRequest(message, memory) {
   const parsed = parseJsonLoose(llmText);
 
   if (parsed && typeof parsed.reply === 'string') {
+    const facts = Array.isArray(parsed.facts)
+      ? parsed.facts.filter((f) => f && f.key && f.value).slice(0, 6)
+      : [];
     if (parsed.needName) {
       return {
         reply: parsed.reply || 'Qual nome ou marca devo colocar na imagem?',
         needName: true,
         aspect_ratio: parsed.aspect_ratio || aspect || null,
         projectUpdate: extractProjectUpdate(message),
+        facts,
         fromLLM: true
       };
     }
     // Pergunta(s) essencial(is) para gerar bem → bloco e não gera até responder
-    const asks = Array.isArray(parsed.ask) ? parsed.ask.filter((q) => typeof q === 'string' && q.trim()).slice(0, 2) : [];
+    const asks = Array.isArray(parsed.ask) ? parsed.ask.filter((q) => typeof q === 'string' && q.trim()).slice(0, 1) : [];
     if (asks.length > 0 && !(memory && memory.collecting)) {
       return {
         reply: asks.join('\n'),
@@ -396,6 +410,7 @@ async function parseEditRequest(message, memory) {
         replace_prompt: !!parsed.replace_prompt,
         aspect_ratio: parsed.aspect_ratio || aspect || null,
         projectUpdate: extractProjectUpdate(message),
+        facts,
         fromLLM: true
       };
     }
@@ -407,6 +422,7 @@ async function parseEditRequest(message, memory) {
       strength: typeof parsed.strength === 'number' ? Math.min(1, Math.max(0, parsed.strength)) : 0.6,
       aspect_ratio: parsed.aspect_ratio || aspect || null,
       projectUpdate: extractProjectUpdate(message),
+      facts,
       fromLLM: true
     };
   }
@@ -602,4 +618,27 @@ function detectIntent(message, memory) {
   return 'create';
 }
 
-module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent };
+// Extrai fatos de resposta direta a perguntas essenciais: se o usuário está
+// respondendo "Qual o objetivo?" e diz "post pro instagram", guardamos objective;
+// se é sobre nome/marca, guardamos brand. Forma o par (key,value) do briefing.
+function extractBriefValue(key, answer) {
+  const a = (answer || '').trim();
+  if (!a) return null;
+  if (key === 'objective') {
+    const tipo = a.match(/\b(?:post|banner|an[úu]ncio|anuncio|capa|cartaz|flyer|folder|logo|logomarca|story|reels|p[ôo]ster|v[íi]deo|thumb)\b/i)?.[0]?.toLowerCase();
+    const rede = a.match(/\b(instagram|facebook|whatsapp|linkedin|tiktok|youtube|site|e-commerce|ecommerce|impress[ãa]o)\b/i)?.[0]?.toLowerCase();
+    if (tipo || rede) return { key, value: tipo ? (rede ? `${tipo} ${rede}` : tipo) : rede };
+    return { key, value: a.slice(0, 40) };
+  }
+  if (key === 'brand') {
+    const clean = a.replace(/(e|é|da|de|minha|nossa|empresa|chama|nome)/gi, ' ').replace(/\s+/g, ' ').trim();
+    if (clean && clean.length >= 2 && clean.length <= 40) return { key, value: clean };
+    return null;
+  }
+  // demais keys (cores, texto, estilo...) → o próprio texto é o valor
+  const text = a.replace(/^[a-z]+[:\s]+/i, '').replace(/[.!]+$/g, '').trim();
+  if (text && text.length <= 120) return { key, value: text };
+  return null;
+}
+
+module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue };
