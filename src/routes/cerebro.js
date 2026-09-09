@@ -633,7 +633,24 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     let editSource = session.memory.refImages[0] || session.memory.baseImage || undefined;
     let smartLogo = null;
 
+    // 5a) TRANSPLANTE DE ELEMENTO (ex: "retira a taça e põe a da segunda imagem"):
+    //     o usuário descreve PELA METADE — cabe ao Cérebro adivinhar que quer trocar
+    //     um elemento usando a OUTRA imagem anexada, e enviar AS DUAS ao modelo.
+    //     Pistas: falar em "segunda/outra imagem" OU verbo de troca/remoção com 2+ refs.
+    let swapRequested = false;
+    let swapThing = '';
     if (session.memory.refImages.length >= 2) {
+      const m = message || '';
+      const mentionsOther = /(da segunda|pela segunda|da outra|pela outra|da 2[aº]?|da foto 2|da imagem 2|segunda imagem|segunda foto|outra imagem|outra foto|das refer[êe]ncias|a segunda|a outra)/i.test(m);
+      const objMatch = m.match(/(?:troca|trocar|retira|retirar|remove|remover|tira|tirar|substit|apaga|pega)\w*\s+(?:a\s+|o\s+|um\s+|uma\s+)?([\wà-úçãõéíóúâêô-]+)/i);
+      const swapVerb = !!objMatch && /(troca|trocar|retira|retirar|tira|tirar|substit)/i.test(m);
+      const obj = (objMatch && objMatch[1] || '').trim().toLowerCase();
+      const isBrandWord = /(logo|logomarca|marca|assinatura)/i.test(obj);
+      swapRequested = mentionsOther || (swapVerb && !isBrandWord);
+      if (swapRequested) swapThing = isBrandWord ? '' : obj;
+    }
+
+    if (!swapRequested && session.memory.refImages.length >= 2) {
       const logoRef = isLogoRequest && logoImageAvailable
         ? 1 // usuário falou "logo" → convenção: 2ª imagem = logo, 1ª = base
         : await logo.detectLogoRef(session.memory.refImages);
@@ -737,6 +754,34 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
               { width: rw, height: rh, referenceImage: safeRef, strength: 0.75 }
             );
           }
+        } else if (swapRequested) {
+          // 🔀 TRANSPLANTE: manda AS DUAS imagens (base + a que tem o elemento certo)
+          // e instrui uma troca LOCAL precisa — mantendo todo o resto da base intacto.
+          const sourceRef = session.memory.refImages[1] || session.memory.refImages[session.memory.refImages.length - 1] || editSource;
+          let safeBase = editSource;
+          let safeSource = sourceRef;
+          try {
+            const cb = await generateRoutes.compressReferenceImage(safeBase, 1024, 80);
+            if (cb) safeBase = cb;
+            const cs = await generateRoutes.compressReferenceImage(safeSource, 1024, 80);
+            if (cs) safeSource = cs;
+          } catch (err) {
+            console.error('Cérebro Visual: compressão p/ transplante falhou:', err.message);
+          }
+          const thing = swapThing || 'item';
+          const swapEdit = [
+            'The FIRST attached image is the base design/photo. The SECOND attached image contains the object the user wants to use.',
+            `Replace the "${thing}" visible in the FIRST image with the "${thing}" from the SECOND image — matching its exact shape, color, material, size and lighting to fit the base scene naturally.`,
+            'Keep the layout, other objects, backgrounds, texts, prices, names and logo in the FIRST image EXACTLY as they are.',
+            'This is a precise LOCAL swap: do NOT recreate, redesign or reposition anything else.'
+          ].join(' ');
+          cmd.reply = `Entendi 🎯 — vou trocar ${swapThing ? `a(o) "${swapThing}"` : 'o elemento'} do design pela versão da segunda imagem, mantendo todo o resto igual.`;
+          imageUrl = await generateRoutes.generateImageFromProviders(swapEdit, {
+            width,
+            height,
+            referenceImage: [safeBase, safeSource],
+            strength: 0.5
+          });
         } else {
           imageUrl = await generateRoutes.generateImageFromProviders(editPrompt, {
             width,
