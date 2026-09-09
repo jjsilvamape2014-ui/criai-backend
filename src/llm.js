@@ -641,4 +641,56 @@ function extractBriefValue(key, answer) {
   return null;
 }
 
-module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue };
+// Gera 3 legendas prontas para Instagram + chamada (CTA) para a peça criada.
+// Usa os fatos duráveis (telefone/slogan/preço) e o objetivo da peça.
+async function generateCaptions(prompt, project) {
+  const facts = (project && project.facts) || [];
+  const factLines = facts.map((f) => `${f.key}: ${f.value}`).join('\n');
+  const sys = [
+    'You are a Brazilian social media copywriter for Instagram/Facebook.',
+    'Write 3 READY-TO-USE Portuguese (pt-BR) captions for the image the user just created.',
+    'Style: short, punchy, with emoji, a hook on the first line, and ONE call-to-action per caption (e.g. chame no WhatsApp, siga para mais, comente “EU QUERO”).',
+    'Use this known brand info when relevant:',
+    factLines ? `Known facts: ${factLines}` : '(no facts provided)',
+    'Format EXACTLY like this, no extra explanations:',
+    '📱 Legenda 1: <caption>',
+    '📱 Legenda 2: <caption>',
+    '📱 Legenda 3: <caption>',
+    '🔥 Melhor CTA: <one CTA>',
+    'Hashtags: <up to 8 relevant hashtags, no space>'
+  ].join('\n');
+  try {
+    const text = await callLLM(sys, `The piece is about: ${(prompt || '').slice(0, 900)}`, { temperature: 0.8, maxTokens: 700, json: false });
+    if (text && text.trim()) return text.trim();
+  } catch (e) {
+    console.error('generateCaptions falhou:', e.message);
+  }
+  return null;
+}
+
+// Plano de conteúdo: 30 ideias de posts (um calendário) para a marca, separadas
+// por tema e formato recomendado. Retorna texto pronto para exibir no chat.
+async function contentPlan30(project, extra) {
+  const facts = (project && project.facts) || [];
+  const factLines = facts.map((f) => `${f.key}: ${f.value}`).join('\n');
+  const brand = (project && project.brand) || 'sua marca';
+  const objective = (project && project.objective) || 'redes sociais';
+  const sys = [
+    `You are a Brazilian social media strategist. Create a 30-day content calendar for ${brand} (focus: ${objective}).`,
+    'Return as a numbered list (1 to 30), one idea per line: "DIA N — <título do post> (<formato: Reels/Story/Carrossel/Imagem>)".',
+    'Mix: product highlights, before/after, testimonials, curiosities, tips, promos, behind-the-scenes, engagement questions. Vary formats.',
+    'Use these facts when useful:',
+    factLines || '(none)',
+    'Keep every line short (max 90 characters). No extra text before or after the list.'
+  ].join('\n');
+  try {
+    const suffix = extra ? `\nUser extra context: ${extra.slice(0, 300)}` : '';
+    const text = await callLLM(sys, `Create the plan.${suffix}`, { temperature: 0.7, maxTokens: 1400, json: false });
+    if (text && text.trim()) return text.trim();
+  } catch (e) {
+    console.error('contentPlan30 falhou:', e.message);
+  }
+  return null;
+}
+
+module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30 };

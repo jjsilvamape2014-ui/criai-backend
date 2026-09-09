@@ -4,7 +4,7 @@ const { PrismaClient } = require('@prisma/client');
 
 const { authMiddleware } = require('../middleware');
 const generateRoutes = require('./generate');
-const { parseEditRequest, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue } = require('../llm');
+const { parseEditRequest, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30 } = require('../llm');
 const cerebro = require('../cerebro');
 const logo = require('../logo');
 const vision = require('../vision');
@@ -107,6 +107,25 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     const sid = typeof sessionId === 'string' && sessionId ? sessionId : cerebro.newSessionId();
     const session = cerebro.getOrCreateSession(user.id, sid);
 
+    // 🗂️ MEMÓRIA DE LONGO PRAZO: hidrata o projeto com o que o usuário já decidiu
+    // em conversas anteriores (marca, cores, fatos). Tudo que ele repete nunca mais
+    // precisa ser reexplicado — vale para qualquer sessão.
+    const longMem = cerebro.loadUserMemory(user.id);
+    if (longMem && !session.memory.onlyFromDisk) {
+      const proj = session.memory.project;
+      if (!proj.brand && longMem.brand) proj.brand = longMem.brand;
+      if (!(proj.colors && proj.colors.length) && Array.isArray(longMem.colors) && longMem.colors.length) {
+        proj.colors = longMem.colors;
+      }
+      if (!proj.style && longMem.style) proj.style = longMem.style;
+      if (!proj.objective && longMem.objective) proj.objective = longMem.objective;
+      if (!(proj.facts && proj.facts.length) && Array.isArray(longMem.facts) && longMem.facts.length) {
+        proj.facts = longMem.facts;
+      }
+      // "onlyFromDisk" impede re-hidratar depois de o usuário mudar algo na sessão
+      session.memory.onlyFromDisk = true;
+    }
+
     // Pergunta sobre como funciona → responde com explicação sem gerar nem gastar crédito
     const HOW_IT_WORKS = /como funciona|cria imagem|gerar imagem|fazer imagem|como você cria|como eu crio|como vc cria|como vc gera|como você (gera|cria|faz)|o que você faz|o que vc faz|explica como|me explica|como funciona a criação|de texto ou imagem/i;
     if (HOW_IT_WORKS.test(message)) {
@@ -165,6 +184,70 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // 0) AGENTE conversacional: se o pedido é só uma conversa/dúvida (não é uma ação
     //     de criação/edição/vídeo), responde como chat normal SEM gastar crédito.
     const intent = detectIntent(message, session.memory);
+
+    // 🗓️ PLANO DE CONTEÚDO (30 dias): quando o usuário pede ideias de posts para a
+    //     marca, geramos um calendário — sem gerar imagem nem gastar crédito.
+    if (/\b(plano de (conte[úu]do|posts|publica[çc][ãa]o)|calend[áa]rio( de conte[úu]do)?|ideias de posts|30 (dias|posts)\b)/i.test(message)) {
+      cerebro.pushHistory(session, 'user', message, null);
+      const plan = await contentPlan30(session.memory.project, message) ||
+        'Ainda sem minha chave IA configurada para texto, mas aqui vai um começo:\n\n1) Apresentação da marca (Reels)\n2) Bastidores (Story)\n3) Antes/depois (Carrossel)\n4) Depoimento de cliente (Reels)\n5) Dica rápida (Story)\n6) Promo/Sorteio (Imagem)\n\nConfigure a chave (LLM_API_KEY) para eu gerar os 30 dias completos.';
+      cerebro.pushHistory(session, 'assistant', plan, null);
+      return res.json({
+        success: true,
+        sessionId: session.id,
+        reply: plan,
+        imageUrl: null,
+        videoUrl: null,
+        type: 'plan',
+        memory: session.memory,
+        history: session.history.slice(-20)
+      });
+    }
+
+    // 📸 AVISO DE FOTO RUIM ANTES DE GASTAR: se o usuário anexou uma imagem que está
+    //     borrada/escura/de baixa resolução, avisamos ANTES de gerar em cima dela.
+    if ((intent === 'edit' || intent === 'create') && session.memory.refImages.length) {
+      const firstRef = session.memory.refImages[0];
+      // Só avaliamos fotos ENVIADAS pelo usuário (dataURL) — outputs/URLs (Freepik,
+      // resultados gerados) são pulados para não travar a edição de uma peça.
+      if (firstRef && firstRef.startsWith('data:')) {
+      try {
+        let dims = null;
+        if (firstRef) {
+          let buf = null;
+          if (firstRef.startsWith('data:')) {
+            buf = Buffer.from(firstRef.split(',')[1] || '', 'base64');
+          } else if (/^https?:\/\//.test(firstRef)) {
+            const rT = await axios.get(firstRef, { responseType: 'arraybuffer', timeout: 15000 });
+            buf = rT.data;
+          }
+          if (buf && buf.length) {
+            const meta = await sharp(buf, { limitInputPixels: false }).metadata();
+            if (meta && meta.width && meta.height) dims = { w: meta.width, h: meta.height };
+          }
+        }
+        const tooSmall = dims && (dims.w < 400 || dims.h < 400);
+        const qa = tooSmall ? { ok: false, reason: `a imagem é pequena (${dims.w}×${dims.h}px)` } : await vision.checkImageQuality(firstRef);
+        if (qa && qa.ok === false) {
+          const advise = `⚠️ A imagem que você enviou está com problema: ${qa.reason || 'qualidade insuficiente'}. Vou gerar mesmo assim, mas o resultado pode sair ruim. Se puder, envie uma foto melhor (mais nítida e com mais de 400×400 px). Se quiser, toque em "Gerar" com uma nova imagem.`;
+          cerebro.pushHistory(session, 'user', message, null);
+          cerebro.pushHistory(session, 'assistant', advise, null);
+          return res.json({
+            success: true,
+            sessionId: session.id,
+            reply: advise,
+            imageUrl: null,
+            videoUrl: null,
+            type: 'warn',
+            memory: session.memory,
+            history: session.history.slice(-20)
+          });
+        }
+      } catch (e) {
+          console.error('Aviso de foto ruim falhou (seguindo em frente):', e.message);
+        }
+      }
+    }
     if (intent === 'clarify') {
       cerebro.pushHistory(session, 'user', message, null);
       const clarifyReply = 'Entendi, mas me conta um pouco mais para eu acertar de primeira:\n\n• O que você quer criar ou mudar? (imagem, logo, banner, vídeo...)\n• Tem uma foto/marca para eu usar como base?\n\nQuanto mais detalhe você der (tipo de peça, cores, texto, objetivo), melhor fica o resultado.';
@@ -263,6 +346,11 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // ficam gravados no projeto e reaparecem em toda versão (chave igual = atualiza).
     if (Array.isArray(cmd.facts) && cmd.facts.length) {
       cerebro.mergeFacts(session.memory.project, cmd.facts);
+      // Persiste no disco → memória de longo prazo (sobrevive a sessões).
+      cerebro.saveUserMemory(user.id, session.memory.project);
+    }
+    if (cmd.projectUpdate || (Array.isArray(cmd.facts) && cmd.facts.length)) {
+      cerebro.saveUserMemory(user.id, session.memory.project);
     }
 
     // 2) Registrar o pedido no histórico
@@ -687,6 +775,31 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       });
     }
 
+    // 5a1) AUTO-CORREÇÃO: QA rigoroso na imagem final. Se o modelo "alucinou" (mãos
+    //      deformadas, texto ilegível, cortes), refaz UMA vez automaticamente com a
+    //      instrução de correção, sem cobrar 2ª vez. Nunca refaz em casos determinísticos
+    //      (logotipo só colocado) nem quando a falha é de estilo (QA só reprova defeitos).
+    const qaDone = await vision.checkImageQuality(imageUrl);
+    if (qaDone && !qaDone.ok && !onlyPlace && !isPortrait) {
+      console.warn('Cérebro Visual: QA reprovou a imagem, refazendo automaticamente →', qaDone.reason);
+      await refundCredits(user);
+      await consumeCredit(user);
+      try {
+        const ref0 = session.memory.refImages[0];
+        const retryRef = ref0 ? await generateRoutes.compressReferenceImage(ref0, 1024, 80) : undefined;
+        const fixPrompt = `${finalPrompt}\n\nFix the flaws of the previous attempt: ${qaDone.reason}. Keep everything else identical.`;
+        const retryUrl = await generateRoutes.generateImageFromProviders(fixPrompt, {
+          width,
+          height,
+          referenceImage: retryRef,
+          strength: 0.6
+        });
+        if (retryUrl) imageUrl = retryUrl;
+      } catch (err) {
+        console.error('Cérebro Visual: auto-correção falhou (mantendo imagem):', err.message);
+      }
+    }
+
     // 5b) REALCE DE QUALIDADE (Magnific Mystic — opcional, pago). Só quando o usuário
     //     pedir explicitamente "melhorar/realçar/mais detalhe" e MAGNIFIC_API_KEY existir.
     //     Re-processa a imagem final em 2K mantendo estrutura (referência = resultado).
@@ -709,6 +822,19 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         }
       } catch (e) {
         console.error('Cérebro Visual: realce Mystic falhou (mantendo imagem):', e.message);
+      }
+    }
+
+    // 5b2) LEGENDA PRONTA: depois de gerar a peça, entrega 3 legendas de Instagram
+    //      + CTA + hashtags no próprio chat (texto barato, não quebra se falhar).
+    if (imageUrl && process.env.LLM_API_KEY) {
+      try {
+        const caps = await generateCaptions(finalPrompt, session.memory.project);
+        if (caps && caps.trim()) {
+          cmd.reply = `${cmd.reply || 'Pronto!'}\n\n${caps}`;
+        }
+      } catch (e) {
+        console.error('Legendas prontas falhou (seguindo):', e.message);
       }
     }
 

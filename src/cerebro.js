@@ -1,4 +1,36 @@
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+
+// Memória de LONGO PRAZO por usuário (fatos e identidade visual que sobrevivem
+// ao fim da conversa): gravada em disco (MEMORY_DIR, default ./data). Cada vez
+// que fatos/projeto mudam, persistimos; ao abrir uma nova sessão, hidratamos.
+function memoryFile(userId) {
+  const dir = process.env.MEMORY_DIR || path.join(__dirname, '..', 'data');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
+  const safeId = String(userId).replace(/[^\w-]/g, '');
+  return path.join(dir, `mem-${safeId}.json`);
+}
+
+function loadUserMemory(userId) {
+  try {
+    const raw = fs.readFileSync(memoryFile(userId), 'utf8');
+    const data = JSON.parse(raw);
+    return (data && data.project) || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveUserMemory(userId, project) {
+  if (!project) return;
+  try {
+    const payload = { project, savedAt: Date.now() };
+    fs.writeFileSync(memoryFile(userId), JSON.stringify(payload));
+  } catch (e) {
+    console.error('memória de longo prazo falhou:', e.message);
+  }
+}
 
 // MemoriaDB — armazenamento em memória por usuário/sessão.
 // Para o "primeiro momento" com uma réplica única na Railway basta; o estado
@@ -140,5 +172,7 @@ module.exports = {
   pushHistory,
   composePrompt,
   aspectSizes,
-  mergeFacts
+  mergeFacts,
+  loadUserMemory,
+  saveUserMemory
 };
