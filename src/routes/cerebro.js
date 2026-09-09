@@ -629,6 +629,30 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       }
     }
 
+    // 3d) TROCA DE TEXTO EM REFERÊNCIA (ex: "muda o nome para Strategy Soluções em
+    //     Elétrica embaixo do falcão, resto igual"): o cliente quer SO o texto diferente;
+    //     a arte (ícone, cores, painel, LED, fundo) deve ficar IDÊNTICA à imagem base.
+    const textSwapRequested =
+      /(mud[ea]\s+o\s+(texto|nome)|troca[mn]?\s+o\s+(texto|nome)|alter[ae]\s+o\s+(texto|nome)|substitu[íi]r\s+o\s+(texto|nome)|escrev[ea]\s+o\s+(texto|nome)|novo\s+(texto|nome)|colocar?\s+o\s+(texto|nome)|texto\s+dizendo|com\s+o\s+nome\b|nome\s+(embaixo|abaixo|em\s+vez|no\s+lugar)|apenas\s+o\s+(texto|nome)|s[óo]\s+o\s+(texto|nome)|deix[ae]\s+o\s+resto|mantenh[ae]?\s+o\s+resto|resto\s+igual|s[óo]\s+mud[ae]\s+o\s+texto)/i.test(message);
+    if (textSwapRequested && refCount > 0) {
+      const KEEP_ART = '\nCRITICAL INSTRUCTION: this is a TEXT REPLACEMENT on the existing reference image. Keep the emblem/icon, colors, materials, panel, LED border, background and layout 100% IDENTICAL to the reference. Change ONLY the written text exactly as requested (match the requested text style, e.g. engraved/hollow/vazado). Do not redesign, do not move or replace the emblem, do not change the background.';
+      let textSwapPrompt = cmd.new_prompt || message;
+      try {
+        const enh = await enhanceImagePrompt(textSwapPrompt, {
+          project: session.memory.project,
+          textSwap: true
+        });
+        if (enh.prompt) textSwapPrompt = enh.prompt;
+        cmd.reply = (cmd.reply || '') + ' Entendi: mantenho a arte exatamente como está e troco somente o texto.';
+      } catch (e) {
+        console.error('Cérebro: enhance de troca de texto falhou (seguindo com pedido original):', e.message);
+      }
+      finalPrompt = textSwapPrompt + KEEP_ART;
+      session.memory.currentPrompt = finalPrompt;
+      if (refCount > 0) finalPrompt += '\n' + multiRefDesignRules(paletteBlock);
+      cmd.replace_prompt = true;
+    }
+
     // 4) Registrar geração + consumir crédito
     const generation = await prisma.generation.create({
       data: {
@@ -668,7 +692,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       if (swapRequested) swapThing = isBrandWord ? '' : obj;
     }
 
-    if (!swapRequested && session.memory.refImages.length >= 2) {
+    if (!swapRequested && !textSwapRequested && session.memory.refImages.length >= 2) {
       const logoRef = isLogoRequest && logoImageAvailable
         ? 1 // usuário falou "logo" → convenção: 2ª imagem = logo, 1ª = base
         : await logo.detectLogoRef(session.memory.refImages);

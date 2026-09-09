@@ -600,6 +600,7 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
     '- TEXT: whenever the user wants printed text (name, age, price, convite, banner, flyer, logo, slogan, words), the text MUST appear clearly, correctly spelled and styled, exactly as requested. ALWAYS include: all quoted strings, all proper names of people/children/companies, ages, prices, dates and phone numbers as visible text. Never omit, abbreviate or change them.',
     '- keep quoted text (“...” or \"...\") the user wants printed in the image, verbatim',
     marketingKnowledge(trimmed),
+    (opts.textSwap ? '- THIS IS A TEXT REPLACEMENT ON AN EXISTING REFERENCE DESIGN: keep the icon/emblem, colors, materials, panel, LED border, background and layout 100% IDENTICAL. Change ONLY the written text exactly as requested (match the requested text style, e.g. engraved/hollow/vazado). Do not redesign, do not move or replace the emblem, do not change the background.' : ''),
     '- end with hard constraints: no watermark, no gibberish letters, no unrelated text (unless the user asked for printed text)',
     'Rules: NEVER add “photorealistic, 8k, masterpiece, trending” spam. 2-5 sentences max. No explanations.',
     'Then, on the next line after a separator “###CONF:” append a 1-sentence friendly confirmation in PORTUGUESE telling the user what was generated (never mention the prompt).',
