@@ -1446,6 +1446,20 @@ router.post('/concepts', authMiddleware, async (req, res) => {
   }
 });
 
+// "Olhe como um cliente": avalia a imagem com olhar comercial (notas + sugestão).
+router.post('/review', authMiddleware, async (req, res) => {
+  try {
+    const { imageUrl } = req.body || {};
+    if (!imageUrl || typeof imageUrl !== 'string') return res.status(400).json({ error: 'Faltou a imagem' });
+    const clientReview = await vision.evaluateAsClient(imageUrl);
+    if (!clientReview) return res.status(422).json({ error: 'Não consegui avaliar a imagem agora.' });
+    res.json({ success: true, clientReview });
+  } catch (err) {
+    console.error('Falha na avaliação como cliente:', err.message);
+    res.status(500).json({ error: 'Não consegui avaliar a imagem agora.' });
+  }
+});
+
 // Histórico de gerações
 router.get('/history', authMiddleware, async (req, res) => {
   try {

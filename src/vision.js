@@ -311,4 +311,92 @@ async function checkImageElements(src, elements) {
   }
 }
 
-module.exports = { describeReference, checkImageQuality, checkImageText, checkImageElements };
+// "OLHE COMO UM CLIENTE" — segunda análise comercial da imagem: notas de
+// Atenção/Clareza/Desejo/Profissionalismo + veredito + sugestão concreta de
+// melhoria. Alimenta o "Faça melhor": a IA não regenera aleatório, melhora
+// o que está impedindo a imagem de parecer profissional.
+async function evaluateAsClient(src) {
+  try {
+    if (!isEnabled() || !process.env.FAL_KEY) return null;
+    let key = src;
+    if (src && src.startsWith('data:')) {
+      key = 'review:' + crypto.createHash('sha1').update(src.split(',')[1] || '').digest('hex');
+    } else {
+      key = 'review:' + src;
+    }
+    if (cache.has(key)) return cache.get(key);
+
+    const compressed = await compress(src, 640, 66);
+    if (!compressed) return null;
+
+    const prompt = [
+      'You are a demanding customer AND a senior art director analyzing a commercial image.',
+      'Score it 0 to 10 on:',
+      '- attention (does it stop the scroll? hierarchy and contrast?)',
+      '- clarity (is the message/product instantly understandable?)',
+      '- desire (does it make the person want the product?)',
+      '- professionalism (technical quality and finishing)',
+      'Then give a verdict and ONE concrete, actionable improvement in Portuguese.',
+      'Reply EXACTLY in this JSON format (no markdown):',
+      '{"attention":8,"clarity":7,"desire":9,"professionalism":8,"verdict":"<1 short PT sentence>","suggestion":"<1 short PT sentence, specific fix>"}'
+    ].join(' ');
+
+    const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
+    const res = await axios.post(
+      'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
+      { prompt, image_url: compressed, max_tokens: 160 },
+      { headers, timeout: 30000, validateStatus: (s) => s < 500 }
+    );
+    const data = res.data || {};
+    let text = null;
+    if (data.status_url) {
+      const deadline = Date.now() + 45000;
+      while (Date.now() < deadline) {
+        await sleep(2000);
+        const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
+        const pd = pollRes.data || {};
+        if (pd.status === 'COMPLETED' || pd.output) {
+          text = typeof pd.output === 'string' ? pd.output : (pd.output && (pd.output.content || pd.output.text)) || null;
+          break;
+        }
+        if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
+      }
+    } else if (typeof data.output === 'string') {
+      text = data.output;
+    } else if (data.output && (data.output.content || data.output.text)) {
+      text = data.output.content || data.output.text;
+    }
+
+    let obj = null;
+    try {
+      const cleaned = (text || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      if (start !== -1 && end !== -1) obj = JSON.parse(cleaned.slice(start, end + 1));
+    } catch (e) {
+      obj = null;
+    }
+    if (!obj) return null;
+
+    const clamp = (v, d) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.max(0, Math.min(10, Math.round(n))) : d;
+    };
+    const out = {
+      attention: clamp(obj.attention, 7),
+      clarity: clamp(obj.clarity, 7),
+      desire: clamp(obj.desire, 7),
+      professionalism: clamp(obj.professionalism, 7),
+      verdict: String(obj.verdict || '').trim().slice(0, 160),
+      suggestion: String(obj.suggestion || '').trim().slice(0, 200)
+    };
+    cache.set(key, out);
+    if (cache.size > 200) cache.delete(cache.keys().next().value);
+    return out;
+  } catch (e) {
+    console.error('Avaliação como cliente falhou:', e.message);
+    return null;
+  }
+}
+
+module.exports = { describeReference, checkImageQuality, checkImageText, checkImageElements, evaluateAsClient };

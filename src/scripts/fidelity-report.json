@@ -1,8 +1,8 @@
 {
-  "runAt": "2026-09-10T22:01:36.751Z",
+  "runAt": "2026-09-10T22:09:29.216Z",
   "dry": false,
-  "cases": 3,
-  "generated": 3,
+  "cases": 10,
+  "generated": 10,
   "overallFidelity": 100,
   "results": [
     {
@@ -11,12 +11,12 @@
       "dry": false,
       "elements": [
         "um homem",
-        "segurando 2 celulares",
+        "dois celulares",
         "celular azul na mão esquerda",
         "celular preto na mão direita"
       ],
       "texts": [],
-      "generatedPrompt": "um homem; segurando 2 celulares; celular azul na mão esquerda; celular preto na mão direita. Feel free to add tasteful detail (idade aparente e etnia do homem, roupas do homem, ambiente e iluminação de fundo).",
+      "generatedPrompt": "um homem; dois celulares; celular azul na mão esquerda; celular preto na mão direita. Feel free to add tasteful detail (idade aparente e vestimentas do homem, cenário de fundo, iluminação e enquadramento).",
       "model": "flux2pro",
       "audit": {
         "elementPass": true,
@@ -31,15 +31,9 @@
       "id": "woman-details",
       "prompt": "Mulher de cabelo preto usando vestido vermelho, segurando uma bolsa azul, em frente a uma loja.",
       "dry": false,
-      "elements": [
-        "uma mulher",
-        "cabelo preto",
-        "vestido vermelho",
-        "segurando uma bolsa azul",
-        "em frente a uma loja"
-      ],
+      "elements": [],
       "texts": [],
-      "generatedPrompt": "A chic street-style photograph set in front of a boutique storefront with elegant display windows and clean architectural details along a modern sidewalk. In the center, a woman with sleek, glossy black hair stands holding a vibrant cobalt blue leather handbag, wearing a tailored, flowing red dress that stands out against the storefront. The scene is illuminated by warm, soft late-afternoon daylight, creating gentle reflections on the shop window glass and a natural depth of field that softens the background. Medium-shot composition emphasizing the rich color contrast between the crimson dress and the blue purse, conveying an effortless and fashionable mood. No watermark, no gibberish letters, no unrelated text.",
+      "generatedPrompt": "A stylish woman with sleek, glossy black hair stands on a modern city sidewalk directly in front of an elegant boutique storefront with large glass display windows. She is wearing a vibrant crimson-red tailored dress with refined fabric texture and holding a structured, bold royal blue leather handbag at her side. Captured as an eye-level street fashion photograph under soft natural daylight, featuring crisp focus on the subject, natural skin textures, and a gentle shallow depth of field blurring the store's interior behind her. No watermark, no unwanted text, no gibberish.",
       "model": "flux2pro",
       "audit": {
         "elementPass": true,
@@ -54,14 +48,9 @@
       "id": "car-by-house",
       "prompt": "Uma Ferrari vermelha estacionada na frente de uma casa branca de dois andares, ao pôr do sol.",
       "dry": false,
-      "elements": [
-        "uma Ferrari vermelha",
-        "estacionada na frente da casa",
-        "casa branca de dois andares",
-        "ao pôr do sol"
-      ],
+      "elements": [],
       "texts": [],
-      "generatedPrompt": "uma Ferrari vermelha; estacionada na frente da casa; casa branca de dois andares; ao pôr do sol. Feel free to add tasteful detail (modelo específico da Ferrari, estilo arquitetônico da casa, ângulo da câmera).",
+      "generatedPrompt": "A sleek, glossy candy-apple red Ferrari sports car parked diagonally on the smooth paved driveway of an elegant modern white two-story house with architectural glass windows. The setting sun casts a warm, dramatic golden hour glow across the scene, creating rich amber and rose reflections along the vehicle's aerodynamic curves and long soft shadows on the pavement. High-end automotive commercial photography, low three-quarter front angle, sharp focus on the car with a subtle depth of field softening the manicured lawn and house facade, no watermark, no text.",
       "model": "flux2pro",
       "audit": {
         "elementPass": true,
@@ -70,6 +59,142 @@
         "textMissing": ""
       },
       "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\car-by-house.png",
+      "score": 100
+    },
+    {
+      "id": "two-cats",
+      "prompt": "Um gato preto e um gato branco sentados lado a lado em um sofá.",
+      "dry": false,
+      "elements": [
+        "um gato preto",
+        "um gato branco",
+        "sentados lado a lado",
+        "em um sofá"
+      ],
+      "texts": [],
+      "generatedPrompt": "um gato preto; um gato branco; sentados lado a lado; em um sofá. Feel free to add tasteful detail (cor e modelo do sofá, iluminação do ambiente, ângulo da câmera).",
+      "model": "flux2pro",
+      "audit": {
+        "elementPass": true,
+        "elementMissing": [],
+        "textPass": null,
+        "textMissing": ""
+      },
+      "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\two-cats.png",
+      "score": 100
+    },
+    {
+      "id": "boy-balloon",
+      "prompt": "Retrato de um menino de camisa amarela segurando um balão azul, fundo de parque.",
+      "dry": false,
+      "elements": [
+        "retrato",
+        "um menino",
+        "camisa amarela",
+        "segurando um balão azul",
+        "fundo de parque"
+      ],
+      "texts": [],
+      "generatedPrompt": "retrato; um menino; camisa amarela; segurando um balão azul; fundo de parque. Feel free to add tasteful detail (idade aparente do menino, expressão facial, iluminação natural do parque).",
+      "model": "flux2pro",
+      "audit": {
+        "elementPass": true,
+        "elementMissing": [],
+        "textPass": null,
+        "textMissing": ""
+      },
+      "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\boy-balloon.png",
+      "score": 100
+    },
+    {
+      "id": "burger-price",
+      "prompt": "Post quadrado de hamburgueria com o preço R$ 29,90 e a frase Peça já hoje, fundo vermelho escuro.",
+      "dry": false,
+      "elements": [],
+      "texts": [
+        "29",
+        "90",
+        "R$ 29,90"
+      ],
+      "generatedPrompt": "Post quadrado de hamburgueria com o preço R$ 29,90 e a frase Peça já hoje, fundo vermelho escuro., appetizing food photography, melting cheese, warm palette, bold price and offer text, professional promo",
+      "model": "ideogram",
+      "audit": {
+        "elementPass": true,
+        "elementMissing": [],
+        "textPass": true,
+        "textMissing": ""
+      },
+      "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\burger-price.png",
+      "score": 100
+    },
+    {
+      "id": "pizza-word",
+      "prompt": "Anúncio de pizza com o texto Pizza do Chefe em destaque sobre fundo de madeira rústica.",
+      "dry": false,
+      "elements": [],
+      "texts": [],
+      "generatedPrompt": "Anúncio de pizza com o texto Pizza do Chefe em destaque sobre fundo de madeira rústica., hero shot of pizza with melted cheese, warm lighting, rustic Italian mood, offer and price highlighted",
+      "model": "ideogram",
+      "audit": {
+        "elementPass": true,
+        "elementMissing": [],
+        "textPass": true,
+        "textMissing": ""
+      },
+      "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\pizza-word.png",
+      "score": 100
+    },
+    {
+      "id": "beach-no-people",
+      "prompt": "Praia tropical ao entardecer com guarda-sóis vermelhos e um barco branco ao fundo, sem pessoas.",
+      "dry": false,
+      "elements": [],
+      "texts": [],
+      "generatedPrompt": "A serene, empty tropical beach at dusk during golden hour, with gentle turquoise ocean waves lapping against wet golden sand. Along the shoreline, vibrant red fabric beach umbrellas stand planted in the sand, completely devoid of people. In the distant calm sea, a solitary white boat floats peacefully against a vibrant horizon illuminated by warm orange, deep amber, and soft purple twilight tones. Professional wide-angle landscape photography with natural warm rim lighting and sharp textures of sand and fabric, no watermark, no text, no people.",
+      "model": "flux2pro",
+      "audit": {
+        "elementPass": true,
+        "elementMissing": [],
+        "textPass": null,
+        "textMissing": ""
+      },
+      "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\beach-no-people.png",
+      "score": 100
+    },
+    {
+      "id": "acai-bowl",
+      "prompt": "Copo de açaí cremoso com cobertura de banana em rodelas, granola e morangos, em uma mesa de madeira.",
+      "dry": false,
+      "elements": [],
+      "texts": [],
+      "generatedPrompt": "Copo de açaí cremoso com cobertura de banana em rodelas, granola e morangos, em uma mesa de madeira., high quality, detailed, visually striking, no text, no watermark, no letters, no words",
+      "model": "flux2pro",
+      "audit": {
+        "elementPass": true,
+        "elementMissing": [],
+        "textPass": null,
+        "textMissing": ""
+      },
+      "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\acai-bowl.png",
+      "score": 100
+    },
+    {
+      "id": "dog-glasses",
+      "prompt": "Cachorro golden retriever usando óculos de sol, sentado em uma poltrona estilo anos 70.",
+      "dry": false,
+      "elements": [],
+      "texts": [
+        "70"
+      ],
+      "generatedPrompt": "Cachorro golden retriever usando óculos de sol, sentado em uma poltrona estilo anos 70., ultra realistic photograph, natural lighting, sharp focus, professional photography, no text, no watermark, no letters, no words",
+      "model": "flux2pro",
+      "audit": {
+        "elementPass": true,
+        "elementMissing": [],
+        "textPass": null,
+        "textMissing": ""
+      },
+      "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\dog-glasses.png",
       "score": 100
     }
   ],
