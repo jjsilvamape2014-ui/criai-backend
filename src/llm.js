@@ -572,6 +572,9 @@ function marketingKnowledge(raw) {
   if (/(promo[çc][ãa]o|promo|black friday|desconto|oferta|sale|cupom|imperd[ií]vel)/i.test(r)) {
     hints.push('Promoção: the OFFER is the hero — big discount %, price clearly printed, urgency tone, bold colors, coupon/CTA. Only include additional texts the user asked for.');
   }
+  if (/(candidato|candidata|prefeito|vereador|deputad[ao]|senador|elei[çc][ãa]o|santinho|campanha pol|campanha eleitoral|card pol|voto|urna|cumprindo|realiza[çc][ãa]o)/i.test(r)) {
+    hints.push('Election campaign card/flyer ("santinho" de candidato): official Brazilian campaign aesthetic — the CANDIDATE PHOTO (from the reference photo, keep the face identical) is the hero; the NAME printed as on the ballot; the candidate NUMBER as very large, exact text ("Nº " or just the digits, exactly as provided, never invent or change digits); position (PREFEITO/VEREADOR etc.), city and year 2026 printed; strong institutional campaign colors (blue, red or green with white) on a clean bold vertical layout; all printed text must be correctly spelled and legally standard (no gibberish, no invented numbers).');
+  }
   return hints.length ? '\nDOMAIN KNOWLEDGE (follow it strictly):\n- ' + hints.join('\n- ') : '';
 }
 
