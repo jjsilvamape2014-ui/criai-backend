@@ -4,7 +4,7 @@ const rateLimit = require('express-rate-limit');
 const sharp = require('sharp');
 const { authMiddleware } = require('../middleware');
 const { PrismaClient } = require('@prisma/client');
-const { enhanceImagePrompt, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript } = require('../llm');
+const { enhanceImagePrompt, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript, extractIntent, createConcepts } = require('../llm');
 const vision = require('../vision');
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -768,34 +768,38 @@ router.post('/live-image', authMiddleware, generateLimiter, async (req, res) => 
     //     do texto, alinhado ao limite prudente (2-3 tentativas no total).
     const requiredElements = (imageRequired.elements || []).filter(Boolean);
     if (requiredElements.length) {
+      let elementFixIterations = 0;
+      let elUrl = imageUrl;
       try {
-        emitStatus('Conferindo se cada elemento pedido apareceu na imagem…');
-        const elQa = await vision.checkImageElements(imageUrl, requiredElements);
-        if (elQa && elQa.ok === false && (elQa.missing || []).length) {
+        while (elementFixIterations < 2) {
+          emitStatus(elementFixIterations === 0 ? 'Conferindo se cada elemento pedido apareceu na imagem…' : 'Conferindo a correção na nova versão…');
+          const elQa = await vision.checkImageElements(elUrl, requiredElements);
+          if (!elQa || elQa.ok !== false || !(elQa.missing || []).length) break;
           const miss = (elQa.missing || []).join(', ');
-          emitStatus(`O pedido não foi totalmente atendido (falta: ${miss}) — corrigindo automaticamente…`);
+          emitStatus(`Ajustei o pedido (falta: ${miss}) — corrigindo…`);
+          elementFixIterations += 1;
           await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { increment: 1 } } });
           const correction = [
             enhancedPrompt,
             '',
-            'CRITICAL RETRY INSTRUCTION (the client\'s request is LAW):',
+            'CRITICAL RETRY INSTRUCTION (the user\'s request is LAW):',
             `The previous attempt was REJECTED because these REQUIRED elements were missing or wrong: ${miss}.`,
             'This new version MUST clearly include every one of them, exactly as the user requested, with the same quantities, colors and positions.'
           ].join('\n');
           const retryUrl = await generateImageFromProviders(correction, {
             model: genModel, width, height, aspectRatio, negativePrompt, referenceImage: refImage, strength, force: true
           });
-          if (retryUrl) {
-            imageUrl = retryUrl;
-            if (!isUnlimitedImage) {
-              if (user.creditsPurchased > 0) {
-                await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
-              } else {
-                await prisma.user.update({ where: { id: user.id }, data: { creditsImages: { decrement: 1 } } });
-              }
+          if (!retryUrl) break;
+          elUrl = retryUrl;
+          if (!isUnlimitedImage) {
+            if (user.creditsPurchased > 0) {
+              await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
+            } else {
+              await prisma.user.update({ where: { id: user.id }, data: { creditsImages: { decrement: 1 } } });
             }
           }
         }
+        if (elementFixIterations > 0) imageUrl = elUrl;
       } catch (e) {
         console.error('QA de elementos falhou (seguindo com a imagem):', e.message);
       }
@@ -1412,6 +1416,36 @@ router.post('/talking-ad', authMiddleware, async (req, res) => {
   }
 });
 
+// DIRETORA CRIATIVA: entende a INTENÇÃO do pedido e devolve a confirmação
+// "Entendi sua ideia…" + direção criativa. canTakeOver=false → o pedido já é
+// uma descrição concreta de imagem (vai direto para a geração).
+router.post('/intent', authMiddleware, async (req, res) => {
+  try {
+    const { message } = req.body || {};
+    const msg = String(message || '').trim();
+    if (msg.length < 3) return res.status(400).json({ error: 'Mensagem muito curta' });
+    const understanding = await extractIntent(msg);
+    if (!understanding) return res.status(200).json({ success: true, canTakeOver: false, intent: {}, confirmation: '', direction: '' });
+    res.json({ success: true, ...understanding });
+  } catch (err) {
+    console.error('Falha ao entender intenção:', err.message);
+    res.status(500).json({ error: 'Não consegui interpretar agora.' });
+  }
+});
+
+// "Não sei o que criar": negócio + objetivo → 3 conceitos visuais para escolher.
+router.post('/concepts', authMiddleware, async (req, res) => {
+  try {
+    const { business, goal } = req.body || {};
+    const concepts = await createConcepts(business, goal);
+    if (!concepts) return res.status(422).json({ error: 'Não consegui criar ideias agora.' });
+    res.json({ success: true, concepts });
+  } catch (err) {
+    console.error('Falha ao criar conceitos:', err.message);
+    res.status(500).json({ error: 'Não consegui criar ideias agora.' });
+  }
+});
+
 // Histórico de gerações
 router.get('/history', authMiddleware, async (req, res) => {
   try {
@@ -1423,6 +1457,20 @@ router.get('/history', authMiddleware, async (req, res) => {
     res.json(generations);
   } catch (err) {
     res.status(500).json({ error: 'Erro ao buscar histórico' });
+  }
+});
+
+// Exclui uma criação do histórico (só do próprio usuário)
+router.delete('/history/:id', authMiddleware, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'ID inválido' });
+    const existing = await prisma.generation.findFirst({ where: { id, userId: req.user.id } });
+    if (!existing) return res.status(404).json({ error: 'Não encontrada' });
+    await prisma.generation.delete({ where: { id } });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Erro ao excluir' });
   }
 });
 

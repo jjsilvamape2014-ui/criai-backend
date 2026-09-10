@@ -623,6 +623,101 @@ async function interpretImageRequest(raw, opts = {}) {
   }
 }
 
+// Diretora criativa — ENTENDE A INTENÇÃO por trás do pedido (mesmo vago/informal)
+// e decide a direção criativa quando o usuário só deu o objetivo. Retorna:
+// { canTakeOver, intent {...}, confirmation (PT), direction (PT) } ou null.
+// canTakeOver = true → o pedido é um BRIEF (negócio/objetivo) e a Criativa pode
+// assumir a direção; false → pedido concreto de imagem (elementos explícitos)
+// onde o usuário é LEI e geramos direto.
+async function extractIntent(raw, opts = {}) {
+  const trimmed = (raw || '').trim();
+  if (!trimmed || trimmed.length < 3) return null;
+
+  const systemPrompt = [
+    'You are the creative director of an AI studio that UNDERSTANDS what a person wants even when they describe it vaguely or informally.',
+    'Read the user message (Portuguese/English) and reply valid JSON with EXACTLY these keys:',
+    '{"can_take_over":bool,"intent":{"objective":"","business_type":"","product":"","audience":"","emotion":"","platform":"","visual_style":""},"confirmation":"","direction":""}',
+    'can_take_over: TRUE when the message expresses a business GOAL or general idea (e.g. "quero divulgar minha hamburgueria", "preciso vender mais", "uma imagem para meu salão") — the user is leaving creative direction to the AI. FALSE when the user already described a concrete image (subject, scene, color, layout, object) — then the request is LAW and must be executed literally.',
+    'intent: fill only known or confidently inferred fields; use empty string when unknown. objective=market goal (vender/divulgar/atrair/promover/marca...); business_type=segment; product=what is sold/showed; audience=who; emotion=feeling to transmit; platform=channel (whatsapp, instagram...); visual_style=style implied (commercial, fotográfico, cartoon...).',
+    'direction: ONLY when can_take_over is true — a 2-sentence creative direction in PORTUGUESE saying what the AI decided (composition, lighting, colors, style, where text/offer goes) to serve the objective. Empty string otherwise.',
+    'confirmation: a warm 1-sentence PORTUGUESE confirmation starting with "Entendi." summarizing what the Criativa understood and will create.',
+    'Reply valid JSON only, no markdown, no explanations.'
+  ].join('\n');
+
+  const llmText = await callLLM(systemPrompt, `User: ${trimmed}`, {
+    temperature: 0.2,
+    maxTokens: 420,
+    maxAttempts: 1,
+    timeout: 40000,
+    json: true
+  });
+  if (!llmText || !llmText.trim()) return null;
+  try {
+    const obj = parseJsonLoose(llmText);
+    if (!obj || typeof obj !== 'object') return null;
+    const s = (v) => (typeof v === 'string' ? v.trim().slice(0, 200) : '');
+    const intent = obj.intent && typeof obj.intent === 'object' ? obj.intent : {};
+    return {
+      canTakeOver: obj.can_take_over === true,
+      intent: {
+        objective: s(intent.objective),
+        businessType: s(intent.business_type),
+        product: s(intent.product),
+        audience: s(intent.audience),
+        emotion: s(intent.emotion),
+        platform: s(intent.platform),
+        visualStyle: s(intent.visual_style)
+      },
+      confirmation: s(obj.confirmation),
+      direction: s(obj.direction)
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// "Não sei o que criar": dado negócio + objetivo, cria 3 CONCEITOS visuais distintos.
+// Retorna [{ title, description, prompt }] ou null.
+async function createConcepts(business, goal) {
+  const b = String(business || '').trim();
+  const g = String(goal || '').trim();
+  if (!b || !g) return null;
+
+  const systemPrompt = [
+    'You are a creative director suggesting image concepts for a small business.',
+    `Business: ${b}. Goal: ${g}.`,
+    'Create 3 DIFFERENT visual concepts, each an actual generation prompt. Reply valid JSON:',
+    '{"concepts":[{"title":"","description":"","prompt":""}, ...]}',
+    'title: catchy short name in Portuguese (max 4 words). description: 1 sentence in PT explaining the idea.',
+    'prompt: the concrete image instruction (in Portuguese is fine — a second brain will craft it) with subject, scene, colors, lighting, composition, and where printed text/offer goes if relevant. Make the 3 concepts clearly distinct from each other (e.g. x offer x hero product x emotional scene).',
+    'No markdown, valid JSON only.'
+  ].join('\n');
+
+  const llmText = await callLLM(systemPrompt, '', {
+    temperature: 0.7,
+    maxTokens: 700,
+    maxAttempts: 1,
+    timeout: 40000,
+    json: true
+  });
+  if (!llmText || !llmText.trim()) return null;
+  try {
+    const obj = parseJsonLoose(llmText);
+    if (!obj || !Array.isArray(obj.concepts)) return null;
+    const concepts = obj.concepts
+      .filter((c) => c && c.title && c.prompt)
+      .slice(0, 3)
+      .map((c) => ({
+        title: String(c.title).trim().slice(0, 60),
+        description: String(c.description || '').trim().slice(0, 200),
+        prompt: String(c.prompt).trim().slice(0, 500)
+      }));
+    return concepts.length ? concepts : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function enhanceImagePrompt(rawPrompt, opts = {}) {
   const trimmed = (rawPrompt || '').trim();
   if (!trimmed || trimmed.length < 3) return { prompt: trimmed, reply: '', required: { elements: [], texts: [] } };
@@ -956,4 +1051,4 @@ async function contentPlan30(project, extra) {
   return null;
 }
 
-module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript };
+module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript, extractIntent, createConcepts };
