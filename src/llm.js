@@ -636,11 +636,17 @@ async function extractIntent(raw, opts = {}) {
   const systemPrompt = [
     'You are the creative director of an AI studio that UNDERSTANDS what a person wants even when they describe it vaguely or informally.',
     'Read the user message (Portuguese/English) and reply valid JSON with EXACTLY these keys:',
-    '{"can_take_over":bool,"intent":{"objective":"","business_type":"","product":"","audience":"","emotion":"","platform":"","visual_style":""},"confirmation":"","direction":""}',
+    '{"can_take_over":bool,"intent":{"objective":"","business_type":"","product":"","audience":"","emotion":"","platform":"","visual_style":""},"confirmation":"","direction":"","question":"","options":[],"missing":""}',
     'can_take_over: TRUE when the message expresses a business GOAL or general idea (e.g. "quero divulgar minha hamburgueria", "preciso vender mais", "uma imagem para meu salão") — the user is leaving creative direction to the AI. FALSE when the user already described a concrete image (subject, scene, color, layout, object) — then the request is LAW and must be executed literally.',
     'intent: fill only known or confidently inferred fields; use empty string when unknown. objective=market goal (vender/divulgar/atrair/promover/marca...); business_type=segment; product=what is sold/showed; audience=who; emotion=feeling to transmit; platform=channel (whatsapp, instagram...); visual_style=style implied (commercial, fotográfico, cartoon...).',
     'direction: ONLY when can_take_over is true — a 2-sentence creative direction in PORTUGUESE saying what the AI decided (composition, lighting, colors, style, where text/offer goes) to serve the objective. Empty string otherwise.',
     'confirmation: a warm 1-sentence PORTUGUESE confirmation starting with "Entendi." summarizing what the Criativa understood and will create.',
+    'ASK-ONLY-IF-ESSENTIAL (the smart-question rule):',
+    '- Set question="" when the request already has enough information to create confidently.',
+    '- Set question to ONE objective question in PORTUGUESE (max ~15 words) ONLY when a REAL missing fact would significantly change the result — for example the user said "anúncio para minha loja" but not WHAT is being promoted, or said "post de aniversário" but not for whom.',
+    '- pencil the answer choices in options (2-3 short labels in Portuguese). For "anúncio para minha loja": options ["Um produto","A loja","Uma promoção"]. For a birthday: ["Criança","Adulto"]. If no good options, leave options empty and question asks for the fact directly.',
+    '- missing: what is missing in one word (product / piece / who / date / price...). Empty when question is empty.',
+    'ABSOLUTE RULES: NEVER ask the user to write a prompt. NEVER ask more than ONE question. NEVER invent an essential fact that changes the commercial objective.',
     'Reply valid JSON only, no markdown, no explanations.'
   ].join('\n');
 
@@ -657,6 +663,9 @@ async function extractIntent(raw, opts = {}) {
     if (!obj || typeof obj !== 'object') return null;
     const s = (v) => (typeof v === 'string' ? v.trim().slice(0, 200) : '');
     const intent = obj.intent && typeof obj.intent === 'object' ? obj.intent : {};
+    const options = Array.isArray(obj.options)
+      ? obj.options.filter((o) => o && typeof o === 'string' && o.trim().length > 1).map((o) => o.trim()).slice(0, 3)
+      : [];
     return {
       canTakeOver: obj.can_take_over === true,
       intent: {
@@ -669,7 +678,10 @@ async function extractIntent(raw, opts = {}) {
         visualStyle: s(intent.visual_style)
       },
       confirmation: s(obj.confirmation),
-      direction: s(obj.direction)
+      direction: s(obj.direction),
+      question: s(obj.question),
+      options,
+      missing: s(obj.missing)
     };
   } catch (e) {
     return null;
