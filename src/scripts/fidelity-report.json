@@ -1,5 +1,5 @@
 {
-  "runAt": "2026-09-10T22:09:29.216Z",
+  "runAt": "2026-09-10T22:45:14.323Z",
   "dry": false,
   "cases": 10,
   "generated": 10,
@@ -9,20 +9,17 @@
       "id": "count-two-phones",
       "prompt": "Um homem segurando dois celulares, um azul na mão esquerda e um preto na direita.",
       "dry": false,
-      "elements": [
-        "um homem",
-        "dois celulares",
-        "celular azul na mão esquerda",
-        "celular preto na mão direita"
-      ],
+      "elements": [],
       "texts": [],
-      "generatedPrompt": "um homem; dois celulares; celular azul na mão esquerda; celular preto na mão direita. Feel free to add tasteful detail (idade aparente e vestimentas do homem, cenário de fundo, iluminação e enquadramento).",
+      "generatedPrompt": "Um homem segurando dois celulares, um azul na mão esquerda e um preto na direita., professional product photography, studio lighting, clean background, commercial quality, high-end e-commerce imagery, no text, no watermark, no letters, no words",
       "model": "flux2pro",
       "audit": {
         "elementPass": true,
         "elementMissing": [],
         "textPass": null,
-        "textMissing": ""
+        "textMissing": "",
+        "strictPass": true,
+        "strictMissing": []
       },
       "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\count-two-phones.png",
       "score": 100
@@ -33,13 +30,15 @@
       "dry": false,
       "elements": [],
       "texts": [],
-      "generatedPrompt": "A stylish woman with sleek, glossy black hair stands on a modern city sidewalk directly in front of an elegant boutique storefront with large glass display windows. She is wearing a vibrant crimson-red tailored dress with refined fabric texture and holding a structured, bold royal blue leather handbag at her side. Captured as an eye-level street fashion photograph under soft natural daylight, featuring crisp focus on the subject, natural skin textures, and a gentle shallow depth of field blurring the store's interior behind her. No watermark, no unwanted text, no gibberish.",
+      "generatedPrompt": "Mulher de cabelo preto usando vestido vermelho, segurando uma bolsa azul, em frente a uma loja., professional product photography, studio lighting, clean background, commercial quality, high-end e-commerce imagery, no text, no watermark, no letters, no words",
       "model": "flux2pro",
       "audit": {
         "elementPass": true,
         "elementMissing": [],
         "textPass": null,
-        "textMissing": ""
+        "textMissing": "",
+        "strictPass": true,
+        "strictMissing": []
       },
       "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\woman-details.png",
       "score": 100
@@ -50,13 +49,15 @@
       "dry": false,
       "elements": [],
       "texts": [],
-      "generatedPrompt": "A sleek, glossy candy-apple red Ferrari sports car parked diagonally on the smooth paved driveway of an elegant modern white two-story house with architectural glass windows. The setting sun casts a warm, dramatic golden hour glow across the scene, creating rich amber and rose reflections along the vehicle's aerodynamic curves and long soft shadows on the pavement. High-end automotive commercial photography, low three-quarter front angle, sharp focus on the car with a subtle depth of field softening the manicured lawn and house facade, no watermark, no text.",
+      "generatedPrompt": "Uma Ferrari vermelha estacionada na frente de uma casa branca de dois andares, ao pôr do sol., high quality, detailed, visually striking, no text, no watermark, no letters, no words",
       "model": "flux2pro",
       "audit": {
         "elementPass": true,
         "elementMissing": [],
         "textPass": null,
-        "textMissing": ""
+        "textMissing": "",
+        "strictPass": true,
+        "strictMissing": []
       },
       "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\car-by-house.png",
       "score": 100
@@ -65,20 +66,17 @@
       "id": "two-cats",
       "prompt": "Um gato preto e um gato branco sentados lado a lado em um sofá.",
       "dry": false,
-      "elements": [
-        "um gato preto",
-        "um gato branco",
-        "sentados lado a lado",
-        "em um sofá"
-      ],
+      "elements": [],
       "texts": [],
-      "generatedPrompt": "um gato preto; um gato branco; sentados lado a lado; em um sofá. Feel free to add tasteful detail (cor e modelo do sofá, iluminação do ambiente, ângulo da câmera).",
+      "generatedPrompt": "Um gato preto e um gato branco sentados lado a lado em um sofá., high quality, detailed, visually striking, no text, no watermark, no letters, no words",
       "model": "flux2pro",
       "audit": {
         "elementPass": true,
         "elementMissing": [],
         "textPass": null,
-        "textMissing": ""
+        "textMissing": "",
+        "strictPass": true,
+        "strictMissing": []
       },
       "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\two-cats.png",
       "score": 100
@@ -87,21 +85,17 @@
       "id": "boy-balloon",
       "prompt": "Retrato de um menino de camisa amarela segurando um balão azul, fundo de parque.",
       "dry": false,
-      "elements": [
-        "retrato",
-        "um menino",
-        "camisa amarela",
-        "segurando um balão azul",
-        "fundo de parque"
-      ],
+      "elements": [],
       "texts": [],
-      "generatedPrompt": "retrato; um menino; camisa amarela; segurando um balão azul; fundo de parque. Feel free to add tasteful detail (idade aparente do menino, expressão facial, iluminação natural do parque).",
+      "generatedPrompt": "Retrato de um menino de camisa amarela segurando um balão azul, fundo de parque., ultra realistic photograph, natural lighting, sharp focus, professional photography, no text, no watermark, no letters, no words",
       "model": "flux2pro",
       "audit": {
         "elementPass": true,
         "elementMissing": [],
         "textPass": null,
-        "textMissing": ""
+        "textMissing": "",
+        "strictPass": true,
+        "strictMissing": []
       },
       "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\boy-balloon.png",
       "score": 100
@@ -122,7 +116,9 @@
         "elementPass": true,
         "elementMissing": [],
         "textPass": true,
-        "textMissing": ""
+        "textMissing": "",
+        "strictPass": true,
+        "strictMissing": []
       },
       "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\burger-price.png",
       "score": 100
@@ -139,7 +135,9 @@
         "elementPass": true,
         "elementMissing": [],
         "textPass": true,
-        "textMissing": ""
+        "textMissing": "",
+        "strictPass": true,
+        "strictMissing": []
       },
       "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\pizza-word.png",
       "score": 100
@@ -150,13 +148,15 @@
       "dry": false,
       "elements": [],
       "texts": [],
-      "generatedPrompt": "A serene, empty tropical beach at dusk during golden hour, with gentle turquoise ocean waves lapping against wet golden sand. Along the shoreline, vibrant red fabric beach umbrellas stand planted in the sand, completely devoid of people. In the distant calm sea, a solitary white boat floats peacefully against a vibrant horizon illuminated by warm orange, deep amber, and soft purple twilight tones. Professional wide-angle landscape photography with natural warm rim lighting and sharp textures of sand and fabric, no watermark, no text, no people.",
+      "generatedPrompt": "Praia tropical ao entardecer com guarda-sóis vermelhos e um barco branco ao fundo, sem pessoas., ultra realistic photograph, natural lighting, sharp focus, professional photography, no text, no watermark, no letters, no words",
       "model": "flux2pro",
       "audit": {
         "elementPass": true,
         "elementMissing": [],
         "textPass": null,
-        "textMissing": ""
+        "textMissing": "",
+        "strictPass": true,
+        "strictMissing": []
       },
       "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\beach-no-people.png",
       "score": 100
@@ -173,7 +173,9 @@
         "elementPass": true,
         "elementMissing": [],
         "textPass": null,
-        "textMissing": ""
+        "textMissing": "",
+        "strictPass": true,
+        "strictMissing": []
       },
       "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\acai-bowl.png",
       "score": 100
@@ -192,11 +194,13 @@
         "elementPass": true,
         "elementMissing": [],
         "textPass": null,
-        "textMissing": ""
+        "textMissing": "",
+        "strictPass": true,
+        "strictMissing": []
       },
       "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\dog-glasses.png",
       "score": 100
     }
   ],
-  "note": "overallFidelity = média do acerto de elementos e textos conferidos pela visão (Qwen2.5-VL)."
+  "note": "overallFidelity = 30% elementos + 30% textos + 40% auditoria ESTRITA (contagem exata, posição esquerda/direita, cores, ausência) via Qwen2.5-VL."
 }

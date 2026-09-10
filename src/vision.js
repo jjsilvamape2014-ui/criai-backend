@@ -311,6 +311,84 @@ async function checkImageElements(src, elements) {
   }
 }
 
+// AUDITORIA ESTRITA (biblioteca de fidelidade): confere AFIRMAÇÕES precisas sobre
+// a imagem gerada — contagens ("exatamente 2 celulares"), posições ("à ESQUERDA"),
+// cores ("fundo vermelho escuro") e ausências ("NÃO há pessoas"). Cada item que
+// falhar entra na lista missing. Retorna { ok, missing: [] } ou null.
+async function checkImageStrict(src, assertions) {
+  try {
+    if (!isEnabled() || !process.env.FAL_KEY) return null;
+    const list = (Array.isArray(assertions) ? assertions : []).filter((a) => a && typeof a === 'string' && a.trim());
+    if (!list.length) return null;
+    const tag = list.join(' | ');
+    let key = src;
+    if (src && src.startsWith('data:')) {
+      key = 'strict:' + crypto.createHash('sha1').update(src.split(',')[1] || '').digest('hex') + '|' + tag;
+    } else {
+      key = 'strict:' + src + '|' + tag;
+    }
+    if (cache.has(key)) return cache.get(key);
+
+    const compressed = await compress(src, 640, 66);
+    if (!compressed) return null;
+
+    const numbered = list.map((a, i) => `${i + 1}. ${a}`).join('\n');
+    const prompt = [
+      'You are a rigorous inspector verifying EXACT facts about a generated image.',
+      'For each numbered assertion below, check it strictly: counting precisely (exactly N, not "at least"), checking left/right side, exact dominant colors, and ABSENCE ("nao ha"/"no people" means ZERO of that element).',
+      `Assertions:\n${numbered}`,
+      'Reply EXACTLY one of:',
+      '"OK" if ALL assertions are TRUE,',
+      'or "MISSING: <each FAILED assertion verbatim (with its number prefix), separated by |>" listing ONLY the ones that failed.',
+      'If even ONE part of an assertion is wrong (wrong side, wrong color, wrong count, element present when it should be absent), that assertion FAILS.',
+      'Reply nothing else, no explanations.'
+    ].join(' ');
+
+    const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
+    const res = await axios.post(
+      'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
+      { prompt, image_url: compressed, max_tokens: 200 },
+      { headers, timeout: 30000, validateStatus: (s) => s < 500 }
+    );
+    const data = res.data || {};
+    let text = null;
+    if (data.status_url) {
+      const deadline = Date.now() + 45000;
+      while (Date.now() < deadline) {
+        await sleep(2000);
+        const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
+        const pd = pollRes.data || {};
+        if (pd.status === 'COMPLETED' || pd.output) {
+          text = typeof pd.output === 'string' ? pd.output : (pd.output && (pd.output.content || pd.output.text)) || null;
+          break;
+        }
+        if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
+      }
+    } else if (typeof data.output === 'string') {
+      text = data.output;
+    } else if (data.output && (data.output.content || data.output.text)) {
+      text = data.output.content || data.output.text;
+    }
+
+    const raw = (text || '').trim();
+    const out = {
+      ok: !/^MISSING:/i.test(raw),
+      missing: raw
+        .replace(/^MISSING:\s*/i, '')
+        .split('|')
+        .map((s) => s.trim().replace(/^\d+\.\s*/, ''))
+        .filter(Boolean)
+        .slice(0, 8)
+    };
+    cache.set(key, out);
+    if (cache.size > 200) cache.delete(cache.keys().next().value);
+    return out;
+  } catch (e) {
+    console.error('Auditoria estrita falhou:', e.message);
+    return null;
+  }
+}
+
 // "OLHE COMO UM CLIENTE" — segunda análise comercial da imagem: notas de
 // Atenção/Clareza/Desejo/Profissionalismo + veredito + sugestão concreta de
 // melhoria. Alimenta o "Faça melhor": a IA não regenera aleatório, melhora
@@ -399,4 +477,4 @@ async function evaluateAsClient(src) {
   }
 }
 
-module.exports = { describeReference, checkImageQuality, checkImageText, checkImageElements, evaluateAsClient };
+module.exports = { describeReference, checkImageQuality, checkImageText, checkImageElements, checkImageStrict, evaluateAsClient };

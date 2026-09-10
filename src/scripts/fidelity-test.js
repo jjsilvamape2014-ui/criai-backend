@@ -24,68 +24,132 @@ const gen = require('../routes/generate');
 const vision = require('../vision');
 
 // ── BIBLIOTECA DE PROMPTS DIFÍCEIS ────────────────────────────────────────────────
-// required = elementos que DEVEM aparecer (a visão confere 1 a 1).
+// required = elementos que DEVEM aparecer (a visão confere 1 a 1 — mesmo audit do loop real).
 // texts = textos exatos que DEVEM estar impressos (legíveis e corretos).
+// checks = afirmações ESTRITAS (contagem exata, posição esquerda/direita, cores
+//          dominantes, ausência) validadas pela auditoria estrita. Qualquer parte
+//          errada derruba a afirmação — é o que torna o % uma métrica real.
 const LIBRARY = [
   {
     id: 'count-two-phones',
     prompt: 'Um homem segurando dois celulares, um azul na mão esquerda e um preto na direita.',
     required: ['um homem', 'dois celulares', 'um celular azul', 'um celular preto'],
-    texts: []
+    texts: [],
+    checks: [
+      'existem exatamente 2 celulares na imagem, nenhum a mais',
+      'há um celular azul e um celular preto',
+      'o celular azul está na mão esquerda do homem',
+      'o celular preto está na mão direita do homem'
+    ]
   },
   {
     id: 'woman-details',
     prompt: 'Mulher de cabelo preto usando vestido vermelho, segurando uma bolsa azul, em frente a uma loja.',
     required: ['mulher', 'cabelo preto', 'vestido vermelho', 'bolsa azul', 'loja'],
-    texts: []
+    texts: [],
+    checks: [
+      'a mulher tem cabelo preto',
+      'o vestido da mulher é vermelho',
+      'a mulher segura uma bolsa azul',
+      'há uma loja ao fundo',
+      'a mulher está de pé em frente à loja'
+    ]
   },
   {
     id: 'car-by-house',
     prompt: 'Uma Ferrari vermelha estacionada na frente de uma casa branca de dois andares, ao pôr do sol.',
     required: ['carro vermelho', 'casa branca', 'dois andares'],
-    texts: []
+    texts: [],
+    checks: [
+      'há um carro esportivo vermelho em destaque',
+      'o carro está estacionado na frente da casa',
+      'a casa é branca e tem dois andares (janelas em dois níveis)',
+      'o cenário está ao pôr do sol (tom alaranjado/dourado)'
+    ]
   },
   {
     id: 'two-cats',
     prompt: 'Um gato preto e um gato branco sentados lado a lado em um sofá.',
     required: ['um gato preto', 'um gato branco', 'sofá'],
-    texts: []
+    texts: [],
+    checks: [
+      'existem exatamente 2 gatos na imagem',
+      'um gato é preto e o outro é branco',
+      'os gatos estão lado a lado (um ao lado do outro)',
+      'os dois gatos estão sobre um sofá'
+    ]
   },
   {
     id: 'boy-balloon',
     prompt: 'Retrato de um menino de camisa amarela segurando um balão azul, fundo de parque.',
     required: ['menino', 'camisa amarela', 'balão azul', 'parque'],
-    texts: []
+    texts: [],
+    checks: [
+      'o menino usa camisa amarela',
+      'o menino segura um balão azul',
+      'o balão é azul e fica acima da cabeça do menino',
+      'o fundo é um parque (árvores/gramado)'
+    ]
   },
   {
     id: 'burger-price',
     prompt: 'Post quadrado de hamburgueria com o preço R$ 29,90 e a frase Peça já hoje, fundo vermelho escuro.',
     required: ['hambúrguer', 'fundo vermelho escuro'],
-    texts: ['R$ 29,90', 'Peça já hoje']
+    texts: ['R$ 29,90', 'Peça já hoje'],
+    checks: [
+      'o fundo é vermelho escuro (tom vinho/terracota)',
+      'é um post quadrado com o hambúrguer como elemento central',
+      'o texto "R$ 29,90" está impresso corretamente',
+      'a frase "Peça já hoje" está impressa corretamente'
+    ]
   },
   {
     id: 'pizza-word',
     prompt: 'Anúncio de pizza com o texto Pizza do Chefe em destaque sobre fundo de madeira rústica.',
     required: ['pizza', 'fundo de madeira'],
-    texts: ['Pizza do Chefe']
+    texts: ['Pizza do Chefe'],
+    checks: [
+      'o fundo é de madeira rústica',
+      'há uma pizza em destaque no anúncio',
+      'o texto "Pizza do Chefe" está impresso corretamente'
+    ]
   },
   {
     id: 'beach-no-people',
     prompt: 'Praia tropical ao entardecer com guarda-sóis vermelhos e um barco branco ao fundo, sem pessoas.',
     required: ['praia tropical', 'guarda-sóis vermelhos', 'barco branco'],
-    texts: []
+    texts: [],
+    checks: [
+      'há guarda-sóis vermelhos na imagem',
+      'há um barco branco ao fundo',
+      'NÃO há nenhuma pessoa na imagem',
+      'o cenário é de praia ao entardecer'
+    ]
   },
   {
     id: 'acai-bowl',
     prompt: 'Copo de açaí cremoso com cobertura de banana em rodelas, granola e morangos, em uma mesa de madeira.',
     required: ['açaí', 'banana em rodelas', 'granola', 'morangos', 'mesa de madeira'],
-    texts: []
+    texts: [],
+    checks: [
+      'há rodelas de banana sobre o açaí',
+      'há granola no copo',
+      'há morangos na cobertura',
+      'o copo/tigela é de açaí cremoso',
+      'a superfície embaixo é de madeira'
+    ]
   },
   {
     id: 'dog-glasses',
     prompt: 'Cachorro golden retriever usando óculos de sol, sentado em uma poltrona estilo anos 70.',
     required: ['cachorro', 'golden retriever', 'óculos de sol', 'poltrona'],
-    texts: []
+    texts: [],
+    checks: [
+      'o cachorro tem pelagem dourada (golden retriever)',
+      'o cachorro usa óculos de sol',
+      'o cachorro está sentado',
+      'a poltrona tem estilo retrô anos 70'
+    ]
   }
 ];
 
@@ -102,8 +166,8 @@ function parseArgs(argv) {
   return opts;
 }
 
-async function auditImage(url, required, texts) {
-  const out = { elementPass: null, elementMissing: [], textPass: null, textMissing: '' };
+async function auditImage(url, required, texts, checks) {
+  const out = { elementPass: null, elementMissing: [], textPass: null, textMissing: '', strictPass: null, strictMissing: [] };
   if (required && required.length) {
     const r = await vision.checkImageElements(url, required);
     if (r) {
@@ -116,6 +180,13 @@ async function auditImage(url, required, texts) {
     if (t) {
       out.textMissing = t.missing || '';
       out.textPass = t.ok === true;
+    }
+  }
+  if (checks && checks.length) {
+    const s = await vision.checkImageStrict(url, checks);
+    if (s) {
+      out.strictMissing = s.missing || [];
+      out.strictPass = s.ok === true && out.strictMissing.length === 0;
     }
   }
   return out;
@@ -151,13 +222,14 @@ async function runCase(c, opts) {
   const texts = (enh.required && enh.required.texts) || [];
   console.log(`   plano obrigatório: ${elements.length ? elements.join(' | ') : '(nenhum)'}`);
   console.log(`   textos: ${texts.length ? texts.join(' | ') : '(nenhum)'}`);
+  console.log(`   estrito (${(c.checks || []).length} afirmações): ${(c.checks || []).join(' | ').slice(0, 120)}…`);
   console.log(`   prompt renderizado: ${(enh.prompt || '').slice(0, 160)}…`);
 
   if (opts.dry) {
     return {
       id: c.id, prompt: c.prompt, dry: true, elements, texts,
       generatedPrompt: enh.prompt || '', model: null,
-      audit: { elementPass: null, elementMissing: [], textPass: null, textMissing: '' },
+      audit: { elementPass: null, elementMissing: [], textPass: null, textMissing: '', strictPass: null, strictMissing: [] },
       imageSaved: null, score: null
     };
   }
@@ -173,13 +245,15 @@ async function runCase(c, opts) {
   const imageSaved = await saveImage(url, c.id);
   console.log(`   salvo em: ${imageSaved || 'não salvo'}`);
 
-  // 3) Auditoria visual
-  const audit = await auditImage(url, c.required, c.texts);
+  // 3) Auditoria visual: elementos (loop real) + textos + estrito (métrica dura)
+  const audit = await auditImage(url, c.required, c.texts, c.checks);
   const elScore = c.required.length ? (c.required.length - audit.elementMissing.length) / c.required.length : 1;
   const txScore = c.texts.length ? (audit.textPass ? 1 : 0) : 1;
-  const score = Math.round(((elScore + txScore) / 2) * 100);
+  const stScore = c.checks && c.checks.length ? (c.checks.length - audit.strictMissing.length) / c.checks.length : 1;
+  const score = Math.round(((elScore * 0.3) + (txScore * 0.3) + (stScore * 0.4)) * 100);
   console.log(`   elementos faltando: ${audit.elementMissing.length ? audit.elementMissing.join(', ') : 'nenhum'}`);
   if (c.texts.length) console.log(`   texto: ${audit.textPass ? 'OK' : 'faltando: ' + audit.textMissing}`);
+  console.log(`   estrito: ${audit.strictMissing.length ? '\n      ✗ ' + audit.strictMissing.join('\n      ✗ ') : 'todas as afirmações OK'}`);
   console.log(`   FIDELIDADE DO CASO: ${score}%`);
 
   return { id: c.id, prompt: c.prompt, dry: false, elements, texts, generatedPrompt: enh.prompt || '', model, audit, imageSaved, score };
@@ -217,7 +291,7 @@ async function main() {
     generated: scored.length,
     overallFidelity: overall,
     results,
-    note: 'overallFidelity = média do acerto de elementos e textos conferidos pela visão (Qwen2.5-VL).'
+    note: 'overallFidelity = 30% elementos + 30% textos + 40% auditoria ESTRITA (contagem exata, posição esquerda/direita, cores, ausência) via Qwen2.5-VL.'
   };
   fs.writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2));
   console.log(`\n──────────────────────────────`);
