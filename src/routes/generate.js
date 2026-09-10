@@ -1480,4 +1480,6 @@ router.generateVideoFal = generateVideoFal;
 router.generateVideoFromProviders = generateVideoFromProviders;
 router.compressReferenceImage = compressReferenceImage;
 router.generateImageMystic = generateImageMystic;
+router.looksLikeTextPiece = looksLikeTextPiece;
+router.enhanceImagePrompt = enhanceImagePrompt;
 module.exports = router;

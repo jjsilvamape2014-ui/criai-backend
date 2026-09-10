@@ -1,0 +1,77 @@
+{
+  "runAt": "2026-09-10T22:01:36.751Z",
+  "dry": false,
+  "cases": 3,
+  "generated": 3,
+  "overallFidelity": 100,
+  "results": [
+    {
+      "id": "count-two-phones",
+      "prompt": "Um homem segurando dois celulares, um azul na mão esquerda e um preto na direita.",
+      "dry": false,
+      "elements": [
+        "um homem",
+        "segurando 2 celulares",
+        "celular azul na mão esquerda",
+        "celular preto na mão direita"
+      ],
+      "texts": [],
+      "generatedPrompt": "um homem; segurando 2 celulares; celular azul na mão esquerda; celular preto na mão direita. Feel free to add tasteful detail (idade aparente e etnia do homem, roupas do homem, ambiente e iluminação de fundo).",
+      "model": "flux2pro",
+      "audit": {
+        "elementPass": true,
+        "elementMissing": [],
+        "textPass": null,
+        "textMissing": ""
+      },
+      "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\count-two-phones.png",
+      "score": 100
+    },
+    {
+      "id": "woman-details",
+      "prompt": "Mulher de cabelo preto usando vestido vermelho, segurando uma bolsa azul, em frente a uma loja.",
+      "dry": false,
+      "elements": [
+        "uma mulher",
+        "cabelo preto",
+        "vestido vermelho",
+        "segurando uma bolsa azul",
+        "em frente a uma loja"
+      ],
+      "texts": [],
+      "generatedPrompt": "A chic street-style photograph set in front of a boutique storefront with elegant display windows and clean architectural details along a modern sidewalk. In the center, a woman with sleek, glossy black hair stands holding a vibrant cobalt blue leather handbag, wearing a tailored, flowing red dress that stands out against the storefront. The scene is illuminated by warm, soft late-afternoon daylight, creating gentle reflections on the shop window glass and a natural depth of field that softens the background. Medium-shot composition emphasizing the rich color contrast between the crimson dress and the blue purse, conveying an effortless and fashionable mood. No watermark, no gibberish letters, no unrelated text.",
+      "model": "flux2pro",
+      "audit": {
+        "elementPass": true,
+        "elementMissing": [],
+        "textPass": null,
+        "textMissing": ""
+      },
+      "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\woman-details.png",
+      "score": 100
+    },
+    {
+      "id": "car-by-house",
+      "prompt": "Uma Ferrari vermelha estacionada na frente de uma casa branca de dois andares, ao pôr do sol.",
+      "dry": false,
+      "elements": [
+        "uma Ferrari vermelha",
+        "estacionada na frente da casa",
+        "casa branca de dois andares",
+        "ao pôr do sol"
+      ],
+      "texts": [],
+      "generatedPrompt": "uma Ferrari vermelha; estacionada na frente da casa; casa branca de dois andares; ao pôr do sol. Feel free to add tasteful detail (modelo específico da Ferrari, estilo arquitetônico da casa, ângulo da câmera).",
+      "model": "flux2pro",
+      "audit": {
+        "elementPass": true,
+        "elementMissing": [],
+        "textPass": null,
+        "textMissing": ""
+      },
+      "imageSaved": "C:\\Users\\xyzge\\OneDrive\\Documentos\\Default Project\\criai-platform\\criai-platform\\backend\\src\\scripts\\fidelity-out\\car-by-house.png",
+      "score": 100
+    }
+  ],
+  "note": "overallFidelity = média do acerto de elementos e textos conferidos pela visão (Qwen2.5-VL)."
+}

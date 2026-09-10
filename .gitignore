@@ -7,3 +7,5 @@ prisma/dev.db
 .DS_Store
 # memória de longo prazo (dados por usuário) — nunca versionar
 data/
+
+src/scripts/fidelity-out/

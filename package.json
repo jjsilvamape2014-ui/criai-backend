@@ -8,7 +8,10 @@
     "dev": "nodemon src/index.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "test:fidelity": "node src/scripts/fidelity-test.js",
+    "test:fidelity:dry": "node src/scripts/fidelity-test.js --dry",
+    "test:fidelity:all": "node src/scripts/fidelity-test.js --all"
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",
