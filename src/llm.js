@@ -592,15 +592,19 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
   ].filter(Boolean).join(' | ');
 
   const systemPrompt = [
-    'You are a world-class prompt engineer for AI image generation (FLUX).',
+    'You are a world-class prompt engineer for AI image generation (FLUX / Ideogram).',
     'The user describes in Portuguese (or English) what image they want — prompts can be vague, absurd or creative.',
     projectLines ? 'KNOWN PROJECT IDENTITY (respect these unless contradicted by the user): ' + projectLines : '',
-    'Rewrite it into ONE detailed English image prompt, exactly as a top-tier AI studio would before rendering:',
+    'Rewrite it into ONE detailed English image prompt, exactly as a top-tier AI studio would before rendering.',
+    'STRICT FIDELITY RULES (non-negotiable):',
+    '- The user\'s request is LAW. NEVER change, swap, drop or "improve" the subject, scene, action, style, colors or mood they asked. You only ADD professional rendering detail — you never contradict the request.',
+    '- If the user asks for a specific thing (product, person, animal, place, word, price, color, layout), that thing MUST be the hero of the image. Do not replace it with a generic substitute.',
+    '- If the user asks for a photo/realistic look, keep it realistic; if they ask for illustration/cartoon, keep that style. Never blend into something different.',
     '- structure: scene/background -> main subject (specific, with details) -> style/medium -> lighting -> composition/framing -> mood',
     '- make it explicit and concrete (materials, textures, colors, camera angle, depth of field)',
     '- keep the absurd/creative request alive (the user WANTS what they asked, even if wild) — do not censor, do not tone it down',
     '- if it is a product/logo/banner/flyer/invitation request, aim for professional quality (clean layout, high contrast, readable text)',
-    '- TEXT: whenever the user wants printed text (name, age, price, convite, banner, flyer, logo, slogan, words), the text MUST appear clearly, correctly spelled and styled, exactly as requested. ALWAYS include: all quoted strings, all proper names of people/children/companies, ages, prices, dates and phone numbers as visible text. Never omit, abbreviate or change them.',
+    '- TEXT: whenever the user wants printed text (name, age, price, convite, banner, flyer, logo, slogan, words), the text MUST appear clearly, correctly spelled and styled, exactly as requested. ALWAYS include: all quoted strings, all proper names of people/children/companies, ages, prices, dates and phone numbers as visible text. Never omit, abbreviate or change them. Spell Portuguese accents exactly (ex: Promoção, já, não, ação).',
     '- keep quoted text (“...” or \"...\") the user wants printed in the image, verbatim',
     marketingKnowledge(trimmed),
     (opts.textSwap ? '- THIS IS A TEXT REPLACEMENT ON AN EXISTING REFERENCE DESIGN: keep the icon/emblem, colors, materials, panel, LED border, background and layout 100% IDENTICAL. Change ONLY the written text exactly as requested (match the requested text style, e.g. engraved/hollow/vazado). Do not redesign, do not move or replace the emblem, do not change the background.' : ''),
@@ -611,8 +615,8 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
   ].filter(Boolean).join('\n');
 
   const llmText = await callLLM(systemPrompt, `User request: ${trimmed}`, {
-    temperature: 0.7,
-    maxTokens: 600,
+    temperature: 0.4,
+    maxTokens: 700,
     maxAttempts: 1,
     timeout: 45000,
     json: false

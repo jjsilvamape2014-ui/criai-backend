@@ -95,6 +95,20 @@ function optimizePrompt(rawPrompt) {
   return `${trimmed}${enhancement}${noText}`;
 }
 
+// Peça cuja ESSÊNCIA é texto impresso (legível, em português): o Ideogram renderiza
+// texto muito melhor que o FLUX. Esse classificador decide qual modelo usar.
+function looksLikeTextPiece(raw) {
+  const s = String(raw || '');
+  return /(\btexto\b|\bfrase\b|\bslogan\b|\bchamada\b|\bmanchete\b|\bmensagem\b|com o texto|dizendo|escrev\w+|legenda|escrito)/i.test(s) ||
+    /(convite|cart[ãa]o de anivers[áa]rio|birthday invitation)/i.test(s) ||
+    /(banner|flyer|panfleto|folder|folheto|cartaz|p[ôo]ster|outdoor|faixa)/i.test(s) ||
+    /(logo|logomarca|wordmark|marca)/i.test(s) ||
+    /(promo[çc][ãa]o|oferta|desconto|black friday|cupom|an[úu]ncio|sale)/i.test(s) ||
+    /R\$\s*\d/.test(s) ||
+    /["“”][^"“”]{2,30}["“”]/.test(s) ||
+    /(hamb[uú]rguer|pizza|pizzaria|restaurante|hamburgueria)/i.test(s);
+}
+
 // Extrai a URL (ou URLs) de imagem do corpo de resposta das APIs da fal.ai,
 // suportando os vários formatos de saída (images[], data[], image{}).
 function extractImages(data) {
@@ -115,26 +129,68 @@ async function generateImageFal(prompt, opts) {
   const headers = { Authorization: `Key ${FAL_KEY}`, 'Content-Type': 'application/json' };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  let endpoint;
-  let payload;
+  const isFlux2 = /flux[-_ ]?2/i.test(model) || model === 'flux2pro';
+  const isIdeogram = /ideogram/i.test(model);
 
-  if (model === 'ideogram4' || model === 'ideogram') {
-    // NOTA: o caminho /fal-ai/ideogram/v4 NÃO existe na fal.ai (POST entra na fila mas
-    // "conclui" sem gerar imagem — response_url aponta para rota inválida). O v3 existe
-    // e é excelente em renderizar TEXTO em português. Saída: { images: [{ url }] }.
-    endpoint = 'https://queue.fal.run/fal-ai/ideogram/v3';
-    payload = {
-      prompt,
-      image_size: { width: opts.width || 1024, height: opts.height || 1024 },
-      num_images: 1,
-      rendering_speed: 'BALANCED',
-      expand_prompt: false
-    };
-  } else {
+  // Monta lista de candidatos endpoint/payload em ordem de preferência.
+  const buildAttempts = () => {
+    if (isIdeogram) {
+      // NOTA: o caminho /fal-ai/ideogram/v4 NÃO existe na fal.ai (POST entra na fila mas
+      // "conclui" sem gerar imagem). O v3 existe e é excelente em renderizar TEXTO em
+      // português. Saída: { images: [{ url }] }.
+      return [{
+        endpoint: 'https://queue.fal.run/fal-ai/ideogram/v3',
+        payload: {
+          prompt,
+          image_size: { width: opts.width || 1024, height: opts.height || 1024 },
+          num_images: 1,
+          rendering_speed: 'BALANCED',
+          expand_prompt: false
+        }
+      }];
+    }
+
+    if (isFlux2) {
+      const tries = [];
+      // FLUX 2 Pro: a geração mais obediente ao prompt que existe hoje na fal.ai.
+      if (opts.referenceImage) {
+        tries.push({
+          endpoint: 'https://queue.fal.run/fal-ai/flux-2-pro/edit',
+          payload: {
+            prompt,
+            output_format: 'png',
+            enable_safety_checker: true,
+            image_urls: [opts.referenceImage],
+            ...(opts.width && opts.height ? { image_size: { width: opts.width, height: opts.height } } : {})
+          }
+        });
+      } else {
+        tries.push({
+          endpoint: 'https://queue.fal.run/fal-ai/flux-2-pro',
+          payload: {
+            prompt,
+            output_format: 'png',
+            enable_safety_checker: true,
+            ...(opts.width && opts.height ? { image_size: { width: opts.width, height: opts.height } } : {})
+          }
+        });
+      }
+      // Rede de segurança: se o FLUX 2 Pro recusar, tenta o Flux Pro v1.1 (mais testado)
+      const ratio = opts.aspectRatio || (opts.width > opts.height ? '16:9' : opts.height > opts.width ? '9:16' : '1:1');
+      const v11Payload = {
+        prompt,
+        num_images: 1,
+        output_format: 'png',
+        aspect_ratio: ratio
+      };
+      if (opts.referenceImage) v11Payload.image_url = opts.referenceImage;
+      tries.push({ endpoint: 'https://queue.fal.run/fal-ai/flux-pro/v1.1', payload: v11Payload });
+      return tries;
+    }
+
     // Flux Pro v1.1 (fotorrealismo + suporte a edição com imagem de referência)
-    endpoint = 'https://queue.fal.run/fal-ai/flux-pro/v1.1';
     const ratio = opts.aspectRatio || (opts.width > opts.height ? '16:9' : opts.height > opts.width ? '9:16' : '1:1');
-    payload = {
+    const payload = {
       prompt,
       num_images: 1,
       output_format: 'png',
@@ -145,10 +201,23 @@ async function generateImageFal(prompt, opts) {
       // o que fazia o app gerar do zero e desconsiderar a foto anexada).
       payload.image_url = opts.referenceImage;
     }
-  }
+    return [{ endpoint: 'https://queue.fal.run/fal-ai/flux-pro/v1.1', payload }];
+  };
 
-  const res = await axios.post(endpoint, payload, { headers, timeout: 60000 });
-  const data = res.data || {};
+  // Envia para o primeiro candidato que responder; se todos falharem, propaga o último erro.
+  let data = null;
+  let lastErr = null;
+  for (const { endpoint, payload } of buildAttempts()) {
+    try {
+      const res = await axios.post(endpoint, payload, { headers, timeout: 60000 });
+      const d = res.data || {};
+      if (d.status_url || (d.images && d.images.length)) { data = d; break; }
+    } catch (e) {
+      lastErr = e;
+      console.error(`fal.ai ${endpoint.split('/').pop()} falhou:`, e.response && e.response.status, (e.response && e.response.data && JSON.stringify(e.response.data).slice(0, 160)) || e.message);
+    }
+  }
+  if (!data) { if (lastErr) throw lastErr; return null; }
 
   // fal.ai é assíncrono: o POST devolve IN_QUEUE/IN_PROGRESS + status_url/response_url.
   // Fluxo correto: sondar status_url até COMPLETED e então baixar o resultado em response_url.
@@ -447,8 +516,9 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
     });
 
     // Gera usando a cadeia de provedores (fal.ai -> Stability AI -> Hugging Face)
+    const genModel = !/ideogram/i.test(model) && !/mystic/i.test(model) && looksLikeTextPiece(prompt) ? 'ideogram' : model;
     let imageUrl = await generateImageFromProviders(enhancedPrompt, {
-      model, width, height, aspectRatio, negativePrompt, referenceImage: refImage, strength
+      model: genModel, width, height, aspectRatio, negativePrompt, referenceImage: refImage, strength
     });
 
     if (!imageUrl) {
@@ -651,10 +721,14 @@ router.post('/live-image', authMiddleware, generateLimiter, async (req, res) => 
 
     await prisma.generation.update({ where: { id: generation.id }, data: { prompt: enhancedPrompt } });
 
+    // 3b) ESCOLHA DO MODELO: peça com texto impresso → Ideogram (renderiza PT/correto);
+    //     o resto → FLUX 2 Pro (a geração mais fiel ao pedido).
+    const genModel = !/ideogram/i.test(model) && !/mystic/i.test(model) && looksLikeTextPiece(prompt) ? 'ideogram' : model;
+
     // 4) GERA
     emitStatus('Gerando a arte com a melhor IA disponível…');
     let imageUrl = await generateImageFromProviders(enhancedPrompt, {
-      model, width, height, aspectRatio, negativePrompt, referenceImage: refImage, strength
+      model: genModel, width, height, aspectRatio, negativePrompt, referenceImage: refImage, strength
     });
     if (!imageUrl) throw new Error('Nenhum provedor gerou imagem');
 
@@ -667,7 +741,7 @@ router.post('/live-image', authMiddleware, generateLimiter, async (req, res) => 
           emitStatus(`Texto incompleto (${(txtQa.missing || 'conferir')}) — refazendo automaticamente…`);
           await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { increment: 1 } } });
           const retryUrl = await generateImageFromProviders(ensureRequiredText(enhancedPrompt, prompt), {
-            model, width, height, aspectRatio, negativePrompt, referenceImage: refImage, strength
+            model: genModel, width, height, aspectRatio, negativePrompt, referenceImage: refImage, strength
           });
           if (retryUrl) {
             imageUrl = retryUrl;
