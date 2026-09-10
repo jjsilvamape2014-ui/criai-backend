@@ -730,6 +730,85 @@ async function createConcepts(business, goal) {
   }
 }
 
+// ===== CAMPANHA (grande vitrine): Post + Story + Legenda + CTA + mini-plano =====
+// Textos prontos para publicar, gerados pela IA com base no intent extraído.
+// Retorna { caption, cta, hashtags[], plan[] (até 7 dias) }. Se a IA falhar,
+// cai em textos determinísticos (nunca quebra a campanha).
+function fallbackCampaignTexts(intent, msg) {
+  const biz = intent.businessType || (String(msg || '') === '' ? 'seu negócio' : msg.trim().slice(0, 40));
+  const prod = intent.product || '';
+  const aud = intent.audience || 'você';
+  const hashtagBase = biz.toLowerCase().replace(/[^a-zà-ú0-9]/g, ' ').split(/\s+/).filter((w) => w.length > 2).slice(0, 2).join('') || 'negocio';
+  return {
+    caption: `🛍️ ${biz}!${prod ? ` Acabou de chegar: ${prod}. ` : ' '}Feito para ${aud}, com qualidade e preço justo. ➡️ Chame no WhatsApp e garanta o seu antes que acabe!`,
+    cta: 'Chame no WhatsApp',
+    hashtags: [`#${hashtagBase}`, '#promocao', '#oferta', '#novidade', '#qualidade', '#instagood'],
+    plan: [
+      `DIA 1 — Apresentação: foto principal do ${prod || 'produto'} com um call "conheça" (Imagem)`,
+      `DIA 2 — Prova social: cliente real usando o ${prod || 'produto'} (Reels)`,
+      `DIA 3 — Bastidores: como o ${prod || 'produto'} é feito/preparado (Story)`,
+      `DIA 4 — Dúvida frequente: responde a pergunta mais comum sobre ${prod || 'o serviço'} (Carrossel)`,
+      `DIA 5 — Oferta relâmpago: cupom ou desconto por tempo limitado (Imagem)`,
+      `DIA 6 — Curiosidade: fato legal sobre ${biz} que surpreende o público (Story)`,
+      `DIA 7 — Pergunta-engajamento: "qual você mais gostaria de ver amanhã?" (Story)`
+    ]
+  };
+}
+
+async function campaignTexts(intent, msg) {
+  const sys = [
+    'You are a Brazilian social media strategist and copywriter.',
+    `Business brief: ${String(msg || '').slice(0, 400)}.`,
+    `Detected intent: ${JSON.stringify(intent || {})}.`,
+    'Reply valid JSON ONLY with EXACTLY these keys:',
+    '{"caption":"","cta":"","hashtags":[],"plan":[]}',
+    'caption: ONE ready-to-post Portuguese (pt-BR) caption, short and punchy, hook on first line, ends with a soft call-to-action. Max 200 chars.',
+    'cta: the single best call-to-action text (e.g. "Chame no WhatsApp", "Toque no link da bio", "Comente EU QUERO"). Max 40 chars.',
+    'hashtags: 5-8 relevant Instagram hashtags, no spaces before #.',
+    'plan: a 7-day content calendar (Monday-Sunday), each item a string "DIA N — <título do post> (<formato: Reels/Story/Carrossel/Imagem>)" in pt-BR, max 90 chars each. Mix product, social proof, behind-the-scenes, tips, promo and engagement.',
+    'Use the business facts; never invent prices or facts that change the commercial objective.'
+  ].join('\n');
+  try {
+    const text = await callLLM(sys, `Write the campaign.`, { temperature: 0.75, maxTokens: 900, json: true });
+    if (text && text.trim()) {
+      const obj = parseJsonLoose(text);
+      if (!obj || typeof obj !== 'object') return fallbackCampaignTexts(intent, msg);
+      const plan = Array.isArray(obj.plan) ? obj.plan.filter((p) => typeof p === 'string' && p.trim()).map((p) => p.trim()).slice(0, 7) : [];
+      if (!obj.caption && !plan.length) return fallbackCampaignTexts(intent, msg);
+      return {
+        caption: String(obj.caption || '').trim().slice(0, 500),
+        cta: String(obj.cta || 'Chame no WhatsApp').trim().slice(0, 60),
+        hashtags: Array.isArray(obj.hashtags)
+          ? obj.hashtags.filter((h) => typeof h === 'string' && h.trim()).map((h) => `#${h.trim().replace(/^#/, '').replace(/\s+/g, '')}`).slice(0, 8)
+          : fallbackCampaignTexts(intent, msg).hashtags,
+        plan: plan.length ? plan : fallbackCampaignTexts(intent, msg).plan
+      };
+    }
+  } catch (e) {
+    console.error('campaignTexts falhou:', e.message);
+  }
+  return fallbackCampaignTexts(intent, msg);
+}
+
+// Prompts das duas peças da campanha (determinísticos e estáveis): Post 1:1 + Story 9:16.
+function buildCampaignPrompts(intent, msg) {
+  const biz = intent.businessType || 'seu negócio';
+  const prod = intent.product || 'seus produtos';
+  const aud = intent.audience || 'seu público';
+  const emo = intent.emotion || 'desejo e qualidade';
+  const lead = `Campanha publicitária profissional de alta qualidade para ${biz}${intent.product ? ` promovendo ${intent.product}` : ''}, direcionada a ${aud}, transmitindo ${emo}`;
+  const baseRules = [
+    'layout de marketing comercial premium, luz profissional, paleta de cores harmoniosa de campanha',
+    'tipografia forte e legível, todo o texto escrito corretamente em português sem erros e sem letras inventadas',
+    'espaço reservado e limpo para o título da oferta e o preço (canto bem visível)',
+    'sem pessoas com rostos inventados famosos, alta definição para uso em redes sociais'
+  ].join(', ');
+  return {
+    postPrompt: `${lead}. Formato QUADRADO (feed Instagram): composição equilibrada, produto/marca em destaque central, ${baseRules}.`,
+    storyPrompt: `${lead}. Formato STORY VERTICAL 9:16: conteúdo principal na metade superior, zona inferior (onde ficam o botão e a chamada) sempre limpa para o texto da oferta, ${baseRules}.`
+  };
+}
+
 async function enhanceImagePrompt(rawPrompt, opts = {}) {
   const trimmed = (rawPrompt || '').trim();
   if (!trimmed || trimmed.length < 3) return { prompt: trimmed, reply: '', required: { elements: [], texts: [] } };
@@ -1063,4 +1142,4 @@ async function contentPlan30(project, extra) {
   return null;
 }
 
-module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript, extractIntent, createConcepts };
+module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript, extractIntent, createConcepts, campaignTexts, buildCampaignPrompts };

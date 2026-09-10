@@ -4,7 +4,7 @@ const rateLimit = require('express-rate-limit');
 const sharp = require('sharp');
 const { authMiddleware } = require('../middleware');
 const { PrismaClient } = require('@prisma/client');
-const { enhanceImagePrompt, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript, extractIntent, createConcepts } = require('../llm');
+const { enhanceImagePrompt, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript, extractIntent, createConcepts, campaignTexts, buildCampaignPrompts } = require('../llm');
 const vision = require('../vision');
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -1485,6 +1485,90 @@ router.delete('/history/:id', authMiddleware, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Erro ao excluir' });
+  }
+});
+
+// ===== CAMPANHA (grande vitrine): Post + Story + Legenda + CTA + mini-plano =====
+// Fluxo: 1) extractIntent descobre negócio/objetivo/público/canal e (se faltar
+// algo essencial) responde UMA pergunta SEM gastar crédito. 2) Com o brief completo,
+// gera os textos (legenda/CTA/hashtags/plano 7 dias) + as 2 peças (Post 1:1, Story 9:16).
+function debitCredits(user, n) {
+  // Desconta em blocos: primeiro comprados, depois mensais (PREMIUM não desconta).
+  const steps = [];
+  let rest = n;
+  if (!(user.plan === 'PREMIUM')) {
+    if (user.creditsPurchased > 0) {
+      const take = Math.min(rest, user.creditsPurchased);
+      steps.push({ where: { id: user.id }, data: { creditsPurchased: { decrement: take } } });
+      rest -= take;
+    }
+    if (rest > 0) {
+      steps.push({ where: { id: user.id }, data: { creditsImages: { decrement: rest } } });
+    }
+  }
+  return Promise.all(steps.map((s) => prisma.user.update(s)));
+}
+
+async function refundCredits(user, n) {
+  if (user.plan === 'PREMIUM') return;
+  await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { increment: n } } });
+}
+
+router.post('/campaign', authMiddleware, async (req, res) => {
+  try {
+    const { msg } = req.body || {};
+    const message = String(msg || '').trim();
+    if (message.length < 3) return res.status(400).json({ error: 'Descreva seu negócio ou sua ideia de campanha.' });
+    const user = req.user;
+
+    // 1) PRE-FLIGHT: entende a intenção; se faltar um fato essencial, pergunta UMA vez.
+    const understanding = await extractIntent(message);
+    if (understanding && understanding.question) {
+      return res.json({ success: true, code: 'NEED_ANSWER', intent: understanding.intent, confirmation: understanding.confirmation, direction: understanding.direction, question: understanding.question, options: understanding.options || [] });
+    }
+    const intent = (understanding && understanding.intent) || { businessType: '', product: '', audience: '', objective: '', emotion: '', platform: '' };
+
+    // 2) CRÉDITOS: a campanha gera 2 imagens (Post + Story) → 2 créditos (PREMIUM ilimitado).
+    const isUnlimited = user.plan === 'PREMIUM';
+    const total = user.creditsImages + user.creditsPurchased;
+    if (!isUnlimited && total < 2) {
+      return res.status(403).json({ error: 'Créditos insuficientes para a campanha (2 imagens)', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+    }
+    await debitCredits(user, 2);
+
+    // 3) TEXTOS: legenda + CTA + hashtags + plano de 7 dias (fallback nunca quebra).
+    const texts = await campaignTexts(intent, message);
+
+    // 4) PEÇAS: prompts determinísticos + geração via provedores (Ideogram p/ texto PT).
+    const { postPrompt, storyPrompt } = buildCampaignPrompts(intent, message);
+    const postGen = await prisma.generation.create({ data: { userId: user.id, type: 'IMAGE', prompt: postPrompt, status: 'PROCESSING', cost: 1 } });
+    const storyGen = await prisma.generation.create({ data: { userId: user.id, type: 'IMAGE', prompt: storyPrompt, status: 'PROCESSING', cost: 1 } });
+
+    const [postImage, storyImage] = await Promise.all([
+      generateImageFromProviders(postPrompt, { model: 'flux2pro', width: 1080, height: 1080, negativePrompt: 'blur, low quality, mangled text, english text' }),
+      generateImageFromProviders(storyPrompt, { model: 'flux2pro', width: 1080, height: 1920, negativePrompt: 'blur, low quality, mangled text, english text' })
+    ]);
+    if (postImage) await prisma.generation.update({ where: { id: postGen.id }, data: { status: 'COMPLETED', imageUrl: postImage } });
+    if (storyImage) await prisma.generation.update({ where: { id: storyGen.id }, data: { status: 'COMPLETED', imageUrl: storyImage } });
+
+    const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });
+    res.json({
+      success: true,
+      postImage,
+      storyImage,
+      caption: texts.caption,
+      cta: texts.cta,
+      hashtags: texts.hashtags,
+      plan: texts.plan,
+      confirmation: understanding ? understanding.confirmation : '',
+      direction: understanding ? understanding.direction : '',
+      intent,
+      credits
+    });
+  } catch (err) {
+    console.error('Erro na campanha:', err.message);
+    if (req.user) await refundCredits(req.user, 2);
+    res.status(500).json({ error: 'Não consegui montar a campanha agora. Tente novamente.', details: err.message });
   }
 });
 
