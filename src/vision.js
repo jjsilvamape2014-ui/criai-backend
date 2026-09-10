@@ -235,4 +235,80 @@ async function checkImageText(src, tokens) {
   }
 }
 
-module.exports = { describeReference, checkImageQuality, checkImageText };
+// QA de ELEMENTOS: confere se os elementos OBRIGATÓRIOS que o usuário pediu
+// (ex: "homem de terno azul", "pasta vermelha", "2 cachorros") APARECERAM na
+// imagem gerada. Retorna { ok, missing: [] } ou null (não quebra o fluxo).
+// É o coração do "gera → analisa → corrige": a IA só entrega se cumpriu o pedido.
+async function checkImageElements(src, elements) {
+  try {
+    if (!isEnabled() || !process.env.FAL_KEY) return null;
+    const list = (Array.isArray(elements) ? elements : []).filter((e) => e && typeof e === 'string' && e.trim());
+    if (!list.length) return null;
+    const tag = list.map((e) => e.trim().slice(0, 40)).join(' | ');
+    let key = src;
+    if (src && src.startsWith('data:')) {
+      key = 'el:' + crypto.createHash('sha1').update(src.split(',')[1] || '').digest('hex') + '|' + tag;
+    } else {
+      key = 'el:' + src + '|' + tag;
+    }
+    if (cache.has(key)) return cache.get(key);
+
+    const compressed = await compress(src, 640, 66);
+    if (!compressed) return null;
+
+    const prompt = [
+      'You are a strict visual proofreader matching a generated image against the elements the user asked for.',
+      `These elements were requested (each one MUST be clearly present in the image): "${tag}".`,
+      'Look at the image very carefully. For EACH element, decide if it is present and clearly recognizable (a missing, swapped or wrong-variant element counts as missing).',
+      'Reply EXACTLY one of:',
+      '"OK" if ALL requested elements are present,',
+      'or "MISSING: <each missing element separated by |>" listing ONLY the elements that are missing or wrong.',
+      'Ignore style or composition taste. Reply nothing else.'
+    ].join(' ');
+
+    const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
+    const res = await axios.post(
+      'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
+      { prompt, image_url: compressed, max_tokens: 120 },
+      { headers, timeout: 30000, validateStatus: (s) => s < 500 }
+    );
+    const data = res.data || {};
+    let text = null;
+    if (data.status_url) {
+      const deadline = Date.now() + 45000;
+      while (Date.now() < deadline) {
+        await sleep(2000);
+        const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
+        const pd = pollRes.data || {};
+        if (pd.status === 'COMPLETED' || pd.output) {
+          text = typeof pd.output === 'string' ? pd.output : (pd.output && (pd.output.content || pd.output.text)) || null;
+          break;
+        }
+        if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
+      }
+    } else if (typeof data.output === 'string') {
+      text = data.output;
+    } else if (data.output && (data.output.content || data.output.text)) {
+      text = data.output.content || data.output.text;
+    }
+
+    const raw = (text || '').trim();
+    const out = {
+      ok: !/^MISSING:/i.test(raw),
+      missing: raw
+        .replace(/^MISSING:\s*/i, '')
+        .split('|')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 6)
+    };
+    cache.set(key, out);
+    if (cache.size > 200) cache.delete(cache.keys().next().value);
+    return out;
+  } catch (e) {
+    console.error('QA de elementos falhou:', e.message);
+    return null;
+  }
+}
+
+module.exports = { describeReference, checkImageQuality, checkImageText, checkImageElements };

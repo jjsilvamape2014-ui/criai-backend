@@ -578,9 +578,54 @@ function marketingKnowledge(raw) {
   return hints.length ? '\nDOMAIN KNOWLEDGE (follow it strictly):\n- ' + hints.join('\n- ') : '';
 }
 
+// Cérebro em etapas — REGRA CENTRAL do produto: "antes de gerar, entenda
+// exatamente o que o usuário quer; não invente elementos importantes não
+// solicitados e nunca quebre o que foi pedido." Separa o pedido em
+// OBRIGATÓRIO (deve aparecer) / NÃO ALTERAR (valores que não mudam) /
+// PODE INTERPRETAR (detalhes abertos) / ESTILO. Retorna só o plano JSON
+// (ou null se o LLM falhar — o fluxo segue pelo caminho antigo).
+async function interpretImageRequest(raw, opts = {}) {
+  const trimmed = (raw || '').trim();
+  if (!trimmed || trimmed.length < 3) return null;
+
+  const systemPrompt = [
+    'You are the planning brain of an AI image studio.',
+    'Separate the user request into valid JSON with EXACTLY these keys:',
+    '{"obrigatorio":["..."],"nao_alterar":["..."],"pode_interpretar":["..."],"estilo":""}',
+    'REGRA CENTRAL: never invent important elements the user did not ask for, and never drop or dilute what they did ask.',
+    'obrigatorio: every explicit, concrete demand — person, gender, quantity, color, clothing, object, place, printed word/price, layout. Each as a short concrete phrase. Keep quantities EXACT ("2 celulares" is NOT "celulares"; "azul na mão esquerda" is NOT "um celular").',
+    'nao_alterar: restate the exact must-keep values used in obrigatorio (e.g. "vestido vermelho", "cabelo preto", "2 celulares", "azul na esquerda") so the prompt can forbid changing them.',
+    'pode_interpretar: ONLY reasonable open details NOT specified by the user (apparent age, decor, lighting, camera angle) — max 3, and never one that contradicts an explicit obrigatorio choice.',
+    'estilo: the user-stated style only (realistic/photo, illustration, cartoon, minimal, logo, cinema...) or "" if unstated.',
+    'Never invent elements that alter the intent. Reply valid JSON only, no explanations.'
+  ].join('\n');
+
+  const llmText = await callLLM(systemPrompt, `User request: ${trimmed}`, {
+    temperature: 0.2,
+    maxTokens: 500,
+    maxAttempts: 1,
+    timeout: 40000,
+    json: true
+  });
+  if (!llmText || !llmText.trim()) return null;
+  try {
+    const obj = parseJsonLoose(llmText);
+    if (!obj || typeof obj !== 'object') return null;
+    const arr = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'string' && x.trim().length > 1).map((x) => x.trim()) : []);
+    return {
+      obrigatorio: arr(obj.obrigatorio).slice(0, 8),
+      nao_alterar: arr(obj.nao_alterar).slice(0, 10),
+      pode_interpretar: arr(obj.pode_interpretar).slice(0, 3),
+      estilo: typeof obj.estilo === 'string' ? obj.estilo.trim() : ''
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
 async function enhanceImagePrompt(rawPrompt, opts = {}) {
   const trimmed = (rawPrompt || '').trim();
-  if (!trimmed || trimmed.length < 3) return { prompt: trimmed, reply: '' };
+  if (!trimmed || trimmed.length < 3) return { prompt: trimmed, reply: '', required: { elements: [], texts: [] } };
 
   const proj = (opts.project || {});
   const projectLines = [
@@ -591,6 +636,69 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
     (proj.constraints && proj.constraints.length) ? `Constraints: ${proj.constraints.join('; ')}` : ''
   ].filter(Boolean).join(' | ');
 
+  const domain = marketingKnowledge(trimmed);
+  const required = { elements: [], texts: extractTextTokens(trimmed) };
+
+  // Etapa 1 — PLANEJAR (cérebro em etapas)
+  const plano = await interpretImageRequest(trimmed, opts);
+  if (plano && (plano.obrigatorio.length || plano.nao_alterar.length)) {
+    required.elements = plano.obrigatorio;
+
+    // Etapa 2 — RENDERIZAR a partir do plano (o pedido original + categorias)
+    const systemPrompt = [
+      'You are a world-class render engineer for AI image generation (FLUX / Ideogram).',
+      'Render ONE detailed English image prompt using: (a) the user\'s original request and (b) the structured plan below. The original request wins in any conflict.',
+      projectLines ? 'KNOWN PROJECT IDENTITY (respect these unless contradicted by the user): ' + projectLines : '',
+      'PLAN:',
+      '- OBRIGATÓRIO (each MUST clearly appear exactly as stated — hero of the image, no substitutes, same quantities):',
+      '  ' + (plano.obrigatorio.length ? plano.obrigatorio.join(' | ') : '(none)'),
+      '- NÃO ALTERAR (values that MUST NOT change in the render):',
+      '  ' + (plano.nao_alterar.length ? plano.nao_alterar.join(' | ') : '(none)'),
+      '- PODE INTERPRETAR (only these open details may be freely completed — nothing else):',
+      '  ' + (plano.pode_interpretar.length ? plano.pode_interpretar.join(' | ') : 'nothing extra; render only what the user said'),
+      plano.estilo ? `- ESTILO EXPLÍCITO DO USUÁRIO (keep it, do not blend): ${plano.estilo}` : '- ESTILO: keep whatever the user implied; never force realism onto an illustration request or vice-versa.',
+      domain,
+      (opts.textSwap ? '- THIS IS A TEXT REPLACEMENT ON AN EXISTING REFERENCE DESIGN: keep the icon/emblem, colors, materials, panel, LED border, background and layout 100% IDENTICAL. Change ONLY the written text exactly as requested (match the requested text style, e.g. engraved/hollow/vazado). Do not redesign, do not move or replace the emblem, do not change the background.' : ''),
+      'STRUCTURE: scene/background -> main subject (specific) -> style/medium -> lighting -> composition/framing -> mood. Make it explicit (materials, textures, colors, camera angle, depth of field).',
+      'TEXT: if printed text was asked (promo/convite/logo/name/price), every string must appear verbatim with exact accents (ex: Promoção, já, não).',
+      'End with constraints: no watermark, no gibberish letters, no unrelated text (unless printed text was asked).',
+      'Never add “photorealistic, 8k, masterpiece, trending” spam. 2-5 sentences.',
+      'Then, after a separator “###CONF:” append a 1-sentence friendly confirmation in PORTUGUESE telling the user what was generated (never mention the prompt).',
+      'Format: <english prompt>\\n###CONF:<portuguese confirmation>'
+    ].filter(Boolean).join('\n');
+
+    const llmText = await callLLM(systemPrompt, `User request: ${trimmed}`, {
+      temperature: 0.4,
+      maxTokens: 700,
+      maxAttempts: 1,
+      timeout: 45000,
+      json: false
+    });
+
+    let prompt = '';
+    let reply = '';
+    if (llmText && llmText.trim()) {
+      const cleaned = llmText.replace(/```/g, '').trim();
+      const confMatch = cleaned.match(/###CONF:\s*([\s\S]+)$/);
+      prompt = confMatch ? cleaned.slice(0, confMatch.index).trim() : cleaned;
+      reply = (confMatch && confMatch[1].trim()) || '';
+    }
+    if (!prompt) {
+      // Fallback de renderização SEM LLM: monta o prompt direto do plano.
+      prompt = [
+        `${plano.obrigatorio.join('; ') || trimmed}.`,
+        plano.estilo ? `Style: ${plano.estilo}.` : '',
+        plano.pode_interpretar.length ? `Feel free to add tasteful detail (${plano.pode_interpretar.join(', ')}).` : ''
+      ].filter(Boolean).join(' ');
+    }
+
+    if (prompt) {
+      prompt = ensureRequiredText(prompt, trimmed);
+      return { prompt, reply, required, fromLLM: true };
+    }
+  }
+
+  // Sem plano estruturado (pedido vago ou LLM indisponível): caminho antigo, one-shot.
   const systemPrompt = [
     'You are a world-class prompt engineer for AI image generation (FLUX / Ideogram).',
     'The user describes in Portuguese (or English) what image they want — prompts can be vague, absurd or creative.',
@@ -606,7 +714,7 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
     '- if it is a product/logo/banner/flyer/invitation request, aim for professional quality (clean layout, high contrast, readable text)',
     '- TEXT: whenever the user wants printed text (name, age, price, convite, banner, flyer, logo, slogan, words), the text MUST appear clearly, correctly spelled and styled, exactly as requested. ALWAYS include: all quoted strings, all proper names of people/children/companies, ages, prices, dates and phone numbers as visible text. Never omit, abbreviate or change them. Spell Portuguese accents exactly (ex: Promoção, já, não, ação).',
     '- keep quoted text (“...” or \"...\") the user wants printed in the image, verbatim',
-    marketingKnowledge(trimmed),
+    domain,
     (opts.textSwap ? '- THIS IS A TEXT REPLACEMENT ON AN EXISTING REFERENCE DESIGN: keep the icon/emblem, colors, materials, panel, LED border, background and layout 100% IDENTICAL. Change ONLY the written text exactly as requested (match the requested text style, e.g. engraved/hollow/vazado). Do not redesign, do not move or replace the emblem, do not change the background.' : ''),
     '- end with hard constraints: no watermark, no gibberish letters, no unrelated text (unless the user asked for printed text)',
     'Rules: NEVER add “photorealistic, 8k, masterpiece, trending” spam. 2-5 sentences max. No explanations.',
@@ -623,18 +731,15 @@ async function enhanceImagePrompt(rawPrompt, opts = {}) {
   });
 
   if (llmText && llmText.trim()) {
-    // Resposta pode vir com fenced code ou texto extra; extrai a última linha "###CONF:"
     const cleaned = llmText.replace(/```/g, '').trim();
     const confMatch = cleaned.match(/###CONF:\s*([\s\S]+)$/);
     const prompt = confMatch ? cleaned.slice(0, confMatch.index).trim() : cleaned;
     const reply = (confMatch && confMatch[1].trim()) || '';
-    // Reforço final: textos pedidos (nome/idade/preço) que sumiram no rewrite voltam
-    // como instrução explícita de impressão na imagem.
-    if (prompt) return { prompt: ensureRequiredText(prompt, trimmed), reply, fromLLM: true };
+    if (prompt) return { prompt: ensureRequiredText(prompt, trimmed), reply, required, fromLLM: true };
   }
 
   // Fallback sem LLM: usa o otimizador leve por intenção (mantém o pedido do usuário)
-  return { prompt: optimizeFallback(trimmed), reply: '', fromLLM: false };
+  return { prompt: optimizeFallback(trimmed), reply: '', required, fromLLM: false };
 }
 
 // Otimizador leve sem LLM (fallback): adiciona toques técnicos por intenção.

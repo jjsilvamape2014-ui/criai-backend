@@ -697,12 +697,14 @@ router.post('/live-image', authMiddleware, generateLimiter, async (req, res) => 
       emitStatus('Refinando o tema para buscar referências…');
     }
 
-    // 2) APRIMORA: reescreve o pedido em prompt profissional (Cérebro)
+    // 2) APRIMORA: planeja (interpretador em etapas) e reescreve em prompt profissional
     emitStatus('Tradando o pedido do jeito que um designer faria…');
     let enhancedPrompt;
+    let imageRequired = { elements: [], texts: [] };
     try {
       const enh = await enhanceImagePrompt(prompt);
       enhancedPrompt = enh.prompt || optimizePrompt(prompt);
+      imageRequired = enh.required || imageRequired;
     } catch (e) {
       console.error('Falha ao melhorar prompt via LLM, usando otimizador local:', e.message);
       enhancedPrompt = optimizePrompt(prompt);
@@ -756,6 +758,46 @@ router.post('/live-image', authMiddleware, generateLimiter, async (req, res) => 
         }
       } catch (e) {
         console.error('QA de texto falhou (seguindo com a imagem):', e.message);
+      }
+    }
+
+    // 5b) QA de ELEMENTOS (o coração do "gera → analisa → corrige"): confere se os
+    //     elementos obrigatórios do pedido APARECERAM. Se faltou, refaz uma vez
+    //     reforçando explicitamente o que faltou. Funciona nos bastidores —
+    //     o usuário só vê "estou corrigindo". Máx. 1 novo gasto de crédito além
+    //     do texto, alinhado ao limite prudente (2-3 tentativas no total).
+    const requiredElements = (imageRequired.elements || []).filter(Boolean);
+    if (requiredElements.length) {
+      try {
+        emitStatus('Conferindo se cada elemento pedido apareceu na imagem…');
+        const elQa = await vision.checkImageElements(imageUrl, requiredElements);
+        if (elQa && elQa.ok === false && (elQa.missing || []).length) {
+          const miss = (elQa.missing || []).join(', ');
+          emitStatus(`O pedido não foi totalmente atendido (falta: ${miss}) — corrigindo automaticamente…`);
+          await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { increment: 1 } } });
+          const correction = [
+            enhancedPrompt,
+            '',
+            'CRITICAL RETRY INSTRUCTION (the client\'s request is LAW):',
+            `The previous attempt was REJECTED because these REQUIRED elements were missing or wrong: ${miss}.`,
+            'This new version MUST clearly include every one of them, exactly as the user requested, with the same quantities, colors and positions.'
+          ].join('\n');
+          const retryUrl = await generateImageFromProviders(correction, {
+            model: genModel, width, height, aspectRatio, negativePrompt, referenceImage: refImage, strength, force: true
+          });
+          if (retryUrl) {
+            imageUrl = retryUrl;
+            if (!isUnlimitedImage) {
+              if (user.creditsPurchased > 0) {
+                await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
+              } else {
+                await prisma.user.update({ where: { id: user.id }, data: { creditsImages: { decrement: 1 } } });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('QA de elementos falhou (seguindo com a imagem):', e.message);
       }
     }
 
