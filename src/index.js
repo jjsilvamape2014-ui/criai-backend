@@ -57,6 +57,32 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// Diagnóstico de configuração (só booleans — nunca expõe chaves).
+// Serve para descobrir por que a IA "ficou burra": sem FAL_KEY o app cai no modelo
+// grátis do Pollinations, que não obedece o pedido nem acerta texto.
+app.get('/api/diagnostics', (req, res) => {
+  const has = (k) => !!process.env[k];
+  const llmKey = process.env.LLM_API_KEY || '';
+  res.json({
+    providers: {
+      fal: has('FAL_KEY'),
+      stability: has('STABILITY_API_KEY'),
+      magnific: has('MAGNIFIC_API_KEY'),
+      freepik: has('FREEPIK_API_KEY'),
+      huggingface: has('HF_API_KEY'),
+      replicate: has('REPLICATE_API_TOKEN'),
+      imagga: has('IMAGGA_API_KEY')
+    },
+    llm: {
+      configured: has('LLM_API_KEY'),
+      provider: llmKey.startsWith('gsk_') ? 'groq' : llmKey.startsWith('sk-') ? 'openai' : llmKey ? 'gemini' : null,
+      model: process.env.LLM_MODEL || '(padrão do provider)'
+    },
+    vision: { enabled: process.env.VISION_ENABLED !== 'false' && has('FAL_KEY') },
+    region: process.env.RENDER_REGION || process.env.RAILWAY_REGION || null
+  });
+});
+
 // Reset mensal de créditos (também agendado automaticamente pelo cron interno)
 app.post('/api/admin/reset-credits', async (req, res) => {
   try {
