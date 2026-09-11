@@ -1,0 +1,58 @@
+{
+  "runAt": "2026-09-11T11:18:02.135Z",
+  "spoken": "hamburguer artesanal custa R$ 29,90, peça ja hoje",
+  "planOnly": false,
+  "model": "ideogram",
+  "checks": [
+    {
+      "name": "extractIntent não pergunta para fala com preço + frase",
+      "pass": true
+    },
+    {
+      "name": "negócio extraído da fala",
+      "pass": true
+    },
+    {
+      "name": "canTakeOver ativo (direção comercial)",
+      "pass": true
+    },
+    {
+      "name": "prompt renderizado preenchido",
+      "pass": true
+    },
+    {
+      "name": "prompt renderizado contém \"R$ 29,90\"",
+      "pass": true
+    },
+    {
+      "name": "prompt renderizado contém \"Peça já hoje\"",
+      "pass": true
+    },
+    {
+      "name": "confirmação em português gerada (###CONF)",
+      "pass": true
+    },
+    {
+      "name": "modelo escolhido = ideogram (texto na peça)",
+      "pass": true
+    },
+    {
+      "name": "imagem gerada (fal/ideogram)",
+      "pass": true
+    },
+    {
+      "name": "texto IMPRESSO \"R$ 29,90\" verificado por visão",
+      "pass": true
+    },
+    {
+      "name": "texto IMPRESSO \"Peça já hoje\" verificado por visão",
+      "pass": true
+    },
+    {
+      "name": "auditoria estrita (3 afirmações)",
+      "pass": true
+    }
+  ],
+  "allPass": true,
+  "note": "Anúncio Falado: fala → intenção (sem pergunta) → prompt com preço/frase verbatim → ideogram real → texto auditado por visão (Qwen2.5-VL). LLM interpretativo simulado (Groq em produção); geração e auditoria REAIS."
+}
