@@ -1,0 +1,73 @@
+{
+  "runAt": "2026-09-11T12:56:01.807Z",
+  "spoken": "quero divulgar minha hamburgueria artesanal e vender mais pedidos",
+  "planOnly": false,
+  "checks": [
+    {
+      "name": "extractIntent preencheu o intent",
+      "pass": true
+    },
+    {
+      "name": "negócio extraído",
+      "pass": true
+    },
+    {
+      "name": "caption pronta para publicar",
+      "pass": true
+    },
+    {
+      "name": "cta definido",
+      "pass": true
+    },
+    {
+      "name": "hashtags (5-8)",
+      "pass": true
+    },
+    {
+      "name": "plano de 7 dias",
+      "pass": true
+    },
+    {
+      "name": "prompt do POST quadrado 1:1",
+      "pass": true
+    },
+    {
+      "name": "prompt do STORY vertical 9:16",
+      "pass": true
+    },
+    {
+      "name": "marca/produto presentes nos dois prompts",
+      "pass": true
+    },
+    {
+      "name": "regra anti-texto inventado",
+      "pass": true
+    },
+    {
+      "name": "POST gerado (fal/flux2pro)",
+      "pass": true
+    },
+    {
+      "name": "STORY gerado (fal/flux2pro)",
+      "pass": true
+    },
+    {
+      "name": "POST é quadrado 1:1 (1080, bin 16px)",
+      "pass": true
+    },
+    {
+      "name": "STORY é 9:16 vertical (1080x1920, bin 16px)",
+      "pass": true
+    },
+    {
+      "name": "auditoria ESTRITA do POST (3 afirmações)",
+      "pass": true
+    },
+    {
+      "name": "auditoria ESTRITA do STORY (3 afirmações)",
+      "pass": true
+    }
+  ],
+  "allPass": true,
+  "note": "Campanha: fala → intent → textos (caption/cta/hashtags/plano) → prompts determinísticos → POST 1:1 + STORY 9:16 (flux2pro real) → auditoria Qwen2.5-VL e dimensões via sharp. OBS.: fal flux-2-pro quantiza o tamanho para múltiplo de 16 — pedindo 1080x1080 entrega 1072x1072 (1:1 exato, diferença de 8px invisível no uso; STORY sai 1072x1920, 9:16 ~proporcional). LLM interpretativa simulada (Groq em produção); geração e auditoria REAIS."
+}
