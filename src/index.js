@@ -10,6 +10,8 @@ const creditsRoutes = require('./routes/credits').router;
 const paymentRoutes = require('./routes/payment');
 const cerebroRoutes = require('./routes/cerebro');
 const templatesRoutes = require('./routes/templates');
+const legendaRoutes = require('./routes/legenda');
+const montarRoutes = require('./routes/montar');
 const { startCron, resetMonthlyCredits } = require('./cron');
 
 const app = express();
@@ -51,6 +53,8 @@ app.use('/api/credits', creditsRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/cerebro', cerebroRoutes);
 app.use('/api/templates', templatesRoutes);
+app.use('/api/legenda', legendaRoutes);
+app.use('/api/video', montarRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
