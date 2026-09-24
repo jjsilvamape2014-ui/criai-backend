@@ -110,6 +110,7 @@ async function main() {
   const fd2 = new FormData();
   fd2.append('video', new Blob([fs.readFileSync(mp4)], { type: 'video/mp4' }), 'entrevista-teste.mp4');
   fd2.append('srt', srtTxt);
+  fd2.append('orientacao', process.env.E2E_ORIENTACAO || 'horizontal');
   fd2.append('abertura', JSON.stringify({
     titulo: 'A Palavra em Nossa Vida',
     subtitulo: 'Gincana Bíblica 2026 — Colégio São José',
