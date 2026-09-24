@@ -12,6 +12,8 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 
 const run = promisify(execFile);
+const FFMPEG = process.env.FFMPEG_BIN || 'ffmpeg';
+const FFPROBE = process.env.FFPROBE_BIN || 'ffprobe';
 const router = express.Router();
 
 // Aceita o MP4 por upload (FormData multipart) — compatível com o celular.
@@ -36,20 +38,28 @@ function saveSRT(srt) {
 async function gerarVoz(texto) {
   const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
   const res = await axios.post('https://queue.fal.run/fal-ai/kokoro/brazilian-portuguese', { prompt: texto, voice: 'pf_dora' }, { headers, timeout: 60000 });
-  const data = res.data || {};
-  let out = data.output || null;
-  if (data.status_url) {
-    const deadline = Date.now() + 90000;
+  let fin = null;
+  if (res.data && res.data.status_url) {
+    const deadline = Date.now() + 150000;
     while (Date.now() < deadline) {
-      await sleep(3000);
+      await sleep(5000);
       try {
-        const pr = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
+        const pr = await axios.get(res.data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
         const pd = pr.data || {};
-        if (pd.status === 'COMPLETED' || pd.output) { out = pd.output || pd; break; }
+        if (pd.status === 'COMPLETED') { fin = pd; break; }
         if (pd.status === 'ERROR') break;
       } catch (e) {}
     }
   }
+  if (!fin) throw new Error('Narração não foi gerada');
+  let out = null;
+  if (res.data.response_url) {
+    try {
+      const rr = await axios.get(res.data.response_url, { headers, timeout: 30000 });
+      out = rr.data || null;
+    } catch (e) {}
+  }
+  if (!out) out = fin.output || fin;
   const url = out && out.audio && out.audio.url ? out.audio.url : (typeof (out && out.audio) === 'string' ? out.audio : null);
   if (!url) throw new Error('Narração não foi gerada');
   return url;
@@ -62,27 +72,43 @@ async function clipeImagem(imagePath, audioPath, outPath, duracao) {
   if (audioPath) args.push('-i', audioPath);
   args.push(
     '-filter_complex',
-    'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z=0.3:i=1:x=iw/2-(iw/zoom/2):y=ih/2-(ih/zoom/2):fps=30:d=' + Math.round(duracao * 30) + ':s=1080x1920',
+    'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z=1.05:fps=30:d=' + Math.round(duracao * 30) + ':x=iw/2-(iw/zoom/2):y=ih/2-(ih/zoom/2):s=1080x1920',
     '-t', String(duracao)
   );
   if (audioPath) args.push('-shortest');
   args.push('-r', '30', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'medium', '-crf', '23');
   if (audioPath) args.push('-c:a', 'aac');
   args.push(outPath);
-  await run('ffmpeg', args, { maxBuffer: 1024 * 1024 * 32 });
+  await run(FFMPEG, args, { maxBuffer: 1024 * 1024 * 32 });
 }
 
-// Queima a legenda no vídeo da entrevista (recorta pro frame 9:16 com fundo desfocado)
+// Queima a legenda e padroniza pra 1080x1920 (9:16) — garante o concat com abertura/CTA.
 async function queimarLegenda(videoPath, srtPath, outPath) {
-  const args = ['-y', '-i', videoPath, '-vf', `subtitles='${srtPath.replace(/[:'\[\]]/g, (c) => '\\' + c)}':force_style='Fontsize=22,FontName=Arial,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&HAA000000,Alignment=2,MarginV=50'`, '-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-c:a', 'copy', outPath];
-  await run('ffmpeg', args, { maxBuffer: 1024 * 1024 * 32 });
+  const srtSafe = String(srtPath).replace(/\\/g, '/').replace(/[':\[\]]/g, (c) => '\\' + c);
+  const args = ['-y', '-i', videoPath,
+    '-vf', `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,subtitles='${srtSafe}':force_style='Fontsize=22,FontName=Arial,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&HAA000000,Alignment=2,MarginV=50'`,
+    '-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-c:a', 'copy', outPath];
+  await run(FFMPEG, args, { maxBuffer: 1024 * 1024 * 32 });
 }
 
-// Texto simples → título (usa drawtext, sem precisar de imagem externa)
-async function clipeTexto(texto, outPath, cor = '0xFFFFFF', tempo = 3) {
-  const textoEscapado = String(texto || '').replace(/[:'\\]/g, ' ');
-  const args = ['-y', '-f', 'lavfi', '-i', 'color=c=0x1A1210:s=1080x1920:d=' + tempo, '-vf', `drawtext=text='${textoEscapado}':fontsize=64:fontcolor=${cor}:x=(w-text_w)/2:y=(h-text_h)/2:align=center:line_spacing=10`, '-t', String(tempo), '-r', '30', '-c:v', 'libx264', '-preset', 'medium', '-crf', '23', outPath];
-  await run('ffmpeg', args, { maxBuffer: 1024 * 1024 * 32 });
+// Card final (CTA): 1080x1920 via SVG/sharp — sem depender de fontconfig/ffmpeg drawtext.
+async function gerarCard(linha1, linha2, outPath) {
+  const sharp = require('sharp');
+  const t1 = String(linha1 || '').slice(0, 40) || 'A Palavra em Nossa Vida';
+  const t2 = String(linha2 || '').slice(0, 60);
+  const svg = `<svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#1A1210"/><stop offset="1" stop-color="#0D0A09"/>
+      </linearGradient>
+    </defs>
+    <rect width="1080" height="1920" fill="url(#bg)"/>
+    <rect y="0" width="1080" height="16" fill="#E8552D"/>
+    <text x="540" y="880" font-size="72" font-weight="800" fill="#F5EFE6" text-anchor="middle" font-family="DejaVu Sans">${t1}</text>
+    <text x="540" y="1020" font-size="48" fill="#C9A98F" text-anchor="middle" font-family="DejaVu Sans">${t2}</text>
+    <text x="540" y="1500" font-size="40" font-weight="700" fill="#E8552D" text-anchor="middle" letter-spacing="12" font-family="DejaVu Sans">P O D C A S T</text>
+  </svg>`;
+  await sharp(Buffer.from(svg)).png().toFile(outPath);
 }
 
 // Capa da abertura: 1080x1920, fundo terracota quente, título + subtítulo + convidado.
@@ -160,15 +186,17 @@ router.post('/montar', upload.single('video'), async (req, res) => {
     console.log('✓ entrevista legendada');
 
     // 4) CTA final
+    const ctaPng = path.join(tmp, 'cta.png');
+    await gerarCard(cta, titulo, ctaPng);
     const ctaMp4 = path.join(tmp, 'cta.mp4');
-    await clipeTexto(cta, ctaMp4, '0xE8552D', 4);
+    await clipeImagem(ctaPng, null, ctaMp4, 4);
     console.log('✓ CTA');
 
     // 5) Concatena tudo
     const lista = path.join(tmp, 'lista.txt');
     fs.writeFileSync(lista, `file '${aberturaMp4}'\nfile '${entrevistaLeg}'\nfile '${ctaMp4}'\n`);
     const finalMp4 = path.join(os.tmpdir(), `podcast-${Date.now()}.mp4`);
-    await run('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', lista, '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', '-pix_fmt', 'yuv420p', finalMp4], { maxBuffer: 1024 * 1024 * 64 });
+    await run(FFMPEG, ['-y', '-f', 'concat', '-safe', '0', '-i', lista, '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', '-pix_fmt', 'yuv420p', finalMp4], { maxBuffer: 1024 * 1024 * 64 });
 
     res.download(finalMp4, 'podcast-professional.mp4', () => {
       setTimeout(() => { try { fs.unlinkSync(finalMp4); } catch (e) {} }, 5000);
