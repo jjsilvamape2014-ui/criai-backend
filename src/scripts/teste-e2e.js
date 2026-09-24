@@ -97,21 +97,14 @@ async function main() {
   const mp4 = await gerarVideoTeste(audio);
 
   log('3) POST /api/legenda/transcribe…');
-  let srtTxt = null;
-  const temGroq = (process.env.LLM_API_KEY || '').startsWith('gsk_');
-  if (temGroq) {
-    const fd = new FormData();
-    fd.append('video', new Blob([fs.readFileSync(mp4)], { type: 'video/mp4' }), 'entrevista-teste.mp4');
-    const t = await fetch(BASE + '/api/legenda/transcribe', { method: 'POST', body: fd });
-    const tj = await t.json().catch(() => ({}));
-    if (!t.ok) throw new Error('Transcribe: ' + (tj.error || t.status));
-    log('3b) Transcrição OK — ' + tj.segments.length + ' blocos, ' + tj.duration + 's');
-    srtTxt = tj.srt;
-    console.log(srtTxt.slice(0, 500));
-  } else {
-    log('3b) SEM chave Groq (gsk_) no .env — usando SRT SINTÉTICO pra validar a montagem.');
-    srtTxt = '1\n00:00:00,500 --> 00:00:04,000\nBem-vindos à Gincana Bíblica do Colégio\nSão José, aqui no nosso podcast.\n\n2\n00:00:04,200 --> 00:00:08,000\nHoje conversamos com o Monsenhor Gabriel\nsobre a Palavra em nossa vida.\n\n3\n00:00:08,200 --> 00:00:13,500\nUma reflexão sobre fé, comunidade e\ntudo o que nos move aqui na escola.\n';
-  }
+  const fd = new FormData();
+  fd.append('video', new Blob([fs.readFileSync(mp4)], { type: 'video/mp4' }), 'entrevista-teste.mp4');
+  const t = await fetch(BASE + '/api/legenda/transcribe', { method: 'POST', body: fd });
+  const tj = await t.json().catch(() => ({}));
+  if (!t.ok) throw new Error('Transcribe: ' + (tj.error || t.status));
+  log('3b) Transcrição OK — ' + tj.segments.length + ' blocos, ' + tj.duration + 's');
+  const srtTxt = tj.srt;
+  console.log(srtTxt.slice(0, 600));
 
   log('4) POST /api/video/montar (envia MP4 + SRT + abertura)…');
   const fd2 = new FormData();

@@ -14,6 +14,7 @@
     "test:fidelity:all": "node src/scripts/fidelity-test.js --all"
   },
   "dependencies": {
+    "@fal-ai/client": "^1.10.1",
     "@prisma/client": "^5.10.0",
     "axios": "^1.6.7",
     "bcryptjs": "^2.4.3",
