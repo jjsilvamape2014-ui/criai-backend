@@ -14,9 +14,16 @@ const { promisify } = require('util');
 const run = promisify(execFile);
 const FFMPEG = process.env.FFMPEG_BIN || 'ffmpeg';
 const FFPROBE = process.env.FFPROBE_BIN || 'ffprobe';
+// Encoder: h264_qsv no PC com GPU Intel (rápido); libx264 (CPU) como padrão no Railway.
+const VENC = (process.env.FFMPEG_VENC || 'libx264').trim();
+function vencArgs() {
+  if (VENC === 'h264_qsv') return ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-global_quality', '24', '-pix_fmt', 'yuv420p'];
+  if (VENC === 'h264_nvenc') return ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', '24', '-pix_fmt', 'yuv420p'];
+  return ['-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-pix_fmt', 'yuv420p'];
+}
 const router = express.Router();
 
-// Aceita o MP4 por upload (FormData multipart) — compatível com o celular.
+// Aceita o MP4 da entrevista e (opcional) o clipe da capa/abertura (FormData multipart).
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 512 * 1024 * 1024 } });
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
@@ -108,7 +115,7 @@ async function clipeImagem(imagePath, audioPath, outPath, duracao, L) {
     '-t', String(duracao)
   );
   if (audioPath) args.push('-shortest');
-  args.push('-r', '30', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'medium', '-crf', '23');
+  args.push('-r', '30', ...vencArgs());
   if (audioPath) args.push('-c:a', 'aac');
   args.push(outPath);
   await run(FFMPEG, args, { maxBuffer: 1024 * 1024 * 32 });
@@ -119,7 +126,7 @@ async function queimarLegenda(videoPath, srtPath, outPath, L) {
   const srtSafe = String(srtPath).replace(/\\/g, '/').replace(/[':\[\]]/g, (c) => '\\' + c);
   const args = ['-y', '-i', videoPath,
     '-vf', `scale=${L.W}:${L.H}:force_original_aspect_ratio=increase,crop=${L.W}:${L.H},subtitles='${srtSafe}':force_style='Fontsize=${L.fontLeg},FontName=Arial,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&HAA000000,Alignment=2,MarginV=${L.marginV}'`,
-    '-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-c:a', 'copy', outPath];
+    ...vencArgs(), '-c:a', 'copy', outPath];
   await run(FFMPEG, args, { maxBuffer: 1024 * 1024 * 32 });
 }
 
@@ -174,9 +181,41 @@ async function gerarCapa(titulo, subtitulo, convidado, outPath, L) {
   await sharp(Buffer.from(svg)).png().toFile(outPath);
 }
 
-router.post('/montar', upload.single('video'), async (req, res) => {
+// Fabrica a abertura a partir do clipe de capa enviado: preenche a tela do WxH
+// com o vídeo desfocado ao fundo e o clipe original centralizado (mantém o áudio).
+async function clipeCapa(capaPath, outPath, L) {
+  const args = [
+    '-y', '-i', capaPath,
+    '-filter_complex',
+    `[0:v]scale=${L.W}:${L.H}:force_original_aspect_ratio=increase,crop=${L.W}:${L.H},boxblur=luma_radius=24:luma_power=2[bg];[0:v]scale=-2:${Math.round(L.H * 0.92)}[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2`,
+    '-c:v', VENC, '-preset', 'veryfast', '-global_quality', '24',
+    '-c:a', 'aac', '-b:a', '128k', '-shortest', '-pix_fmt', 'yuv420p', outPath,
+  ];
+  await run(FFMPEG, args, { maxBuffer: 1024 * 1024 * 32 });
+}
+
+// Concatena clipes com o filtro concat (normaliza fps=30 e áudio 48k estéreo).
+// Diferente do concat demuxer, não estica/trunca quando os clipes têm fps distintos.
+async function concatFinal(clips, outPath, L) {
+  const inputs = [];
+  const filters = [];
+  clips.forEach((c) => inputs.push('-i', c));
+  clips.forEach((c, i) => {
+    filters.push(`[${i}:v]fps=30,settb=AVTB,scale=${L.W}:${L.H}[v${i}]`);
+    filters.push(`[${i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB[a${i}]`);
+  });
+  const joined = clips.map((c, i) => `[v${i}][a${i}]`).join('');
+  filters.push(`${joined}concat=n=${clips.length}:v=1:a=1[outv][outa]`);
+  const args = ['-y', ...inputs, '-filter_complex', filters.join(';'),
+    '-map', '[outv]', '-map', '[outa]', ...vencArgs(), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', outPath];
+  await run(FFMPEG, args, { maxBuffer: 1024 * 1024 * 128 });
+}
+
+router.post('/montar', upload.fields([{ name: 'video', maxCount: 1 }, { name: 'capa', maxCount: 1 }]), async (req, res) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mont-'));
   try {
+    const videoFile = req.files && req.files.video ? req.files.video[0] : null;
+    const capaFile = req.files && req.files.capa ? req.files.capa[0] : null;
     const { entrevistaUrl, srt, abertura, orientacao } = req.body || {};
     const L = getLayout(orientacao);
     const parsed = (() => {
@@ -191,46 +230,52 @@ router.post('/montar', upload.single('video'), async (req, res) => {
     const cta = a.cta || 'Inscreva-se e fique por dentro das próximas sessões!';
     const voz = String(req.body.voz || '').trim() || 'pf_dora';
 
-    if (!req.file && !entrevistaUrl) return res.status(400).json({ error: 'Envie o MP4 (campo video) ou entrevistaUrl.' });
+    if (!videoFile && !entrevistaUrl) return res.status(400).json({ error: 'Envie o MP4 (campo video) ou entrevistaUrl.' });
     if (!srt || !String(srt).trim()) return res.status(400).json({ error: 'Envie o SRT da entrevista.' });
 
     // 1) Entrevista: via upload ou URL
     const entrevistaMp4 = path.join(tmp, 'entrevista.mp4');
     const srtFile = saveSRT(srt);
-    if (req.file && req.file.path) {
-      fs.copyFileSync(req.file.path, entrevistaMp4);
+    if (videoFile && videoFile.path) {
+      fs.copyFileSync(videoFile.path, entrevistaMp4);
     } else {
       await downloadFile(entrevistaUrl, entrevistaMp4);
     }
     console.log('✓ entrevista pronta');
 
-    // 2) Abertura: capa + narração + clipe com zoom
-    const vozUrl = await gerarVoz(chamada, voz);
-    const vozMp3 = path.join(tmp, 'voz.mp3');
-    await downloadFile(vozUrl, vozMp3);
-    const capaPng = path.join(tmp, 'cap.png');
-    await gerarCapa(titulo, subtitulo, convidado, capaPng, L);
     const aberturaMp4 = path.join(tmp, 'abertura.mp4');
-    await clipeImagem(capaPng, vozMp3, aberturaMp4, 5, L);
-    console.log('✓ abertura (narrada)');
+    if (capaFile && capaFile.path) {
+      // 2a) Abertura = clipe de capa enviado (fundo desfocado 16:9 + áudio dele)
+      await clipeCapa(capaFile.path, aberturaMp4, L);
+      console.log('✓ abertura (clipe de capa enviado)');
+    } else {
+      // 2b) Abertura gerada: capa + narração + clipe com zoom
+      const vozUrl = await gerarVoz(chamada, voz);
+      const vozMp3 = path.join(tmp, 'voz.mp3');
+      await downloadFile(vozUrl, vozMp3);
+      const capaPng = path.join(tmp, 'cap.png');
+      await gerarCapa(titulo, subtitulo, convidado, capaPng, L);
+      await clipeImagem(capaPng, vozMp3, aberturaMp4, 5, L);
+      console.log('✓ abertura (narrada)');
+    }
 
     // 3) Queima a legenda na entrevista
     const entrevistaLeg = path.join(tmp, 'entrevista-leg.mp4');
     await queimarLegenda(entrevistaMp4, srtFile, entrevistaLeg, L);
     console.log('✓ entrevista legendada');
 
-    // 4) CTA final
+    // 4) CTA final (com trilha silenciosa p/ o concat normalizar o áudio)
     const ctaPng = path.join(tmp, 'cta.png');
     await gerarCard(cta, titulo, ctaPng, L);
+    const silencio = path.join(tmp, 'silencio.mp3');
+    await run(FFMPEG, ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', String(4), '-c:a', 'libmp3lame', '-b:a', '64k', silencio], { maxBuffer: 1024 * 1024 * 8 });
     const ctaMp4 = path.join(tmp, 'cta.mp4');
-    await clipeImagem(ctaPng, null, ctaMp4, 4, L);
+    await clipeImagem(ctaPng, silencio, ctaMp4, 4, L);
     console.log('✓ CTA');
 
-    // 5) Concatena tudo
-    const lista = path.join(tmp, 'lista.txt');
-    fs.writeFileSync(lista, `file '${aberturaMp4}'\nfile '${entrevistaLeg}'\nfile '${ctaMp4}'\n`);
+    // 5) Concatena tudo (filtro concat — normaliza fps e áudio)
     const finalMp4 = path.join(os.tmpdir(), `podcast-${Date.now()}.mp4`);
-    await run(FFMPEG, ['-y', '-f', 'concat', '-safe', '0', '-i', lista, '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', '-pix_fmt', 'yuv420p', finalMp4], { maxBuffer: 1024 * 1024 * 64 });
+    await concatFinal([aberturaMp4, entrevistaLeg, ctaMp4], finalMp4, L);
 
     res.download(finalMp4, 'podcast-professional.mp4', () => {
       setTimeout(() => { try { fs.unlinkSync(finalMp4); } catch (e) {} }, 5000);
