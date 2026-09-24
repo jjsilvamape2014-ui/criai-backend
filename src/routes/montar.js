@@ -42,8 +42,8 @@ function getLayout(orientacao) {
       yConvLabel: 830, fontConvLabel: 34, yConvNome: 910, fontConvNome: 60, lsConvLabel: '12',
       // card CTA
       yCard1: 340, fontCard1: 92, yCard2: 480, fontCard2: 58, yCardPodcast: 880, fontCardPodcast: 44, lsCardPodcast: '20',
-      // legenda
-      fontLeg: 46, marginV: 44,
+      // legenda (pequena, discreta, colada embaixo)
+      fontLeg: 34, marginV: 60,
       zoom: 1.05,
     };
   }
@@ -55,7 +55,7 @@ function getLayout(orientacao) {
     yLinha: 1000, ySub: 1120, fontSub: 52,
     yConvLabel: 1380, fontConvLabel: 40, yConvNome: 1470, fontConvNome: 64, lsConvLabel: '10',
     yCard1: 880, fontCard1: 72, yCard2: 1020, fontCard2: 48, yCardPodcast: 1500, fontCardPodcast: 40, lsCardPodcast: '12',
-    fontLeg: 22, marginV: 50,
+    fontLeg: 34, marginV: 60,
     zoom: 1.05,
   };
 }
@@ -125,16 +125,38 @@ async function clipeImagem(imagePath, audioPath, outPath, duracao, L) {
 async function queimarLegenda(videoPath, srtPath, outPath, L) {
   const srtSafe = String(srtPath).replace(/\\/g, '/').replace(/[':\[\]]/g, (c) => '\\' + c);
   const args = ['-y', '-i', videoPath,
-    '-vf', `scale=${L.W}:${L.H}:force_original_aspect_ratio=increase,crop=${L.W}:${L.H},subtitles='${srtSafe}':force_style='Fontsize=${L.fontLeg},FontName=Arial,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&HAA000000,Alignment=2,MarginV=${L.marginV}'`,
+    '-vf', `scale=${L.W}:${L.H}:force_original_aspect_ratio=increase,crop=${L.W}:${L.H},subtitles='${srtSafe}':force_style='PlayResX=${L.W},PlayResY=${L.H},Fontsize=${L.fontLeg},FontName=Arial,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&HAA000000,Alignment=2,MarginV=${L.marginV}'`,
     ...vencArgs(), '-c:a', 'copy', outPath];
   await run(FFMPEG, args, { maxBuffer: 1024 * 1024 * 32 });
+}
+
+// Quebra texto em linhas por largura aproximada (nunca corta palavra no meio).
+function wrapText(txt, maxChars) {
+  const palavras = String(txt || '').split(/\s+/).filter(Boolean);
+  const linhas = [];
+  let atual = '';
+  for (const p of palavras) {
+    if (!atual) atual = p;
+    else if ((atual + ' ' + p).length <= maxChars) atual = atual + ' ' + p;
+    else { linhas.push(atual); atual = p; }
+  }
+  if (atual) linhas.push(atual);
+  return linhas.slice(0, 4); // máx 4 linhas
 }
 
 // Card final (CTA): WxH via SVG/sharp — sem depender de fontconfig/ffmpeg drawtext.
 async function gerarCard(linha1, linha2, outPath, L) {
   const sharp = require('sharp');
-  const t1 = String(linha1 || '').slice(0, 44) || 'A Palavra em Nossa Vida';
-  const t2 = String(linha2 || '').slice(0, 64);
+  const maxChars = Math.floor(L.W / (L.fontCard1 * 0.58));
+  const l1 = wrapText(String(linha1 || ''), maxChars) || ['A Palavra em Nossa Vida'];
+  const l2 = wrapText(String(linha2 || ''), maxChars);
+  const n1 = l1.length;
+  const n2 = l2.length;
+  const linhaH = Math.round(L.fontCard1 * 1.25);
+  const yIni1 = Math.round(L.yCard1 - ((n1 - 1) * linhaH) / 2);
+  const yIni2 = Math.round(L.yCard2 - ((n2 - 1) * (linhaH * 0.62)) / 2);
+  const linhas1 = l1.map((l, i) => `<text x="${L.W / 2}" y="${yIni1 + i * linhaH}" font-size="${L.fontCard1}" font-weight="800" fill="#F5EFE6" text-anchor="middle" font-family="DejaVu Sans" xml:space="preserve">${l}</text>`).join('');
+  const linhas2 = l2.map((l, i) => `<text x="${L.W / 2}" y="${yIni2 + i * Math.round(linhaH * 0.62)}" font-size="${L.fontCard2}" fill="#C9A98F" text-anchor="middle" font-family="DejaVu Sans" xml:space="preserve">${l}</text>`).join('');
   const svg = `<svg width="${L.W}" height="${L.H}" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
@@ -143,8 +165,8 @@ async function gerarCard(linha1, linha2, outPath, L) {
     </defs>
     <rect width="${L.W}" height="${L.H}" fill="url(#bg)"/>
     <rect y="0" width="${L.W}" height="${L.barra}" fill="#E8552D"/>
-    <text x="${L.W / 2}" y="${L.yCard1}" font-size="${L.fontCard1}" font-weight="800" fill="#F5EFE6" text-anchor="middle" font-family="DejaVu Sans">${t1}</text>
-    <text x="${L.W / 2}" y="${L.yCard2}" font-size="${L.fontCard2}" fill="#C9A98F" text-anchor="middle" font-family="DejaVu Sans">${t2}</text>
+    ${linhas1}
+    ${linhas2}
     <text x="${L.W / 2}" y="${L.yCardPodcast}" font-size="${L.fontCardPodcast}" font-weight="700" fill="#E8552D" text-anchor="middle" letter-spacing="${L.lsCardPodcast}" font-family="DejaVu Sans">P O D C A S T</text>
   </svg>`;
   await sharp(Buffer.from(svg)).png().toFile(outPath);
@@ -181,14 +203,13 @@ async function gerarCapa(titulo, subtitulo, convidado, outPath, L) {
   await sharp(Buffer.from(svg)).png().toFile(outPath);
 }
 
-// Fabrica a abertura a partir do clipe de capa enviado: preenche a tela do WxH
-// com o vídeo desfocado ao fundo e o clipe original centralizado (mantém o áudio).
+// Fabrica a abertura a partir do clipe de capa enviado: preenche toda a tela WxH
+// (corte leve centrado, sem fundo desfocado) e mantém o áudio original.
 async function clipeCapa(capaPath, outPath, L) {
   const args = [
     '-y', '-i', capaPath,
-    '-filter_complex',
-    `[0:v]scale=${L.W}:${L.H}:force_original_aspect_ratio=increase,crop=${L.W}:${L.H},boxblur=luma_radius=24:luma_power=2[bg];[0:v]scale=-2:${Math.round(L.H * 0.92)}[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2`,
-    '-c:v', VENC, '-preset', 'veryfast', '-global_quality', '24',
+    '-vf', `scale=${L.W}:${L.H}:force_original_aspect_ratio=increase,crop=${L.W}:${L.H}`,
+    ...vencArgs(),
     '-c:a', 'aac', '-b:a', '128k', '-shortest', '-pix_fmt', 'yuv420p', outPath,
   ];
   await run(FFMPEG, args, { maxBuffer: 1024 * 1024 * 32 });
