@@ -324,6 +324,66 @@ async function startAnimateJob({ user, session, message, motion, res }) {
   return res.json({ success: true, sessionId: session.id, reply, jobId, type: 'video_job', imageUrl: null, videoUrl: null, memory: session.memory, history: session.history.slice(-20) });
 }
 
+// 🗣️ PERSONAGEM FALANDO: a imagem anexada fala exatamente a frase do cliente.
+// Usa lipsync (se aceitar o personagem) ou animação + voz. Custa 1 crédito de vídeo.
+async function startSpeakJob({ user, session, message, speech, voice, res }) {
+  const cost = user.plan === 'PREMIUM' ? 0 : adCost('motion');
+  if (user.plan !== 'PREMIUM' && (user.creditsVideos || 0) + (user.creditsPurchased || 0) < cost) {
+    return res.status(403).json({ error: 'Créditos de vídeo esgotados. Assine o plano para fazer o personagem falar.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+  }
+  const image = session.memory.refImages[session.memory.refImages.length - 1];
+  const text = String(speech || '').replace(/^\s*(faz|faça|faca|deixa|coloca|cria)[^:]{0,80}:\s*/i, '').trim().slice(0, 400) || String(message).slice(0, 400);
+  const charge = await chargeVideoCredits(user, cost);
+  let generation;
+  try {
+    generation = await prisma.generation.create({
+      data: { userId: user.id, type: 'VIDEO', prompt: `${AD_TAG} p=${charge.p} v=${charge.v}] [falar] ` + text.slice(0, 180), status: 'PROCESSING', cost: Math.max(1, cost) }
+    });
+  } catch (e) {
+    await refundVideoCredits(user.id, charge).catch(() => {});
+    throw e;
+  }
+  const jobId = generation.id;
+  const reply = `🗣️ Entendi: o personagem da imagem vai falar “${text}”. Leva de 2 a 5 minutos — pode acompanhar aqui.`;
+  setStep(jobId, { step: 'Gravando a fala…' });
+  cerebro.pushHistory(session, 'user', message, null);
+  cerebro.pushHistory(session, 'assistant', reply, null);
+
+  (async () => {
+    try {
+      const A = adVideo._internals;
+      const { speakable } = require('../speech');
+      const pron = (session.memory.project && session.memory.project.pronunciations) || {};
+      const out = await require('../characterSpeak').buildCharacterSpeech({
+        image, speech: text, voice,
+        deps: {
+          tts: A.generateNarration, upload: A.uploadToFal, falQueue: A.falQueue, saveMedia: A.saveMedia, mediaDuration: A.mediaDuration,
+          speakable: (t) => speakable(t, { pronunciations: pron }),
+          animate: (img, prompt) => generateRoutes.generateVideoFromProviders(img, prompt, 'custom', {})
+        },
+        onStatus: (t) => setStep(jobId, { step: t })
+      });
+      const done = `Pronto! O personagem falando (${Math.round(out.duration)} segundos).` +
+        (out.method === 'lipsync' ? '' : '\n\nObs.: a boca do personagem se mexe, mas não acompanha cada sílaba (personagem de desenho).') +
+        '\n\nQuer mudar a fala, a voz (masculina/feminina) ou a pronúncia de algum nome? É só pedir.';
+      cerebro.pushHistory(session, 'assistant', done, null);
+      session.history[session.history.length - 1].videoUrl = out.videoUrl;
+      await prisma.generation.update({ where: { id: jobId }, data: { status: 'COMPLETED', imageUrl: out.videoUrl } });
+      const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });
+      setStep(jobId, { reply: done, credits, debug: { method: out.method, speech: text } });
+    } catch (e) {
+      console.error('Cérebro: personagem falando falhou:', e.message);
+      setStep(jobId, { error: 'Não consegui fazer o personagem falar agora. Seu crédito foi devolvido — tente novamente.' });
+      try {
+        const upd = await prisma.generation.updateMany({ where: { id: jobId, status: 'PROCESSING' }, data: { status: 'FAILED' } });
+        if (upd.count) await refundVideoCredits(user.id, charge);
+      } catch (e2) {}
+    }
+  })();
+
+  return res.json({ success: true, sessionId: session.id, reply, jobId, type: 'video_job', imageUrl: null, videoUrl: null, memory: session.memory, history: session.history.slice(-20) });
+}
+
 // Limite por usuário (chats são baratos, mas a geração de imagem consome)
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -504,6 +564,36 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     //    Antes, "vídeo de anúncio com voz" caía no gerador de imagem (que desenhava a
     //    palavra "voz"). Se o Cérebro perguntou algo antes, a intenção original fica
     //    guardada em memory.pendingAd e a resposta do usuário completa o briefing.
+    // 🎛️ OPÇÃO ESCOLHIDA NA TELA: o cliente disse o que quer — nada de adivinhar.
+    const MODES = ['anuncio', 'apresentador', 'animar', 'falar'];
+    const mode = MODES.includes(req.body && req.body.mode) ? req.body.mode : null;
+    if (mode) {
+      session.memory.pendingAd = null;
+      const f = (req.body && req.body.fields) || {};
+      const clean = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
+      const empresa = clean(f.empresa, 60);
+      const whatsapp = clean(f.whatsapp, 30);
+      const hasImg = (session.memory.refImages || []).length > 0;
+      const quick = (text) => {
+        cerebro.pushHistory(session, 'user', message, null);
+        cerebro.pushHistory(session, 'assistant', text, null);
+        return res.json({ success: true, sessionId: session.id, reply: text, imageUrl: null, videoUrl: null, type: 'chat', memory: session.memory, history: session.history.slice(-20) });
+      };
+      if (empresa) switchBrand(session, empresa, { keepRefs: refsFromClient });
+      if (mode === 'animar' || mode === 'falar') {
+        if (!hasImg) return quick('Anexe a imagem (mascote, personagem, logo ou produto) para eu ' + (mode === 'falar' ? 'fazer ela falar.' : 'animar.'));
+        if (mode === 'falar') return startSpeakJob({ user, session, message, speech: message, voice: f.voz === 'feminina' ? 'pf_dora' : 'pm_alex', res });
+        const current = new Set(session.memory.refImages || []);
+        const caps = (session.memory.refDescriptions || []).filter((d) => current.has(d.src)).map((d) => d.caption).filter(Boolean);
+        return startAnimateJob({ user, session, message, motion: await aiRouter.motionPrompt(message, caps), res });
+      }
+      // anúncio: o pedido é montado com os campos; o estilo é o escolhido na tela
+      const neutral = (t) => String(t).replace(/\bapresentand(o|a)\b/gi, 'mostrando').replace(/\bapresente\b/gi, 'mostre').replace(/\b(apresentador(a)?|avatar|influencer)\b/gi, '');
+      let request = `Vídeo de anúncio${empresa ? ` da ${empresa}` : ''}: ${mode === 'apresentador' ? message : neutral(message)}${whatsapp ? `. WhatsApp ${whatsapp}` : ''}`;
+      if (mode === 'apresentador') request += f.voz === 'masculina' ? ' (com apresentador homem)' : ' (com apresentadora)';
+      return startAdVideoJob({ user, session, request, displayMessage: message, res, briefed: !!(empresa || whatsapp) });
+    }
+
     if (session.memory.pendingAd) {
       const original = session.memory.pendingAd.request;
       session.memory.pendingAd = null;
@@ -539,6 +629,10 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
           .replace(/pessoa (real )?(falando|mostrando|apresentando)/gi, '');
       }
       if (route.style === 'photo' && !/(foto|realista)/i.test(message)) route.style = '';
+      if (route.action === 'speak') {
+        if (!(session.memory.refImages || []).length) return reply('Para o personagem falar, anexe a imagem dele e escreva a fala. Ex.: "faz ele falar: bom dia, eu sou o Delta".');
+        return startSpeakJob({ user, session, message, speech: route.speech || message, voice: route.gender === 'female' ? 'pf_dora' : 'pm_alex', res });
+      }
       if (route.action === 'animate') {
         if (!(session.memory.refImages || []).length) return reply('Para eu animar, anexe a imagem (o mascote, a logo ou o produto) e me diga o movimento. Ex.: "deixa a barriga do mascote girando como uma betoneira".');
         return startAnimateJob({ user, session, message, motion: route.motion, res });

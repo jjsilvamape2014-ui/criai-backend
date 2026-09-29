@@ -68,6 +68,7 @@ function directorPrompt() {
     '- brand: nome da empresa (do pedido, da conversa ou lido na logo). color: cor da marca (se o cliente disse ou se aparece na logo), senão uma que combine com o ramo.',
     '- NUNCA invente preço, telefone, endereço, prêmio ou estatística que não foram informados, nem detalhes específicos do produto (ex.: "forno a lenha", "peças importadas", "suporte 24h", "garantia de 1 ano"), nem ofertas ou promessas que o cliente não fez (ex.: "avaliação gratuita", "orçamento grátis", "frete grátis", "economia na conta de luz"). Sem a informação, use benefícios gerais e verdadeiros para qualquer negócio do ramo.',
     '- NUNCA escreva marcadores de modelo como [Nome da empresa], [Chame a atenção] ou (XX) XXXX-XXXX: o texto vai direto para a tela e para a voz. Se não souber o nome ou o contato, escreva a frase sem eles.',
+    '- Imagem de MASCOTE/personagem com o nome da empresa é o mascote DA EMPRESA (ele apresenta a marca), não um brinquedo à venda. Nunca transforme o mascote em produto infantil.',
     '- Marcas de TERCEIROS (Google, Instagram, iFood...) podem ser citadas no texto, mas nunca como logo ou como se o anúncio fosse delas.',
     '- warnings: 0 a 2 avisos curtos, SÓ sobre informação que faltou e que o comprador vai perguntar (ex.: preço, horário, bairros atendidos, o que o preço inclui). Nada sobre direitos de imagem, logos, link do WhatsApp, DDD ou o que o cliente deveria ter feito. Lista vazia se nada importante faltou.'
   ].join('\n');
