@@ -44,6 +44,7 @@ function isAdVideoRequest(message) {
   const m = String(message || '');
   if (!VIDEO_WORDS.test(m) && !VOICE_WORDS.test(m)) return false;
   // "vídeo com voz" OU "vídeo de anúncio/comercial" → pipeline completo
+  if (VIDEO_WORDS.test(m) && require('./presenterAd').isPresenterRequest(m)) return true;
   return (VIDEO_WORDS.test(m) && (VOICE_WORDS.test(m) || AD_WORDS.test(m))) ||
     /(an[úu]ncio|comercial|propaganda)\s+(falad|narrad|com voz)/i.test(m);
 }
@@ -262,7 +263,7 @@ function accentFromProject(project) {
 // Clipe de uma cena, com a duração exata que a narração pede.
 //  - se veio um vídeo (Kling): ajusta a velocidade para caber (sem cortar o movimento)
 //  - se veio só imagem: zoom lento (Ken Burns)
-async function sceneClip({ mediaPath, isVideo, overlayPath, duration, fmt, outPath, index }) {
+async function sceneClip({ mediaPath, isVideo, overlayPath, duration, fmt, outPath, index, keepSpeed = false }) {
   const { W, H } = fmt;
   const fps = 30;
   const frames = Math.round(duration * fps);
@@ -270,7 +271,8 @@ async function sceneClip({ mediaPath, isVideo, overlayPath, duration, fmt, outPa
   const inputs = [];
   if (isVideo) {
     const srcDur = (await mediaDuration(mediaPath)) || 5;
-    const factor = Math.max(0.5, Math.min(2.5, duration / srcDur));
+    // keepSpeed: vídeo com fala sincronizada (lipsync) não pode mudar de velocidade
+    const factor = keepSpeed ? 1 : Math.max(0.5, Math.min(2.5, duration / srcDur));
     inputs.push('-i', mediaPath);
     base = `[0:v]setpts=${factor.toFixed(4)}*PTS,fps=${fps},scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},tpad=stop_mode=clone:stop_duration=2,trim=duration=${duration.toFixed(3)},setsar=1[bg]`;
   } else {
@@ -438,6 +440,7 @@ async function buildAdVideo({ request, project, productImage, refCaptions, deps,
 // Padrão: MOTION GRAPHICS (texto sempre certo, logo fiel, barato).
 // "com fotos", "realista", "cenas reais" → pipeline de fotos por IA (acima).
 function pickStyle(message) {
+  if (require('./presenterAd').isPresenterRequest(message)) return 'presenter';
   return /(com fotos?|fotos? reais|realista|cenas? reais|cinematogr|filmad|imagens reais)/i.test(String(message || '')) ? 'photo' : 'motion';
 }
 
@@ -464,7 +467,26 @@ async function chooseAssets(images, message) {
 }
 
 async function buildAd({ request, project, images, refCaptions, deps, onStatus }) {
-  if (pickStyle(request) === 'photo') {
+  const style = pickStyle(request);
+  if (style === 'presenter') {
+    const { buildPresenterAd, pickGender } = require('./presenterAd');
+    const { logo, product } = await chooseAssets(images, request);
+    const out = await buildPresenterAd({
+      request, project, logo, product, refCaptions,
+      // a voz acompanha o gênero do apresentador
+      voice: pickGender(request) === 'man' ? (process.env.AD_VOICE_MALE || 'pm_alex') : (process.env.AD_VOICE_FEMALE || 'pf_dora'),
+      deps: { ...deps, tts: generateNarration, upload: uploadToFal, falQueue, saveMedia, mediaDuration, sceneClip },
+      onStatus
+    });
+    return {
+      videoUrl: out.videoUrl,
+      style: 'presenter',
+      format: '9:16',
+      narration: out.plan.scenes.map((s) => s.voice).join(' '),
+      scenes: out.plan.scenes.map((s) => ({ caption: s.caption || s.voice }))
+    };
+  }
+  if (style === 'photo') {
     const productImage = (images || []).find((u) => typeof u === 'string' && !/^data:video|\.mp4(\?|$)/i.test(u)) || null;
     const out = await buildAdVideo({ request, project, productImage, refCaptions, deps, onStatus });
     return { ...out, style: 'photo' };
@@ -505,5 +527,5 @@ module.exports = {
   planAd,
   buildAdVideo,
   // expostos para teste da montagem sem gastar API
-  _internals: { captionOverlay, sceneClip, assemble, accentFromProject, mediaDuration }
+  _internals: { captionOverlay, sceneClip, assemble, accentFromProject, mediaDuration, falQueue, generateNarration, uploadToFal, saveMedia, pickVoice }
 };
