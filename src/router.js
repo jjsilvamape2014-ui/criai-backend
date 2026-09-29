@@ -12,16 +12,17 @@
 // Sem chave de LLM ou em erro → null, e o Cérebro usa as regras antigas.
 const { callLLM } = require('./llm');
 
-const ACTIONS = ['video', 'adjust_video', 'image', 'answer', 'ask'];
+const ACTIONS = ['video', 'adjust_video', 'animate', 'image', 'answer', 'ask'];
 const STYLES = ['motion', 'presenter', 'photo'];
 
 const SYSTEM = [
   'Você é o cérebro de um estúdio de criação com IA para pequenos negócios no Brasil (anúncios, vídeos, artes, logos).',
   'Muitos clientes NÃO sabem pedir: escrevem pouco, de forma vaga ou fazem perguntas. Seu trabalho é ENTENDER a intenção real usando todo o contexto e decidir a próxima ação. Deduza o máximo; pergunte só o essencial.',
   'Responda SOMENTE um JSON válido:',
-  '{"action":"video|adjust_video|image|answer|ask","style":"motion|presenter|photo|","request":"...","brand":"...","reply":"...","question":"..."}',
+  '{"action":"video|adjust_video|animate|image|answer|ask","style":"motion|presenter|photo|","request":"...","motion":"...","brand":"...","reply":"...","question":"..."}',
   'Como decidir action:',
   '- video: quer um vídeo/anúncio animado/comercial/reels, OU "apresentação/animação/vinheta/abertura da logo ou da marca" (isso é vídeo, não imagem).',
+  '- animate: quer dar MOVIMENTO à própria imagem enviada (mascote, personagem, logo, produto), sem pedir anúncio, narração ou roteiro. Ex.: "deixa a barriga do mascote girando como uma betoneira", "faz o boneco acenar", "a logo girando", "faz ele piscar". Tem prioridade sobre video quando a mensagem descreve um movimento de algo DA IMAGEM.',
   '- adjust_video: já existe um vídeo recente e a mensagem pede mudar algo NELE (falar o nome, trocar cor, voz, telefone, texto, duração, formato).',
   '- image: quer criar ou editar uma IMAGEM (post, banner, flyer, arte, logo nova, trocar fundo, remover algo da foto).',
   '- answer: é pergunta, dúvida, comentário ou reclamação ("você não consegue ler a imagem?", "ficou bom", "como baixo?"). NUNCA transforme pergunta em edição.',
@@ -30,6 +31,7 @@ const SYSTEM = [
   '- NUNCA use ask só porque falta o nome da marca, o telefone ou o preço: crie assim mesmo (o estúdio avisa no final o que faltou). ask é só quando não dá para saber NEM o que anunciar/criar.',
   '- ask: falta um fato essencial que não está no pedido, nas imagens nem na conversa. Raramente necessário.',
   'style (só para video/adjust_video): presenter se pedir pessoa/apresentador(a)/alguém falando; photo se pedir fotos/realista; senão motion.',
+  'motion (só para animate): em INGLÊS, descrição precisa do movimento para um modelo image-to-video: O QUE se move, COMO se move (direção, velocidade, repetição) e que TODO o resto continua igual (mesmo personagem, cores, letras, pose, fundo, câmera parada). Use o que a visão leu da imagem para nomear as partes. Ex.: "The round white belly of the blue-and-red robot mascot spins continuously around its vertical axis like a concrete mixer drum, smooth steady rotation, the letters on the belly rotate with it. The rest of the mascot stays exactly the same: same pose, thumbs up, colors and helmet. Static camera, plain background unchanged."',
   'request: o pedido COMPLETO e claro em português, já com tudo que você deduziu do contexto (marca, ramo, serviços, telefone, cores lidos das imagens ou da conversa). Ex.: "Vídeo de apresentação da marca SOL Provedor de Internet, provedor de internet, cores azul e amarelo, Instagram @sol.provedor". Não invente preço, telefone nem promoção.',
   'brand: nome da empresa se aparecer no pedido, na conversa ou no TEXTO DAS IMAGENS (ex.: logo com "SOL PROVEDOR DE INTERNET" → "SOL Provedor de Internet"). Vazio se não souber.',
   'reply (só para answer): resposta curta, simpática e útil em português. Se a pessoa perguntou se você lê imagens, diga o que você leu nelas e ofereça o próximo passo (ex.: "Li sim: é a logo da SOL Provedor de Internet. Quer um vídeo de apresentação dela?").',
@@ -76,7 +78,8 @@ async function routeMessage({ message, session }) {
       request: str(r.request, 600),
       brand: require('./brandInfo').isGenericBrand(r.brand) ? '' : str(r.brand, 50),
       reply: str(r.reply, 600),
-      question: str(r.question, 200)
+      question: str(r.question, 200),
+      motion: str(r.motion, 700)
     };
   } catch (e) {
     console.error('router: falhou, usando regras:', e.message);

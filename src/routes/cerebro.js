@@ -261,6 +261,69 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
   });
 }
 
+// 🌀 ANIMAR A IMAGEM: o cliente quer que algo DA IMAGEM se mexa ("a barriga do mascote
+// girando como uma betoneira"). Não é anúncio: é image-to-video (Kling) da própria imagem,
+// com um prompt de movimento preciso escrito pela IA. Custa 1 crédito de vídeo.
+async function startAnimateJob({ user, session, message, motion, res }) {
+  const cost = user.plan === 'PREMIUM' ? 0 : adCost('motion');
+  if (user.plan !== 'PREMIUM' && (user.creditsVideos || 0) + (user.creditsPurchased || 0) < cost) {
+    return res.status(403).json({ error: 'Créditos de vídeo esgotados. Assine o plano para animar imagens.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+  }
+  const image = (session.memory.refImages || [])[session.memory.refImages.length - 1];
+  const prompt = [
+    motion || `Animate exactly what the user asked: ${message}.`,
+    'Keep the character/object identical to the image: same design, colors, text and proportions. Only the described part moves. Static camera. No new objects, no text added.'
+  ].join(' ');
+  const charge = await chargeVideoCredits(user, cost);
+  let generation;
+  try {
+    generation = await prisma.generation.create({
+      data: { userId: user.id, type: 'VIDEO', prompt: `${AD_TAG} p=${charge.p} v=${charge.v}] [animar] ` + String(message).slice(0, 180), status: 'PROCESSING', cost: Math.max(1, cost) }
+    });
+  } catch (e) {
+    await refundVideoCredits(user.id, charge).catch(() => {});
+    throw e;
+  }
+  const jobId = generation.id;
+  const reply = '🌀 Entendi: vou animar a sua imagem com esse movimento, sem mudar o resto. Leva de 1 a 3 minutos — pode acompanhar aqui.';
+  setStep(jobId, { step: 'Animando a sua imagem…' });
+  cerebro.pushHistory(session, 'user', message, null);
+  cerebro.pushHistory(session, 'assistant', reply, null);
+
+  (async () => {
+    try {
+      const A = adVideo._internals;
+      let src = image;
+      if (String(src).startsWith('data:')) {
+        const compressed = await generateRoutes.compressReferenceImage(src, 1280, 90).catch(() => null);
+        const data = compressed || src;
+        const buf = Buffer.from(String(data).split(',')[1] || '', 'base64');
+        const mime = String(data).slice(5, String(data).indexOf(';')) || 'image/png';
+        src = await A.uploadToFal(buf, mime, `animar-${Date.now()}.${mime.includes('png') ? 'png' : 'jpg'}`).catch(() => data);
+      }
+      const videoUrl = await generateRoutes.generateVideoFromProviders(src, prompt, 'custom', {});
+      const done = 'Pronto! Sua imagem animada está aqui (5 segundos).\n\nSe o movimento não saiu como você imaginou, me diga o que mudar (ex.: "gira mais devagar", "só a barriga, os braços parados").';
+      cerebro.pushHistory(session, 'assistant', done, null);
+      session.history[session.history.length - 1].videoUrl = videoUrl;
+      await prisma.generation.update({ where: { id: jobId }, data: { status: 'COMPLETED', imageUrl: videoUrl } });
+      const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });
+      setStep(jobId, { reply: done, credits, debug: { motion: prompt } });
+    } catch (e) {
+      console.error('Cérebro: animar imagem falhou:', e.message);
+      const outOfBalance = /exhausted balance|user is locked|top up your balance|HTTP 402|status code 403/i.test(String(e.message || ''));
+      setStep(jobId, { error: outOfBalance
+        ? 'Nosso estúdio de vídeo está em manutenção por alguns instantes. Seu crédito foi devolvido — tente de novo em alguns minutos.'
+        : 'Não consegui animar a imagem agora. Seu crédito foi devolvido — tente novamente.' });
+      try {
+        const upd = await prisma.generation.updateMany({ where: { id: jobId, status: 'PROCESSING' }, data: { status: 'FAILED' } });
+        if (upd.count) await refundVideoCredits(user.id, charge);
+      } catch (e2) {}
+    }
+  })();
+
+  return res.json({ success: true, sessionId: session.id, reply, jobId, type: 'video_job', imageUrl: null, videoUrl: null, memory: session.memory, history: session.history.slice(-20) });
+}
+
 // Limite por usuário (chats são baratos, mas a geração de imagem consome)
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -476,6 +539,10 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
           .replace(/pessoa (real )?(falando|mostrando|apresentando)/gi, '');
       }
       if (route.style === 'photo' && !/(foto|realista)/i.test(message)) route.style = '';
+      if (route.action === 'animate') {
+        if (!(session.memory.refImages || []).length) return reply('Para eu animar, anexe a imagem (o mascote, a logo ou o produto) e me diga o movimento. Ex.: "deixa a barriga do mascote girando como uma betoneira".');
+        return startAnimateJob({ user, session, message, motion: route.motion, res });
+      }
       if (route.action === 'adjust_video' && session.memory.lastAdRequest) {
         const request = `${aiRouter.requestWithStyle(session.memory.lastAdRequest, route.style)}. Ajuste pedido pelo cliente no vídeo anterior: ${message}`;
         return startAdVideoJob({ user, session, request, displayMessage: message, res, adjusting: true });
