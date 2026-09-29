@@ -92,7 +92,9 @@ function sanitizeStoryboard(raw, project, hasProduct) {
     if (s.type === 'product' || s.type === 'statement') return { ...base, title: str(s.title, 80), subtitle: str(s.subtitle, 140), icon: safeIcon(s.icon, 'star') };
     if (s.type === 'steps') return { ...base, title: str(s.title || 'Como funciona', 30), items: (s.items || []).slice(0, 4).map((it) => ({ icon: safeIcon(it.icon, 'check'), title: str(it.title, 40), desc: str(it.desc, 90) })).filter((it) => it.title) };
     if (s.type === 'benefits') return { ...base, title: str(s.title || 'Vantagens', 40), items: (s.items || []).slice(0, 4).map((it) => ({ icon: safeIcon(it.icon, 'check'), title: str(it.title, 40) })).filter((it) => it.title) };
-    return { ...base, slogan1: str(s.slogan1, 50), slogan2: str(s.slogan2, 50), phone: str(s.phone, 24), label: str(s.label, 40), footer: str(s.footer, 90) };
+    // telefone na tela: só dígitos (a IA às vezes escreve por extenso, que é para a VOZ)
+    const phone = /\d{4}/.test(String(s.phone || '')) ? str(s.phone, 24) : '';
+    return { ...base, slogan1: str(s.slogan1, 50), slogan2: str(s.slogan2, 50), phone, label: str(s.label, 40), footer: str(s.footer, 90) };
   }).filter((s) => {
     if (s.type === 'steps') return s.items.length >= 2;
     if (s.type === 'benefits') return s.items.length >= 3;
@@ -134,6 +136,12 @@ function ensureBrand(sb, brand) {
   return sb;
 }
 
+// "(91) 99987-9932" / "91 999879932" → "(91) 99987-9932"
+function phoneFrom(text) {
+  const m = String(text || '').match(/\(?\b(\d{2})\)?[\s-]*(9?\d{4})[-\s.]?(\d{4})\b/);
+  return m ? `(${m[1]}) ${m[2]}-${m[3]}` : '';
+}
+
 async function planStudio(request, project, refCaptions, hasProduct) {
   const p = project || {};
   const facts = (p.facts || []).map((f) => `${f.key}: ${f.value}`).join('; ');
@@ -156,6 +164,11 @@ async function planStudio(request, project, refCaptions, hasProduct) {
     console.error('studio: roteiro via LLM falhou, usando padrão:', err.message);
   }
   if (!sb) sb = sanitizeStoryboard(fallbackStoryboard(request, p, hasProduct), p, hasProduct);
+  // o telefone da tela final vem do que o CLIENTE escreveu (nunca inventado pela IA)
+  const phoneTyped = phoneFrom(`${request} ${(p.facts || []).map((f) => f.value).join(' ')}`);
+  const cta = sb.scenes[sb.scenes.length - 1];
+  if (phoneTyped) cta.phone = phoneTyped;
+  else if (cta.phone && !phoneFrom(cta.phone)) cta.phone = '';
   return ensureBrand(sb, p.brand || sb.brand);
 }
 
@@ -324,15 +337,15 @@ function sceneCtaBlock(t, d, S, sc) {
 }
 
 const RENDER = { hook: sceneHookBlock, product: sceneProduct, steps: sceneSteps, benefits: sceneBenefits, statement: sceneStatementBlock, cta: sceneCtaBlock };
-const MIN = { hook: 3.5, product: 4, statement: 3.5, cta: 5 };
+const MIN = { hook: 2.6, product: 3, statement: 2.6, cta: 4 }; // mínimos curtos: quem manda é a fala
 
 function build(sb, S, durations) {
   const timeline = [];
   let start = 0;
   sb.scenes.forEach((sc, i) => {
     let min = MIN[sc.type] || 3.5;
-    if (sc.type === 'steps') min = 1.2 + sc.items.length * 1.9;
-    if (sc.type === 'benefits') min = 1.4 + sc.items.length * 0.9;
+    if (sc.type === 'steps') min = 0.9 + sc.items.length * 1.4;
+    if (sc.type === 'benefits') min = 1.0 + sc.items.length * 0.6;
     const dur = Math.max(min, Number(durations[i]) || 0);
     timeline.push({ sc, start, dur });
     start += dur;
@@ -351,6 +364,19 @@ function build(sb, S, durations) {
     return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${body}</svg>`;
   }
   return { duration, timeline, frameSvg };
+}
+
+// Corta o silêncio do começo e do fim da fala (a voz grátis deixa ~0,5–1 s no fim,
+// o que fazia a cena ficar parada depois que a voz acabava).
+async function trimSilence(file) {
+  const { execFile } = require('child_process');
+  const FF = process.env.FFMPEG_BIN || 'ffmpeg';
+  const out = file.replace(/\.mp3$/, '-t.mp3');
+  const filter = 'silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.12,areverse';
+  await new Promise((resolve) => execFile(FF, ['-y', '-v', 'error', '-i', file, '-af', filter, out], (err) => {
+    try { if (!err && fs.statSync(out).size > 1000) fs.renameSync(out, file); } catch (e) {}
+    resolve();
+  }));
 }
 
 // Foto do produto recortada (fundo removido), se possível; senão, a foto em cartão
@@ -414,7 +440,8 @@ async function buildStudioAd({ request, project, logo, product, refCaptions, voi
       }));
       for (let i = 0; i < files.length; i++) {
         if (files[i]) {
-          durations[i] = (await mediaDuration(files[i])) + 0.7;
+          await trimSilence(files[i]);
+          durations[i] = (await mediaDuration(files[i])) + 0.35; // fala + respiro curto
           voiceClips.push({ i, file: files[i] });
         }
       }
@@ -427,7 +454,7 @@ async function buildStudioAd({ request, project, logo, product, refCaptions, voi
     let audioPath = null;
     if (voiceClips.length) {
       audioPath = path.join(tmp, 'voz.mp3');
-      await mixVoices(voiceClips.map((c) => ({ file: c.file, at: video.timeline[c.i].start + 0.3 })), audioPath);
+      await mixVoices(voiceClips.map((c) => ({ file: c.file, at: video.timeline[c.i].start + 0.15 })), audioPath);
     }
 
     status('Animando as cenas…');
@@ -456,4 +483,4 @@ async function buildStudioAd({ request, project, logo, product, refCaptions, voi
   }
 }
 
-module.exports = { buildStudioAd, planStudio, sanitizeStoryboard, _internals: { build, fallbackStoryboard, ensureBrand, RENDER } };
+module.exports = { buildStudioAd, planStudio, sanitizeStoryboard, _internals: { build, fallbackStoryboard, ensureBrand, RENDER, phoneFrom } };
