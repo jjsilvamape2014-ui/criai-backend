@@ -288,6 +288,50 @@ async function prepareForVideo(src) {
     .jpeg({ quality: 92 }).toBuffer();
 }
 
+// 🔤 LOGO: sem perguntas desnecessárias (nome e cor vêm do pedido) e com o nome sempre certo.
+async function makeLogo({ user, session, message, display, res }) {
+  const LM = require('../logoMaker');
+  const name = LM.extractName(message);
+  const quick = (text, extra = {}) => {
+    cerebro.pushHistory(session, 'user', display || message, null);
+    cerebro.pushHistory(session, 'assistant', text, null);
+    return res.json({ success: true, sessionId: session.id, reply: text, imageUrl: null, videoUrl: null, type: 'chat', memory: session.memory, history: session.history.slice(-20), ...extra });
+  };
+  if (!name) {
+    session.memory.pendingLogo = { message, at: Date.now() };
+    return quick('Qual nome vai escrito na logo? (exatamente como deve aparecer, com acentos)', { ask: ['Qual nome vai escrito na logo?'], needInfo: true });
+  }
+  if (user.plan !== 'PREMIUM' && (user.creditsImages || 0) + (user.creditsPurchased || 0) <= 0) {
+    return res.status(403).json({ error: 'Seus créditos de imagem acabaram. Assine o plano para criar mais.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+  }
+  const color = LM.extractColor(message) || { name: 'azul', hex: '#1d4ed8' };
+  const charged = await consumeCredit(user);
+  try {
+    const A = adVideo._internals;
+    const os = require('os'); const path = require('path'); const fs = require('fs');
+    const symbol = await LM.drawSymbol({
+      name, colorName: color.name, hint: LM.businessHint(message, name),
+      generate: generateRoutes.generateImageFromProviders,
+      toBuffer: async (url) => { const f = path.join(os.tmpdir(), `sym-${Date.now()}.img`); await A.saveMedia(url, f); const b = fs.readFileSync(f); fs.unlinkSync(f); return b; },
+    });
+    const png = await LM.composeLogo({ name, hex: color.hex, symbol });
+    const imageUrl = await A.uploadToFal(png, 'image/png', `logo-${Date.now()}.png`).catch(() => `data:image/png;base64,${png.toString('base64')}`);
+    await prisma.generation.create({ data: { userId: user.id, type: 'IMAGE', prompt: `[logo] ${name} ${color.name}`, status: 'COMPLETED', imageUrl, cost: 1 } }).catch(() => {});
+    session.memory.project = session.memory.project || {};
+    if (!session.memory.project.brand) session.memory.project.brand = name;
+    const reply = `Pronto! Logo da ${name} em ${color.name}. O nome foi escrito com fonte profissional, então sai exatamente como você digitou.` +
+      `${symbol ? '' : ' (Usei um monograma com as iniciais no lugar do símbolo.)'}\n\nQuer outra cor, outro símbolo (ex.: "símbolo de uma casa") ou o nome maior? É só pedir.`;
+    cerebro.pushHistory(session, 'user', display || message, null);
+    cerebro.pushHistory(session, 'assistant', reply, imageUrl);
+    const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });
+    return res.json({ success: true, sessionId: session.id, reply, imageUrl, type: 'image', memory: session.memory, history: session.history.slice(-20), credits });
+  } catch (e) {
+    console.error('Cérebro: logo falhou:', e.message);
+    if (charged) await refundCredits(user).catch(() => {});
+    return quick('Não consegui criar a logo agora. Seu crédito foi devolvido — tente de novo.');
+  }
+}
+
 // ✍️ ENTREGA EM TEXTO (roteiro de vídeo, legenda, copy): JSON validado pelo contrato,
 // sem renderizar e sem gastar crédito de vídeo.
 async function deliverText({ user, session, message, tipo, res }) {
@@ -654,6 +698,12 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       return startAdVideoJob({ user, session, request, displayMessage: message, res, briefed: !!(empresa || whatsapp) });
     }
 
+    // 🔤 Resposta à pergunta "qual nome vai na logo?"
+    if (session.memory.pendingLogo) {
+      const orig = session.memory.pendingLogo.message;
+      session.memory.pendingLogo = null;
+      return makeLogo({ user, session, message: `${orig} com o nome "${message.replace(/["“”]/g, '').trim()}"`, display: message, res });
+    }
     // 📜 Resposta a uma pergunta do contrato ("vídeo pronto ou só o texto?")
     if (session.memory.pendingContract) {
       const original = session.memory.pendingContract.message;
@@ -698,6 +748,11 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     const adjustingLast = !!session.memory.lastAdRequest && /\b(refa[zç]\w*|muda|mude|troca|troque|ajusta|ajuste|corrig\w*)\b/i.test(message);
     if ((requested === 'roteiro_video' || requested === 'copy') && !adjustingLast) {
       return deliverText({ user, session, message, tipo: requested, res });
+    }
+
+    // 🔤 CRIAR LOGO: nome e cor do pedido, símbolo pela IA (sem texto), nome escrito por código
+    if (require('../logoMaker').isLogoRequest(message) && !hasImgNow) {
+      return makeLogo({ user, session, message, display: message, res });
     }
 
     const route = await aiRouter.routeMessage({ message, session });
