@@ -51,8 +51,11 @@ async function startAdVideoJob({ user, session, request, displayMessage, res }) 
   const productImage = (session.memory.refImages || []).find((u) => typeof u === 'string' && !/^data:video|\.mp4(\?|$)/i.test(u)) || null;
   const refCaptions = (session.memory.refDescriptions || []).map((d) => d.caption).filter(Boolean).slice(0, 2);
 
-  const reply = '🎬 Entendi: um anúncio em vídeo' + (adVideo.wantsVoice(request) ? ' com narração' : '') +
-    `. Vou escrever o roteiro, ${adVideo.wantsVoice(request) ? 'gravar a voz, ' : ''}criar as cenas e montar tudo${productImage ? ' usando a foto que você enviou' : ''}. Leva de 1 a 4 minutos — pode acompanhar aqui.`;
+  const presenter = adVideo.pickStyle(request) === 'presenter';
+  const reply = presenter
+    ? `Entendi: um comercial com apresentador. Vou escrever o roteiro, criar a pessoa${productImage ? ' segurando o produto da sua foto' : ''}, gravar as falas com a boca sincronizada e montar com a tela final da sua marca. Leva de 3 a 6 minutos — pode acompanhar aqui.`
+    : '🎬 Entendi: um anúncio em vídeo' + (adVideo.wantsVoice(request) ? ' com narração' : '') +
+      `. Vou escrever o roteiro, ${adVideo.wantsVoice(request) ? 'gravar a voz, ' : ''}criar as cenas e montar tudo${productImage ? ' usando a foto que você enviou' : ''}. Leva de 1 a 4 minutos — pode acompanhar aqui.`;
   cerebro.pushHistory(session, 'user', displayMessage || request, null);
   cerebro.pushHistory(session, 'assistant', reply, null);
 
@@ -72,10 +75,13 @@ async function startAdVideoJob({ user, session, request, displayMessage, res }) 
       });
       await prisma.generation.update({ where: { id: generation.id }, data: { status: 'COMPLETED', imageUrl: out.videoUrl } });
       const scenesTxt = out.scenes.map((s, i) => `${i + 1}. ${s.caption}`).join('\n');
-      const done = `Pronto! Seu anúncio ${out.style === 'motion' ? 'animado' : 'com fotos'} (${out.format}) está aqui.` +
+      const styleName = { motion: 'animado', photo: 'com fotos', presenter: 'com apresentador' }[out.style] || '';
+      const done = `Pronto! Seu anúncio ${styleName} (${out.format}) está aqui.` +
         (out.narration ? `\n\n🎙️ Narração:\n“${out.narration}”` : '') +
         `\n\n🎞️ Cenas:\n${scenesTxt}` +
-        (out.style === 'motion'
+        (out.style === 'presenter'
+          ? '\n\nQuer trocar para apresentador homem/mulher, mudar as falas ou mostrar outro produto (envie a foto)? É só pedir.'
+          : out.style === 'motion'
           ? '\n\nQuer outra cor, voz masculina, ou uma versão com fotos realistas ("faz com fotos")? É só pedir. Dica: envie sua LOGO que ela entra no final do vídeo.'
           : '\n\nQuer mudar o texto da narração, a voz (masculina/feminina) ou o formato (horizontal/quadrado)? É só pedir.');
       cerebro.pushHistory(session, 'assistant', done, null);

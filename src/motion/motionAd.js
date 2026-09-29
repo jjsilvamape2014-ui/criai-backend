@@ -271,4 +271,4 @@ async function buildMotionAd({ request, project, logo, product, refCaptions, voi
   }
 }
 
-module.exports = { buildMotionAd, planMotionAd, sanitizePlan, colorFromLogo, colorFromProject };
+module.exports = { buildMotionAd, planMotionAd, sanitizePlan, colorFromLogo, colorFromProject, prepareAssets };
