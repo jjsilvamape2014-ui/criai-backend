@@ -532,4 +532,31 @@ async function evaluateAsClient(src) {
   }
 }
 
-module.exports = { describeReference, checkImageQuality, checkImageText, checkImageElements, checkImageStrict, evaluateAsClient };
+// Diagnóstico (sem expor chaves): o que a fal e a Groq respondem para uma imagem.
+async function diagnoseVision(src) {
+  const out = { fal: null, groq: null };
+  const compressed = await compress(src).catch((e) => { out.compress = e.message; return null; });
+  if (!compressed) return out;
+  if (process.env.FAL_KEY) {
+    try {
+      const r = await axios.post('https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
+        { prompt: 'What text is written in this image?', image_url: compressed, max_tokens: 60 },
+        { headers: { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: () => true });
+      out.fal = { status: r.status, body: JSON.stringify(r.data || {}).replace(/https?:\/\/\S+/g, '<url>').slice(0, 300) };
+    } catch (e) { out.fal = { error: e.message }; }
+  } else out.fal = 'sem FAL_KEY';
+  const key = llmVisionKey();
+  if (key) {
+    try {
+      const r = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+        model: process.env.VISION_LLM_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Qual texto está escrito nesta imagem?' }, { type: 'image_url', image_url: { url: compressed } }] }],
+        max_tokens: 80
+      }, { headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: () => true });
+      out.groq = { status: r.status, model: process.env.VISION_LLM_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct', body: JSON.stringify(r.data || {}).slice(0, 400) };
+    } catch (e) { out.groq = { error: e.message }; }
+  } else out.groq = 'sem chave Groq (LLM_API_KEY gsk_)';
+  return out;
+}
+
+module.exports = { describeReference, checkImageQuality, checkImageText, checkImageElements, checkImageStrict, evaluateAsClient, diagnoseVision };

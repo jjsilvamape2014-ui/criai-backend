@@ -93,7 +93,7 @@ function isAdAdjustment(message) {
 function knowsNothing(request, session) {
   const mem = session.memory || {};
   const p = mem.project || {};
-  if (p.brand || (p.facts && p.facts.length)) return false;
+  if ((p.brand && !require('../brandInfo').isGenericBrand(p.brand)) || (p.facts && p.facts.length)) return false;
   if ((mem.refDescriptions || []).some((d) => d && d.caption)) return false;
   const stripped = String(request || '').replace(/\b(apresenta[çc][ãa]o|institucional|empresa|neg[óo]cio|marca|loja|logo(marca)?|nossa|nosso|minha|meu|dela|dele|sobre|essa|esse|desta|deste|dessa|desse|foto|imagem|anexo|anexada?)\b/gi, ' ');
   return adVideo.needsAdBriefing(stripped, p, false);
@@ -298,6 +298,17 @@ function multiRefDesignRules(paletteBlock) {
   return lines.join('\n');
 }
 
+// POST /api/cerebro/vision-check — diagnóstico da leitura de imagens (fal e Groq), sem expor chaves
+router.post('/vision-check', authMiddleware, async (req, res) => {
+  try {
+    const img = req.body && req.body.image;
+    if (!img || typeof img !== 'string') return res.status(400).json({ error: 'envie image (dataURL)' });
+    res.json(await vision.diagnoseVision(img));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/cerebro/chat — interpreta o comando e gera a nova versão da imagem
 // Aceita: message, sessionId, image (principal, dataURL/string) ou images: [urls/dataURLs] (até 4)
 router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
@@ -322,7 +333,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     const longMem = cerebro.loadUserMemory(user.id);
     if (longMem && !session.memory.onlyFromDisk) {
       const proj = session.memory.project;
-      if (!proj.brand && longMem.brand) proj.brand = longMem.brand;
+      if (!proj.brand && longMem.brand && !require('../brandInfo').isGenericBrand(longMem.brand)) proj.brand = longMem.brand;
       if (!(proj.colors && proj.colors.length) && Array.isArray(longMem.colors) && longMem.colors.length) {
         proj.colors = longMem.colors;
       }
@@ -603,7 +614,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     if (cmd.projectUpdate && session.memory.project) {
       const up = cmd.projectUpdate;
       const proj = session.memory.project;
-      if (up.brand) proj.brand = up.brand;
+      if (up.brand && !require('../brandInfo').isGenericBrand(up.brand)) proj.brand = up.brand;
       if (Array.isArray(up.colors) && up.colors.length) {
         proj.colors = [...new Set([...(proj.colors || []), ...up.colors])];
       }
