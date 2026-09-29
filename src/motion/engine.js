@@ -69,7 +69,7 @@ function palette(primary) {
 // ---------------------------------------------------------------------------
 // Texto
 // ---------------------------------------------------------------------------
-const esc = (s) => String(s == null ? '' : s).replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
+const esc = (s) => String(s == null ? '' : s).replace(/[\u2010\u2011\u2012\u2212]/g, '-').replace(/[\u00A0\u202F\u2007]/g, ' ').replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
 
 // largura aproximada (em "em") por caractere para Poppins
 function textWidth(text, size, weight = 700) {

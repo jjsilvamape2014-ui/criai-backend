@@ -82,7 +82,7 @@ function falarDinheiro(s) {
 }
 
 function speakable(text, { pronunciations = {} } = {}) {
-  let s = falarTelefone(falarDinheiro(String(text || '')));
+  let s = falarTelefone(falarDinheiro(require('./placeholders').normalize(text || '')));
   // 1) pronúncias ensinadas (maior primeiro, para "XYZ Concreto" ganhar de "XYZ")
   for (const word of Object.keys(pronunciations).sort((a, b) => b.length - a.length)) {
     s = s.replace(new RegExp(`(^|[^\\p{L}\\d])${escapeRe(word)}(?=$|[^\\p{L}\\d])`, 'giu'), (_, pre) => pre + pronunciations[word]);

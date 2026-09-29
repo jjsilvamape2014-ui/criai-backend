@@ -43,7 +43,8 @@ function planPrompt() {
     `- icon: escolha SOMENTE destes nomes: ${ICON_NAMES.join(', ')}.`,
     '- voice: o texto FALADO naquela cena, em português do Brasil natural e animado. hook 10-16 palavras; brand 10-16; services 18-30 (cite os serviços); benefit 8-14; cta 12-22. No cta, fale o telefone em grupos por extenso (ex.: "noventa e um, nove oito cinco, um um, três um quatro dois"). Sem emojis.',
     '- primaryColor: cor da marca em hex se o cliente disse a cor; senão uma cor que combine com o ramo.',
-    '- NUNCA invente preço, telefone, endereço ou prêmio que o cliente não informou.'
+    '- NUNCA invente preço, telefone, endereço ou prêmio que o cliente não informou.',
+    '- NUNCA escreva marcadores de modelo como [Nome da empresa], [Chame a atenção] ou (XX) XXXX-XXXX: o texto vai direto para a tela e para a voz. Se não souber o nome ou o contato, escreva a frase sem eles.'
   ].join('\n');
 }
 
@@ -63,7 +64,7 @@ function fallbackPlan(request, project) {
 }
 
 function sanitizePlan(plan, project) {
-  const p = plan || {};
+  const p = require('../placeholders').cleanPlan(plan || {}, (project && project.brand) || '');
   const str = (v, n = 200) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
   const out = {
     primaryColor: /^#[0-9a-f]{6}$/i.test(p.primaryColor || '') ? p.primaryColor : null,

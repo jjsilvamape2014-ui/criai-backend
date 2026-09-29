@@ -52,6 +52,35 @@ async function compress(src, maxPx = 768, quality = 70) {
 }
 
 // Descreve uma imagem (dataURL ou URL). Retorna string ou null (sem quebrar o fluxo).
+// Visão pela Groq (API OpenAI-compatível), usando a mesma chave do LLM.
+// Reserva para quando a fal não responde. Modelo configurável em VISION_LLM_MODEL.
+function llmVisionKey() {
+  const k = process.env.LLM_API_KEY || '';
+  return (k.startsWith('gsk_') || process.env.LLM_PROVIDER === 'groq') && process.env.VISION_LLM !== 'false' ? k : '';
+}
+
+async function llmVision(imageDataUrl, prompt) {
+  const key = llmVisionKey();
+  if (!key || !imageDataUrl) return null;
+  try {
+    const r = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+      model: process.env.VISION_LLM_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct',
+      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: imageDataUrl } }] }],
+      temperature: 0.1,
+      max_tokens: 400
+    }, { headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: (st) => st < 500 });
+    if (r.status >= 400) {
+      console.error('visão (groq) recusou', r.status, JSON.stringify(r.data || {}).slice(0, 200));
+      return null;
+    }
+    const c = r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message;
+    return (c && c.content) || null;
+  } catch (e) {
+    console.error('visão (groq) falhou:', e.message);
+    return null;
+  }
+}
+
 // A fila da fal devolve só o status; a resposta fica em response_url.
 async function falResultText(pd, data, headers) {
   const pick = (o) => (typeof o === 'string' ? o : (o && (o.content || o.text)) || null);
@@ -66,7 +95,7 @@ async function falResultText(pd, data, headers) {
 
 async function describeReference(src) {
   try {
-    if (!isEnabled() || !process.env.FAL_KEY) return null;
+    if (!isEnabled() || (!process.env.FAL_KEY && !llmVisionKey())) return null;
     let key = src;
     if (src && src.startsWith('data:')) {
       const b64 = src.split(',')[1];
@@ -77,32 +106,40 @@ async function describeReference(src) {
     const compressed = await compress(src);
     if (!compressed) return null;
 
-    const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
-    const res = await axios.post(
-      'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
-      { prompt: PROMPT_VISION, image_url: compressed, max_tokens: 400 },
-      { headers, timeout: 30000, validateStatus: (s) => s < 500 }
-    );
-    const data = res.data || {};
-    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
     let caption = null;
-    if (data.status_url) {
-      const deadline = Date.now() + 60000;
-      while (Date.now() < deadline) {
-        await sleep(2000);
-        const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
-        const pd = pollRes.data || {};
-        if (pd.status === 'COMPLETED' || pd.output) {
-          caption = await falResultText(pd, data, headers);
-          break;
+    if (process.env.FAL_KEY) {
+      try {
+        const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
+        const res = await axios.post(
+          'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
+          { prompt: PROMPT_VISION, image_url: compressed, max_tokens: 400 },
+          { headers, timeout: 30000, validateStatus: (s) => s < 500 }
+        );
+        const data = res.data || {};
+        if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
+        if (data.status_url) {
+          const deadline = Date.now() + 60000;
+          while (Date.now() < deadline) {
+            await sleep(2000);
+            const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
+            const pd = pollRes.data || {};
+            if (pd.status === 'COMPLETED' || pd.output) {
+              caption = await falResultText(pd, data, headers);
+              break;
+            }
+            if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
+          }
+        } else if (typeof data.output === 'string') {
+          caption = data.output;
+        } else if (data.output && (data.output.content || data.output.text)) {
+          caption = data.output.content || data.output.text;
         }
-        if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
+      } catch (e) {
+        console.error('visão (fal) falhou:', e.message);
       }
-    } else if (typeof data.output === 'string') {
-      caption = data.output;
-    } else if (data.output && (data.output.content || data.output.text)) {
-      caption = data.output.content || data.output.text;
     }
+    // sem fal (ex.: sem saldo) → lê com o modelo de visão da Groq
+    if (!caption) caption = await llmVision(compressed, PROMPT_VISION);
 
     caption = (caption || '').trim().replace(/\s+/g, ' ').slice(0, 400);
     if (caption) {

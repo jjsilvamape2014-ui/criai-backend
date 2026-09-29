@@ -91,7 +91,8 @@ async function planPresenter(request, project, refCaptions) {
     '- shot: em INGLÊS, o enquadramento e a ação da cena (ex.: "close-up, talking to the camera, raised eyebrows").',
     '- cta: tela final. slogan1 = nome da marca ou frase curta; slogan2 = oferta ou chamada curta; label = texto acima do contato (ex.: "Peça pelo WhatsApp"); footer = endereço ou site, se houver.',
     '- O NOME DA MARCA precisa ser FALADO pelo apresentador: obrigatório na cena 1 ou 3 e na cena 4. Se o cliente não escreveu o nome, use o que está na logo.',
-    '- Use SOMENTE fatos dados pelo cliente (preço, telefone, endereço). Não invente preço, telefone nem promoção.'
+    '- Use SOMENTE fatos dados pelo cliente (preço, telefone, endereço). Não invente preço, telefone nem promoção.',
+    '- NUNCA escreva marcadores de modelo como [Nome da empresa], [Chame a atenção] ou (XX) XXXX-XXXX: o texto vai direto para a tela e para a voz. Se não souber o nome ou o contato, escreva a frase sem eles.'
   ].join('\n');
   const user = [
     `Pedido: ${request}`,
@@ -108,7 +109,7 @@ async function planPresenter(request, project, refCaptions) {
     const s = cleaned.indexOf('{');
     const e = cleaned.lastIndexOf('}');
     if (s >= 0 && e > s) {
-      const plan = JSON.parse(cleaned.slice(s, e + 1));
+      const plan = require('./placeholders').cleanPlan(JSON.parse(cleaned.slice(s, e + 1)), p.brand || '');
       if (plan && Array.isArray(plan.scenes) && plan.scenes.length >= 4) {
         const fb = fallbackPlan(request, p);
         return {
