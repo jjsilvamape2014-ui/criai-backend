@@ -172,8 +172,13 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
       console.error('Cérebro: anúncio em vídeo falhou:', e.stack || e.message);
       // mostra a etapa que falhou (sem chaves/URLs), para dar para diagnosticar sem os logs
       const detail = String(e.message || '').replace(/https?:\/\/\S+/g, '[url]').replace(/Key\s+\S+/gi, 'Key ***').slice(0, 160);
+      // conta da fal sem saldo/bloqueada: o cliente não deve ver isso — mensagem educada
+      const outOfBalance = /exhausted balance|user is locked|top up your balance|HTTP 402/i.test(String(e.message || ''));
+      if (outOfBalance) console.error('⚠️ FAL SEM SALDO — recarregue em fal.ai/dashboard/billing');
       const { CODE_REV } = require('../version');
-      setStep(jobId, { error: `Não consegui montar o anúncio agora. Seu crédito foi devolvido — tente novamente.${detail ? ` (Detalhe técnico: ${detail} · versão ${CODE_REV})` : ''}` });
+      setStep(jobId, { error: outOfBalance
+        ? 'Nosso estúdio de vídeo está em manutenção por alguns instantes. Seu crédito foi devolvido — tente de novo em alguns minutos.'
+        : `Não consegui montar o anúncio agora. Seu crédito foi devolvido — tente novamente.${detail ? ` (Detalhe técnico: ${detail} · versão ${CODE_REV})` : ''}` });
       try {
         const upd = await prisma.generation.updateMany({ where: { id: jobId, status: 'PROCESSING' }, data: { status: 'FAILED' } });
         if (upd.count) await refundVideoCredits(user.id, charge);
