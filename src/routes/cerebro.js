@@ -467,6 +467,14 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       // apresentador custa mais: só quando o CLIENTE pediu pessoa/apresentador (a IA não decide sozinha)
       const askedPerson = /(apresentador|apresentadora|pessoa|avatar|influencer|garot[oa][- ]propaganda|algu[ée]m falando|\bugc\b)/i.test(message);
       if (route.style === 'presenter' && !askedPerson) route.style = '';
+      // o pedido reescrito pela IA não pode ativar o apresentador por acaso ("vídeo apresentando a JN")
+      if (!askedPerson && route.request) {
+        route.request = route.request
+          .replace(/\bapresentand(o|a)\b/gi, 'mostrando')
+          .replace(/\bapresente\b/gi, 'mostre')
+          .replace(/\b(apresentador(a)?|avatar|influencer|garot[oa][- ]propaganda|algu[ée]m falando|\bugc)\b/gi, '')
+          .replace(/pessoa (real )?(falando|mostrando|apresentando)/gi, '');
+      }
       if (route.style === 'photo' && !/(foto|realista)/i.test(message)) route.style = '';
       if (route.action === 'adjust_video' && session.memory.lastAdRequest) {
         const request = `${aiRouter.requestWithStyle(session.memory.lastAdRequest, route.style)}. Ajuste pedido pelo cliente no vídeo anterior: ${message}`;
