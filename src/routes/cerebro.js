@@ -93,7 +93,10 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
   if (user.plan !== 'PREMIUM' && (user.creditsVideos || 0) + (user.creditsPurchased || 0) < cost) {
     return res.status(403).json({
       error: cost > 1
-        ? `Este vídeo usa ${cost} créditos de vídeo e você não tem o suficiente. Assine o plano ou compre créditos.`
+        ? `O vídeo com apresentador usa ${cost} créditos de vídeo e você tem ${(user.creditsVideos || 0) + (user.creditsPurchased || 0)}.` +
+          ((user.creditsVideos || 0) + (user.creditsPurchased || 0) >= adCost('motion')
+            ? ' Com o que você tem dá para fazer a versão animada (com narração): é só pedir "faz a versão animada". Ou assine o plano para ter mais créditos.'
+            : ' Assine o plano ou compre créditos para continuar.')
         : 'Créditos de vídeo esgotados. Assine o plano para gerar vídeos.',
       code: 'NO_CREDITS', upgradeUrl: '/plans'
     });
