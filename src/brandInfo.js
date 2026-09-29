@@ -17,14 +17,21 @@ function mentions(text, brand) {
   return first.length >= 2 && new RegExp(`(^|[^a-z0-9])${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`).test(t);
 }
 
+// "Sua Empresa", "[Nome da empresa]", "Minha loja"… não são nomes: é a IA sem saber
+function isGenericBrand(s) {
+  const n = norm(String(s || '').replace(/[[\]{}()"“”'`*]/g, ''));
+  return !n || /^(a |o |da |do )?(sua|seu|minha|meu|nossa|nosso|a|o)? ?(empresa|marca|loja|negocio|companhia|comercio|nome( da (empresa|marca|loja))?)( aqui)?$/.test(n) ||
+    /^(nome da|seu negocio|your (company|brand)|company name|brand name)/.test(n);
+}
+
 function cleanName(s) {
   const n = String(s || '').replace(/["“”'`*]/g, '').replace(/\s+/g, ' ').trim();
-  if (!n || n.length > 50 || /^(nenhum|nenhuma|n[ãa]o (sei|informado)|desconhecid)/i.test(n)) return null;
+  if (!n || n.length > 50 || /^(nenhum|nenhuma|n[ãa]o (sei|informado)|desconhecid)/i.test(n) || isGenericBrand(n)) return null;
   return n;
 }
 
 async function resolveBrand({ project, request, refCaptions }) {
-  if (project && project.brand) return project.brand;
+  if (project && project.brand && !isGenericBrand(project.brand)) return project.brand;
   const caps = (refCaptions || []).filter(Boolean);
   const sys = [
     'Você extrai o NOME DA EMPRESA/MARCA para um anúncio.',
@@ -41,4 +48,4 @@ async function resolveBrand({ project, request, refCaptions }) {
   }
 }
 
-module.exports = { resolveBrand, mentions, norm };
+module.exports = { resolveBrand, mentions, norm, isGenericBrand };

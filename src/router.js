@@ -73,7 +73,7 @@ async function routeMessage({ message, session }) {
       action: r.action,
       style: STYLES.includes(r.style) ? r.style : '',
       request: str(r.request, 600),
-      brand: str(r.brand, 50),
+      brand: require('./brandInfo').isGenericBrand(r.brand) ? '' : str(r.brand, 50),
       reply: str(r.reply, 600),
       question: str(r.question, 200)
     };
