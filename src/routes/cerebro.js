@@ -706,7 +706,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // 🔤 Ajuste da última logo: "é uma loja de roupas" (ramo → símbolo) ou "faz em verde" (cor)
     if (session.memory.lastLogo && !hasImgEarly(session) && message.split(/\s+/).length <= 12) {
       const LM = require('../logoMaker');
-      const saysBiz = LM.businessOf(message, '') && /\b([ée]\s+(uma?|o|a)|ramo|trabalh\w*|somos|vend\w*)\b/i.test(message);
+      const saysBiz = LM.businessOf(message, '') && /(^|\s)([ée]\s+(uma?|o|a)|ramo|trabalh\w*|somos|vend\w*)(\s|$)/i.test(message);
       const saysColor = LM.extractColor(message) && /\b(cor|em|faz|muda|troca|deixa|quero)\b/i.test(message);
       if (saysBiz || saysColor) {
         const base = session.memory.lastLogo.message.replace(saysColor ? new RegExp(`\\b(na cor|em|cor)?\\s*${(LM.extractColor(session.memory.lastLogo.message) || {}).name || '#none#'}\\b`, 'i') : /$^/, '');
