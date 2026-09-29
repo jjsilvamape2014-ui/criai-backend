@@ -87,6 +87,24 @@ function isAdAdjustment(message) {
 }
 
 // Dispara o pipeline do anúncio em segundo plano e responde na hora com o jobId.
+// Troca a marca da conversa. Se for OUTRA empresa, apaga o que era da anterior
+// (contato, cores, fatos, último vídeo) para nada vazar de um cliente para outro.
+function switchBrand(session, brand) {
+  const { norm, isGenericBrand } = require('../brandInfo');
+  if (!brand || isGenericBrand(brand)) return;
+  const p = (session.memory.project = session.memory.project || {});
+  const { mentions } = require('../brandInfo');
+  // mesma empresa escrita de outro jeito ("JN" / "JN Refrigeração Ltda") → mantém tudo
+  if (p.brand && (norm(p.brand) === norm(brand) || mentions(brand, p.brand) || mentions(p.brand, brand))) return;
+  const other = !!p.brand;
+  p.brand = brand;
+  if (other) {
+    p.facts = [];
+    p.colors = [];
+    session.memory.lastAdRequest = null;
+  }
+}
+
 // Pedido genérico ("vídeo de apresentação da empresa") sem saber NADA da empresa
 // (sem nome, sem fatos e sem conseguir ler as imagens) → pergunta antes de gastar crédito.
 // Um vídeo com "[Nome da empresa]" ou frases vazias é pior do que uma pergunta.
@@ -154,7 +172,8 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
     : presenter
     ? `Entendi: um comercial com apresentador. Vou escrever o roteiro, criar a pessoa${productImage ? ' segurando o produto da sua foto' : ''}, gravar as falas com a boca sincronizada e montar com a tela final da sua marca. Leva de 3 a 6 minutos — pode acompanhar aqui.${costNote}`
     : '🎬 Entendi: um anúncio em vídeo' + (adVideo.wantsVoice(request) ? ' com narração' : '') +
-      `. Vou escrever o roteiro, ${adVideo.wantsVoice(request) ? 'gravar a voz, ' : ''}criar as cenas e montar tudo${productImage ? ' usando a foto que você enviou' : ''}. Leva de 1 a 4 minutos — pode acompanhar aqui.${costNote}`;
+      `. Vou escrever o roteiro, ${adVideo.wantsVoice(request) ? 'gravar a voz, ' : ''}criar as cenas e montar tudo${productImage ? ' usando a foto que você enviou' : ''}. Leva de 1 a 4 minutos — pode acompanhar aqui.${costNote}` +
+      (session.memory.project && session.memory.project.brand ? `\n\nEmpresa: ${session.memory.project.brand}. Se for outra, me diga o nome que eu refaço.` : '');
   cerebro.pushHistory(session, 'user', displayMessage || request, null);
   cerebro.pushHistory(session, 'assistant', reply, null);
 
@@ -378,14 +397,23 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       }
       if (pending.length) {
         session.memory.refDescriptions = session.memory.refDescriptions || [];
+        const newCaps = [];
         for (const ref of pending) {
           const caption = await vision.describeReference(ref);
           if (caption) {
+            newCaps.push(caption);
             session.memory.refDescriptions.push({ src: ref, caption });
             if (session.memory.refDescriptions.length > 8) {
               session.memory.refDescriptions = session.memory.refDescriptions.slice(-8);
             }
           }
+        }
+        // 🏷️ Logo NOVA de outra empresa → troca a marca (quem faz vídeo para vários clientes
+        //    não pode receber o nome do cliente anterior)
+        const logoCaps = newCaps.filter((c) => /(logo|logotipo|emblema|marca)/i.test(c));
+        if (logoCaps.length) {
+          const found = await require('../brandInfo').resolveBrand({ project: null, request: '', refCaptions: logoCaps }).catch(() => null);
+          if (found) switchBrand(session, found);
         }
       }
     }
@@ -407,7 +435,9 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     if (route) {
       if (route.brand) {
         session.memory.project = session.memory.project || {};
+        // escreveu o nome de OUTRA empresa na mensagem → troca; senão só preenche se estava vazio
         if (!session.memory.project.brand) session.memory.project.brand = route.brand;
+        else if (require('../brandInfo').mentions(message, route.brand)) switchBrand(session, route.brand);
       }
       const reply = (text, extra = {}) => {
         cerebro.pushHistory(session, 'user', message, null);
