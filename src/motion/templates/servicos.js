@@ -223,13 +223,16 @@ function sceneCta(t, d, S) {
   const pulse = 1 + 0.025 * Math.max(0, Math.sin((t - 1.8) * 4));
   const hasPhone = !!(c.phone && String(c.phone).trim());
   const main = hasPhone ? c.phone : (c.contact || 'Fale com a gente');
+  // sem telefone: sem ícone de WhatsApp (não prometer um canal que não existe) e sem repetir o texto
+  const rawLabel = String(c.label || (hasPhone ? 'Atendimento via WhatsApp' : 'Acesse agora'));
+  const pillLabel = !hasPhone && rawLabel.toLowerCase() === String(main).toLowerCase() ? 'Acesse agora' : rawLabel;
   const mainSize = E.fitText(main, { size: 66, minSize: 40, maxWidth: 560, maxLines: 1, weight: 800 }).size;
   const pill = pp <= 0 ? '' : `<g transform="${scaleAround(CX, pillY + 85, pp * pulse)}">
       <rect x="${CX - 440 + 8}" y="${pillY + 14}" width="880" height="170" rx="40" fill="${pal.ink}" opacity="0.18"/>
       <rect x="${CX - 440}" y="${pillY}" width="880" height="170" rx="40" fill="${pal.deep}"/>
-      <circle cx="${CX - 440 + 105}" cy="${pillY + 85}" r="62" fill="${pal.whatsapp}"/>
-      ${icon('whatsapp', CX - 440 + 105, pillY + 85, 84, '#FFFFFF', { strokeWidth: 7 })}
-      <text x="${CX - 440 + 200}" y="${pillY + 62}" font-family="${E.FONT}" font-weight="600" font-size="24" fill="#FFFFFF" opacity="0.75" letter-spacing="1.5">${E.esc(String(c.label || 'ATENDIMENTO VIA WHATSAPP').toUpperCase())}</text>
+      <circle cx="${CX - 440 + 105}" cy="${pillY + 85}" r="62" fill="${hasPhone ? pal.whatsapp : pal.primary}"/>
+      ${hasPhone ? icon('whatsapp', CX - 440 + 105, pillY + 85, 84, '#FFFFFF', { strokeWidth: 7 }) : icon('hand', CX - 440 + 105, pillY + 85, 78, '#FFFFFF', { strokeWidth: 7 })}
+      <text x="${CX - 440 + 200}" y="${pillY + 62}" font-family="${E.FONT}" font-weight="600" font-size="24" fill="#FFFFFF" opacity="0.75" letter-spacing="1.5">${E.esc(pillLabel.toUpperCase())}</text>
       <text x="${CX - 440 + 200}" y="${pillY + 130}" font-family="${E.FONT}" font-weight="800" font-size="${mainSize}" fill="#FFFFFF">${E.esc(main)}</text>
     </g>`;
   const foot = E.fitText(c.footer || '', { size: 38, minSize: 30, maxWidth: 860, maxLines: 2, weight: 600 });
