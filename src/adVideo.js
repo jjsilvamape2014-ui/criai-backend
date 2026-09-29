@@ -477,11 +477,21 @@ function pickStyle(message) {
 }
 
 // Das imagens anexadas, descobre qual é a LOGO e qual é o PRODUTO.
-async function chooseAssets(images, message) {
+// A visão descreve a imagem começando pelo tipo ("Logo da JN...", "Foto de placas...").
+// É logo do CLIENTE se a descrição abre dizendo que é logo — "logo do Google" no meio
+// da descrição de um produto não conta.
+const THIRD_LOGO = /logo(tipo|marca)? (do|da|de) (google|instagram|facebook|whatsapp|ifood|mercado ?(livre|pago)|shopee|youtube|tiktok|apple|samsung)\b/gi;
+function captionIsLogo(caption) {
+  const head = String(caption || '').replace(THIRD_LOGO, '').slice(0, 70);
+  return /^\W*(o que [ée]:?\s*)?(uma?\s+|a\s+|o\s+)?(logo|logotipo|logomarca|emblema|marca)\b/i.test(head) ||
+    /\b(é|trata-se de)\s+(uma?|o|a)\s+(logo|logotipo|logomarca|emblema)\b/i.test(head);
+}
+
+async function chooseAssets(images, message, captions = []) {
   const imgs = (images || []).filter((u) => typeof u === 'string' && !/^data:video|\.mp4(\?|$)/i.test(u)).slice(0, 4);
   if (!imgs.length) return { logo: null, product: null };
   // "logo do Google" na descrição de um produto não é a logo do cliente
-  const msg = String(message || '').replace(/logo(tipo|marca)? (do|da|de) (google|instagram|facebook|whatsapp|ifood|mercado ?(livre|pago)|shopee|youtube|tiktok|apple|samsung)\b/gi, '');
+  const msg = String(message || '').replace(THIRD_LOGO, '');
   const saysLogo = /\blogo|logomarca|minha marca/i.test(msg);
   let logoIdx = -1;
   if (imgs.length >= 2) {
@@ -498,7 +508,7 @@ async function chooseAssets(images, message) {
         alpha = !!(st.channels[3] && st.channels[3].min < 250);
       }
     } catch (e) {}
-    if (saysLogo || alpha) logoIdx = 0;
+    if (saysLogo || alpha || captionIsLogo(captions[captions.length - 1])) logoIdx = 0;
   }
   const logo = logoIdx >= 0 ? imgs[logoIdx] : null;
   const product = imgs.find((_, i) => i !== logoIdx) || null;
@@ -515,7 +525,7 @@ async function buildAd({ request, project, images, refCaptions, deps, onStatus }
   const tts = (text, voice) => generateNarration(speakable(text, { pronunciations }), voice);
   if (style === 'presenter') {
     const { buildPresenterAd, pickGender } = require('./presenterAd');
-    const { logo, product } = await chooseAssets(images, request);
+    const { logo, product } = await chooseAssets(images, request, refCaptions);
     const out = await buildPresenterAd({
       request, project, logo, product, refCaptions,
       // a voz acompanha o gênero do apresentador
@@ -538,7 +548,7 @@ async function buildAd({ request, project, images, refCaptions, deps, onStatus }
     return { ...out, style: 'photo', brand: project && project.brand };
   }
   const { buildMotionAd } = require('./motion/motionAd');
-  const { logo, product } = await chooseAssets(images, request);
+  const { logo, product } = await chooseAssets(images, request, refCaptions);
   // Estúdio: roteiro sob medida (blocos: produto, passo a passo, benefícios...).
   // Se falhar antes de ficar pronto, cai no modelo "Serviços" de sempre.
   if (process.env.MOTION_STUDIO !== 'false') {
@@ -592,6 +602,7 @@ async function buildAd({ request, project, images, refCaptions, deps, onStatus }
 
 module.exports = {
   buildAd,
+  captionIsLogo,
   pickStyle,
   chooseAssets,
   isAdVideoRequest,

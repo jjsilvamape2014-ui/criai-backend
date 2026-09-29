@@ -19,14 +19,21 @@ function mentions(text, brand) {
 
 // "Sua Empresa", "[Nome da empresa]", "Minha loja"… não são nomes: é a IA sem saber
 function isGenericBrand(s) {
+  if (isThirdPartyBrand(s)) return true;
   const n = norm(String(s || '').replace(/[[\]{}()"“”'`*]/g, ''));
   return !n || /^(a |o |da |do )?(sua|seu|minha|meu|nossa|nosso|a|o)? ?(empresa|marca|loja|negocio|companhia|comercio|nome( da (empresa|marca|loja))?)( aqui)?$/.test(n) ||
     /^(nome da|seu negocio|your (company|brand)|company name|brand name)/.test(n);
 }
 
+// marcas de plataformas/terceiros que aparecem em produtos e prints — nunca são o cliente
+const THIRD_PARTY = /^(google( meu neg[óo]cio| maps| business)?|instagram|facebook|meta|whatsapp( business)?|ifood|mercado ?(livre|pago)|shopee|amazon|magalu|youtube|tiktok|kwai|apple|iphone|samsung|motorola|xiaomi|coca[- ]?cola|visa|mastercard|pix|nfc|qr ?code|uber|99)$/i;
+function isThirdPartyBrand(s) {
+  return THIRD_PARTY.test(norm(String(s || '').replace(/[®™]/g, '')));
+}
+
 function cleanName(s) {
   const n = String(s || '').replace(/["“”'`*]/g, '').replace(/\s+/g, ' ').trim();
-  if (!n || n.length > 50 || /^(nenhum|nenhuma|n[ãa]o (sei|informado)|desconhecid)/i.test(n) || isGenericBrand(n)) return null;
+  if (!n || n.length > 50 || /^(nenhum|nenhuma|n[ãa]o (sei|informado)|desconhecid)/i.test(n) || isGenericBrand(n) || isThirdPartyBrand(n)) return null;
   return n;
 }
 
@@ -50,4 +57,4 @@ async function resolveBrand({ project, request, refCaptions }) {
   }
 }
 
-module.exports = { resolveBrand, mentions, norm, isGenericBrand };
+module.exports = { resolveBrand, mentions, norm, isGenericBrand, isThirdPartyBrand };
