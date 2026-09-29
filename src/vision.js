@@ -545,6 +545,21 @@ async function diagnoseVision(src, { falEndpoints = [], groqModels = [] } = {}) 
         { prompt: 'What text is written in this image?', image_url: compressed, max_tokens: 60, model: 'google/gemini-flash-1.5' },
         { headers: { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: () => true });
       out.fal[ep] = { status: r.status, body: JSON.stringify(r.data || {}).replace(/https?:\/\/\S+?(?=["\s])/g, '<url>').slice(0, 250) };
+      const d = r.data || {};
+      if (d.status_url) {
+        const hh = { Authorization: `Key ${process.env.FAL_KEY}` };
+        const until = Date.now() + 45000;
+        while (Date.now() < until) {
+          await sleep(1500);
+          const st = await axios.get(d.status_url, { headers: hh, timeout: 15000, validateStatus: () => true });
+          const sd = st.data || {};
+          if (sd.status === 'COMPLETED' || sd.status === 'ERROR') {
+            const rr = await axios.get(d.response_url, { headers: hh, timeout: 15000, validateStatus: () => true });
+            out.fal[ep].result = { status: rr.status, body: JSON.stringify(rr.data || {}).slice(0, 400) };
+            break;
+          }
+        }
+      }
     } catch (e) { out.fal[ep] = { error: e.message }; }
   }
   const key = llmVisionKey();
