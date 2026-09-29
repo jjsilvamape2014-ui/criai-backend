@@ -11,6 +11,7 @@ const vision = require('../vision');
 const axios = require('axios');
 const sharp = require('sharp');
 const adVideo = require('../adVideo');
+const aiRouter = require('../router');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -370,6 +371,36 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       const request = dismissive ? original : `${original}. Detalhes do cliente: ${message}`;
       return startAdVideoJob({ user, session, request, displayMessage: message, res });
     }
+    // 🧭 A IA entende a mensagem antes de agir (conversa + textos das imagens + último vídeo).
+    //    Se ela não responder (sem chave/erro), seguem as regras por palavra-chave abaixo.
+    const route = await aiRouter.routeMessage({ message, session });
+    if (route) {
+      if (route.brand) {
+        session.memory.project = session.memory.project || {};
+        if (!session.memory.project.brand) session.memory.project.brand = route.brand;
+      }
+      const reply = (text, extra = {}) => {
+        cerebro.pushHistory(session, 'user', message, null);
+        cerebro.pushHistory(session, 'assistant', text, null);
+        return res.json({ success: true, sessionId: session.id, reply: text, imageUrl: null, videoUrl: null, type: 'chat', memory: session.memory, history: session.history.slice(-20), ...extra });
+      };
+      if (route.action === 'answer' && route.reply) return reply(route.reply);
+      if (route.action === 'adjust_video' && session.memory.lastAdRequest) {
+        const request = `${aiRouter.requestWithStyle(session.memory.lastAdRequest, route.style)}. Ajuste pedido pelo cliente no vídeo anterior: ${message}`;
+        return startAdVideoJob({ user, session, request, displayMessage: message, res, adjusting: true });
+      }
+      if (route.action === 'video' || (route.action === 'adjust_video' && !session.memory.lastAdRequest)) {
+        return startAdVideoJob({ user, session, request: aiRouter.requestWithStyle(route.request || message, route.style), displayMessage: message, res });
+      }
+      if (route.action === 'ask' && route.question) {
+        if (/(v[íi]deo|an[úu]ncio|comercial|reels)/i.test(`${message} ${route.request}`)) {
+          session.memory.pendingAd = { request: route.request || message, askedAt: Date.now() };
+        }
+        return reply(route.question, { ask: [route.question], needInfo: true });
+      }
+      // action 'image' (ou algo incompleto): segue o fluxo de imagem, já sabendo a marca
+    }
+
     // Correção de pronúncia depois de um vídeo ("XYZ se pronuncia xis ípsilon zê") → refaz o último
     if (session.memory.lastAdRequest && !adVideo.isAdVideoRequest(message)) {
       const pron = require('../speech').parsePronunciations(message);
