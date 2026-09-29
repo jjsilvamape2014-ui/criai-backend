@@ -63,6 +63,7 @@ function directorPrompt() {
     `- icon: SOMENTE destes nomes: ${ICON_NAMES.join(', ')}.`,
     '- brand: nome da empresa (do pedido, da conversa ou lido na logo). color: cor da marca (se o cliente disse ou se aparece na logo), senão uma que combine com o ramo.',
     '- NUNCA invente preço, telefone, endereço, prêmio ou estatística que não foram informados.',
+    '- NUNCA escreva marcadores de modelo como [Nome da empresa], [Chame a atenção] ou (XX) XXXX-XXXX: o texto vai direto para a tela e para a voz. Se não souber o nome ou o contato, escreva a frase sem eles.',
     '- Marcas de TERCEIROS (Google, Instagram, iFood...) podem ser citadas no texto, mas nunca como logo ou como se o anúncio fosse delas.',
     '- warnings: até 3 avisos curtos e ÚTEIS para o dono do negócio antes de publicar, como um bom publicitário faria: informação que faltou e que o cliente final vai perguntar (ex.: o que o preço inclui, prazo, entrega), marca de terceiros no produto, regra de plataforma que o argumento pode ferir (só se tiver certeza; diga "confira a regra atual"). Sem avisos óbvios ou genéricos.'
   ].join('\n');
@@ -83,7 +84,7 @@ function fallbackStoryboard(request, project, hasProduct) {
 }
 
 function sanitizeStoryboard(raw, project, hasProduct) {
-  const r = raw || {};
+  const r = require('../placeholders').cleanPlan(raw || {}, (project && project.brand) || (raw && raw.brand) || '');
   const seen = new Set();
   let scenes = (Array.isArray(r.scenes) ? r.scenes : []).filter((s) => s && TYPES.includes(s.type) && !seen.has(s.type) && seen.add(s.type));
   scenes = scenes.map((s) => {
@@ -94,7 +95,9 @@ function sanitizeStoryboard(raw, project, hasProduct) {
     if (s.type === 'benefits') return { ...base, title: str(s.title || 'Vantagens', 40), items: (s.items || []).slice(0, 4).map((it) => ({ icon: safeIcon(it.icon, 'check'), title: str(it.title, 40) })).filter((it) => it.title) };
     // telefone na tela: só dígitos (a IA às vezes escreve por extenso, que é para a VOZ)
     const phone = /\d{4}/.test(String(s.phone || '')) ? str(s.phone, 24) : '';
-    return { ...base, slogan1: str(s.slogan1, 50), slogan2: str(s.slogan2, 50), phone, label: str(s.label, 40), footer: str(s.footer, 90) };
+    // "Visite nosso site" sem site nenhum é promessa vazia
+    const footer = /\b(site|instagram|@|endere[çc]o)\b/i.test(String(s.footer || '')) && !/[\w-]+\.[a-z]{2,}|@\w+|\d/i.test(String(s.footer || '')) ? '' : str(s.footer, 90);
+    return { ...base, slogan1: str(s.slogan1, 50), slogan2: str(s.slogan2, 50), phone, label: str(s.label, 40), footer };
   }).filter((s) => {
     if (s.type === 'steps') return s.items.length >= 2;
     if (s.type === 'benefits') return s.items.length >= 3;

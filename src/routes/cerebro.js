@@ -87,7 +87,28 @@ function isAdAdjustment(message) {
 }
 
 // Dispara o pipeline do anúncio em segundo plano e responde na hora com o jobId.
-async function startAdVideoJob({ user, session, request, displayMessage, res, adjusting = false }) {
+// Pedido genérico ("vídeo de apresentação da empresa") sem saber NADA da empresa
+// (sem nome, sem fatos e sem conseguir ler as imagens) → pergunta antes de gastar crédito.
+// Um vídeo com "[Nome da empresa]" ou frases vazias é pior do que uma pergunta.
+function knowsNothing(request, session) {
+  const mem = session.memory || {};
+  const p = mem.project || {};
+  if (p.brand || (p.facts && p.facts.length)) return false;
+  if ((mem.refDescriptions || []).some((d) => d && d.caption)) return false;
+  const stripped = String(request || '').replace(/\b(apresenta[çc][ãa]o|institucional|empresa|neg[óo]cio|marca|loja|logo(marca)?|nossa|nosso|minha|meu|dela|dele|sobre|essa|esse|desta|deste|dessa|desse|foto|imagem|anexo|anexada?)\b/gi, ' ');
+  return adVideo.needsAdBriefing(stripped, p, false);
+}
+
+async function startAdVideoJob({ user, session, request, displayMessage, res, adjusting = false, briefed = false }) {
+  if (!adjusting && !briefed && knowsNothing(request, session)) {
+    const hasImg = (session.memory.refImages || []).length > 0;
+    const q = (hasImg ? 'Não consegui ler o nome na imagem que você enviou. ' : '') +
+      'Para o vídeo ficar com a cara da sua empresa, me diga em uma mensagem: o nome da empresa, o que ela faz (serviços ou produtos) e o WhatsApp. Se tiver, a cidade e uma promoção também.';
+    session.memory.pendingAd = { request, askedAt: Date.now() };
+    cerebro.pushHistory(session, 'user', displayMessage || request, null);
+    cerebro.pushHistory(session, 'assistant', q, null);
+    return res.json({ success: true, sessionId: session.id, reply: q, ask: [q], needInfo: true, imageUrl: null, videoUrl: null, type: 'video', memory: session.memory, history: session.history.slice(-20) });
+  }
   const style = adVideo.pickStyle(request);
   const cost = user.plan === 'PREMIUM' ? 0 : adCost(style);
   if (user.plan !== 'PREMIUM' && (user.creditsVideos || 0) + (user.creditsPurchased || 0) < cost) {
@@ -366,7 +387,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       session.memory.pendingAd = null;
       const dismissive = /(n[ãa]o sei|tanto faz|voc[êe] escolhe|vc escolhe|voc[êe] decide|faz do seu jeito)/i.test(message);
       const request = dismissive ? original : `${original}. Detalhes do cliente: ${message}`;
-      return startAdVideoJob({ user, session, request, displayMessage: message, res });
+      return startAdVideoJob({ user, session, request, displayMessage: message, res, briefed: true });
     }
     // 🧭 A IA entende a mensagem antes de agir (conversa + textos das imagens + último vídeo).
     //    Se ela não responder (sem chave/erro), seguem as regras por palavra-chave abaixo.
