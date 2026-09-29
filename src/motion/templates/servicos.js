@@ -282,4 +282,4 @@ function build(spec) {
   return { W, H, duration, timeline, frameSvg };
 }
 
-module.exports = { build, sceneCta, W, H };
+module.exports = { build, sceneCta, sceneHook, sceneBenefit, gradientBg, waves, dotGrid, particles, heroIcon, scaleAround, W, H };

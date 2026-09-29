@@ -42,6 +42,16 @@ const P = {
   building: '<path d="M18 88V14h40v74M58 36h24v52M10 88h80"/><path d="M30 28h16M30 44h16M30 60h16M68 52h4M68 68h4"/>',
   cake: '<rect x="16" y="46" width="68" height="40" rx="6"/><path d="M16 62c11 8 23 8 34 0s23-8 34 0M50 30v16M50 16c-4 6-4 10 0 14 4-4 4-8 0-14z"/>',
   bag: '<path d="M18 32h64l-6 56H24z"/><path d="M36 42V26a14 14 0 0 1 28 0v16"/>',
+  // produto / tecnologia / resultado
+  qrcode: '<rect x="14" y="14" width="28" height="28" rx="3"/><rect x="58" y="14" width="28" height="28" rx="3"/><rect x="14" y="58" width="28" height="28" rx="3"/><path d="M24 24h8v8h-8zM68 24h8v8h-8zM24 68h8v8h-8z"/><path d="M58 58h10v10M78 58h8M58 78h8v8M76 70v16h10"/>',
+  nfc: '<rect x="30" y="12" width="40" height="76" rx="8"/><path d="M44 78h12"/><path d="M80 34a24 24 0 0 1 0 32M88 26a36 36 0 0 1 0 48M20 34a24 24 0 0 0 0 32M12 26a36 36 0 0 0 0 48"/>',
+  wifi: '<path d="M10 40a56 56 0 0 1 80 0M22 54a38 38 0 0 1 56 0M34 68a20 20 0 0 1 32 0"/><circle cx="50" cy="80" r="4"/>',
+  chart: '<path d="M14 86h72M22 86V60M42 86V44M62 86V52M82 86V26"/><path d="M18 50l22-18 20 10 26-24M72 18h14v14"/>',
+  rocket: '<path d="M50 10c16 10 22 28 20 48H30c-2-20 4-38 20-48z"/><circle cx="50" cy="38" r="7"/><path d="M30 58l-12 14 16-2M70 58l12 14-16-2M42 70l8 20 8-20"/>',
+  thumbsup: '<path d="M30 46h-14v40h14zM30 48l14-30c8 0 10 6 9 12l-3 14h26c6 0 10 6 8 12l-7 24c-1 4-5 6-9 6H30"/>',
+  target: '<circle cx="50" cy="50" r="36"/><circle cx="50" cy="50" r="22"/><circle cx="50" cy="50" r="8"/><path d="M50 50l32-32M72 14l10 4 4 10"/>',
+  hand: '<path d="M40 50V20a7 7 0 0 1 14 0v26M54 40a7 7 0 0 1 14 0v14M68 50a7 7 0 0 1 14 0v14c0 16-12 26-28 26-12 0-20-6-26-16L18 56a7 7 0 0 1 12-7l10 11"/>',
+  eye: '<path d="M8 50s16-28 42-28 42 28 42 28-16 28-42 28S8 50 8 50z"/><circle cx="50" cy="50" r="12"/>',
   whatsapp: '<path d="M50 12a38 38 0 0 0-33 57l-5 19 20-5a38 38 0 1 0 18-71z"/><path d="M36 34c-2 10 10 28 26 30l6-6-8-6-5 4c-5-2-10-7-12-12l4-5-6-8z"/>'
 };
 

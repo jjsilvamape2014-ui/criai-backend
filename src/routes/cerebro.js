@@ -151,6 +151,7 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
       const scenesTxt = out.scenes.map((s, i) => `${i + 1}. ${s.caption}`).join('\n');
       const styleName = { motion: 'animado', photo: 'com fotos', presenter: 'com apresentador' }[out.style] || '';
       const done = `Pronto! Seu anúncio ${styleName} (${out.format}) está aqui.` +
+        (out.notes && out.notes.length ? `\n\nAntes de publicar:\n${out.notes.map((n) => `• ${n}`).join('\n')}` : '') +
         (out.narration ? `\n\n🎙️ Narração:\n“${out.narration}”` : '') +
         `\n\n🎞️ Cenas:\n${scenesTxt}` +
         (out.style === 'presenter'
