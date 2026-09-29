@@ -60,13 +60,27 @@ async function buildCharacterSpeech({ image, speech, motion, voice, deps, onStat
     status('Finalizando…');
     const vFile = path.join(tmp, 'v.mp4');
     await deps.saveMedia(videoSrc, vFile);
-    const total = Math.max(2.5, dur + 0.6);
     const outFile = path.join(tmp, 'final.mp4');
-    await run(FFMPEG(), ['-y', '-stream_loop', '-1', '-i', vFile, '-i', audioFile,
-      '-filter_complex', `[1:a]adelay=200|200,apad[a]`,
-      '-map', '0:v', '-map', '[a]', '-t', total.toFixed(2),
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
-      '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', outFile], { maxBuffer: 1024 * 1024 * 64 });
+    let total;
+    if (method === 'lipsync') {
+      // o lipsync já vem alinhado com a fala: NADA de atraso nem de repetir o vídeo
+      // (antes a voz entrava 0,2 s depois da boca e o fim repetia a boca sem voz)
+      const vdur = await deps.mediaDuration(vFile);
+      total = Math.max(dur, vdur) + 0.3;
+      await run(FFMPEG(), ['-y', '-i', vFile, '-i', audioFile,
+        '-filter_complex', `[0:v]tpad=stop_mode=clone:stop_duration=1[v];[1:a]apad[a]`,
+        '-map', '[v]', '-map', '[a]', '-t', total.toFixed(2),
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', outFile], { maxBuffer: 1024 * 1024 * 64 });
+    } else {
+      // animação sem lipsync: o vídeo repete no tamanho da fala, voz por cima
+      total = Math.max(2.5, dur + 0.6);
+      await run(FFMPEG(), ['-y', '-stream_loop', '-1', '-i', vFile, '-i', audioFile,
+        '-filter_complex', `[1:a]adelay=200|200,apad[a]`,
+        '-map', '0:v', '-map', '[a]', '-t', total.toFixed(2),
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', outFile], { maxBuffer: 1024 * 1024 * 64 });
+    }
     const buf = fs.readFileSync(outFile);
     let videoUrl;
     try {
