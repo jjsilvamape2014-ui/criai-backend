@@ -9,6 +9,7 @@ const multer = require('multer');
 const axios = require('axios');
 
 const router = express.Router();
+const { authMiddleware } = require('../middleware');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 450 * 1024 * 1024 } });
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
@@ -100,7 +101,7 @@ function toSRT(segs) {
   return segs.map((s, i) => `${i + 1}\n${fmt(s.start)} --> ${fmt(s.end)}\n${s.text}\n`).join('\n');
 }
 
-router.post('/transcribe', upload.single('video'), async (req, res) => {
+router.post('/transcribe', authMiddleware, upload.single('video'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Envie a entrevista no campo "video".' });
     const key = process.env.LLM_API_KEY || '';

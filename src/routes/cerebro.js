@@ -153,8 +153,10 @@ async function startAdVideoJob({ user, session, request, displayMessage, res }) 
       const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });
       setStep(jobId, { reply: done, credits });
     } catch (e) {
-      console.error('Cérebro: anúncio em vídeo falhou:', e.message);
-      setStep(jobId, { error: 'Não consegui montar o anúncio agora. Seu crédito foi devolvido — tente novamente.' });
+      console.error('Cérebro: anúncio em vídeo falhou:', e.stack || e.message);
+      // mostra a etapa que falhou (sem chaves/URLs), para dar para diagnosticar sem os logs
+      const detail = String(e.message || '').replace(/https?:\/\/\S+/g, '[url]').replace(/Key\s+\S+/gi, 'Key ***').slice(0, 160);
+      setStep(jobId, { error: `Não consegui montar o anúncio agora. Seu crédito foi devolvido — tente novamente.${detail ? ` (Detalhe técnico: ${detail})` : ''}` });
       try {
         const upd = await prisma.generation.updateMany({ where: { id: jobId, status: 'PROCESSING' }, data: { status: 'FAILED' } });
         if (upd.count) await refundVideoCredits(user.id, charge);
