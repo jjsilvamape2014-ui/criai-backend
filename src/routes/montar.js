@@ -22,6 +22,7 @@ function vencArgs() {
   return ['-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-pix_fmt', 'yuv420p'];
 }
 const router = express.Router();
+const { authMiddleware } = require('../middleware');
 
 // Aceita o MP4 da entrevista e (opcional) o clipe da capa/abertura (FormData multipart).
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 512 * 1024 * 1024 } });
@@ -232,7 +233,7 @@ async function concatFinal(clips, outPath, L) {
   await run(FFMPEG, args, { maxBuffer: 1024 * 1024 * 128 });
 }
 
-router.post('/montar', upload.fields([{ name: 'video', maxCount: 1 }, { name: 'capa', maxCount: 1 }]), async (req, res) => {
+router.post('/montar', authMiddleware, upload.fields([{ name: 'video', maxCount: 1 }, { name: 'capa', maxCount: 1 }]), async (req, res) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mont-'));
   try {
     const videoFile = req.files && req.files.video ? req.files.video[0] : null;
