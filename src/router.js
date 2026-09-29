@@ -108,7 +108,8 @@ async function motionPrompt(message, captions = []) {
   const sys = [
     'You write prompts for an image-to-video model (Kling). The user (Brazilian Portuguese) describes how the image should move.',
     'Write ONE English paragraph: WHAT moves, HOW (direction, speed, repetition), and that EVERYTHING ELSE stays identical (same character/object design, colors, letters, pose, background). Static camera. No text added.',
-    'Use the image description to name the parts precisely. Output only the prompt.'
+    'Use the image description to name the parts precisely. Output only the prompt.',
+    'IMPORTANT for logos, text and letters: video models duplicate and deform letters when they move. NEVER make letters or words slide, fly, spin, bounce, rearrange or appear one by one. Keep all text perfectly still and sharp. For "present/animate my logo" use only: a slow camera push-in, a soft light sweep/shine passing across the logo, a subtle glow pulse, gentle particles or light in the background.'
   ].join('\n');
   const user = `Image: ${(captions || []).join(' | ') || '(no description)'}\nUser request: ${message}`;
   try {
