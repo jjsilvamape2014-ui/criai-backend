@@ -533,29 +533,38 @@ async function evaluateAsClient(src) {
 }
 
 // Diagnóstico (sem expor chaves): o que a fal e a Groq respondem para uma imagem.
-async function diagnoseVision(src) {
-  const out = { fal: null, groq: null };
+async function diagnoseVision(src, { falEndpoints = [], groqModels = [] } = {}) {
+  const out = { fal: {}, groq: {}, groqModels: null };
   const compressed = await compress(src).catch((e) => { out.compress = e.message; return null; });
   if (!compressed) return out;
-  if (process.env.FAL_KEY) {
+  const falList = (falEndpoints.length ? falEndpoints : ['fal-ai/qwen/qwen2.5-vl-7b-instruct']).slice(0, 6);
+  for (const ep of falList) {
+    if (!process.env.FAL_KEY) { out.fal = 'sem FAL_KEY'; break; }
     try {
-      const r = await axios.post('https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
-        { prompt: 'What text is written in this image?', image_url: compressed, max_tokens: 60 },
+      const r = await axios.post(`https://queue.fal.run/${String(ep).replace(/[^\w/.-]/g, '')}`,
+        { prompt: 'What text is written in this image?', image_url: compressed, max_tokens: 60, model: 'google/gemini-flash-1.5' },
         { headers: { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: () => true });
-      out.fal = { status: r.status, body: JSON.stringify(r.data || {}).replace(/https?:\/\/\S+/g, '<url>').slice(0, 300) };
-    } catch (e) { out.fal = { error: e.message }; }
-  } else out.fal = 'sem FAL_KEY';
+      out.fal[ep] = { status: r.status, body: JSON.stringify(r.data || {}).replace(/https?:\/\/\S+?(?=["\s])/g, '<url>').slice(0, 250) };
+    } catch (e) { out.fal[ep] = { error: e.message }; }
+  }
   const key = llmVisionKey();
-  if (key) {
+  if (!key) { out.groq = 'sem chave Groq (LLM_API_KEY gsk_)'; return out; }
+  const H = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
+  try {
+    const m = await axios.get('https://api.groq.com/openai/v1/models', { headers: H, timeout: 20000, validateStatus: () => true });
+    out.groqModels = ((m.data && m.data.data) || []).map((x) => x.id);
+  } catch (e) { out.groqModels = e.message; }
+  const models = (groqModels.length ? groqModels : [process.env.VISION_LLM_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct']).slice(0, 6);
+  for (const model of models) {
     try {
       const r = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: process.env.VISION_LLM_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct',
+        model,
         messages: [{ role: 'user', content: [{ type: 'text', text: 'Qual texto está escrito nesta imagem?' }, { type: 'image_url', image_url: { url: compressed } }] }],
         max_tokens: 80
-      }, { headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: () => true });
-      out.groq = { status: r.status, model: process.env.VISION_LLM_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct', body: JSON.stringify(r.data || {}).slice(0, 400) };
-    } catch (e) { out.groq = { error: e.message }; }
-  } else out.groq = 'sem chave Groq (LLM_API_KEY gsk_)';
+      }, { headers: H, timeout: 30000, validateStatus: () => true });
+      out.groq[model] = { status: r.status, body: JSON.stringify(r.data || {}).slice(0, 300) };
+    } catch (e) { out.groq[model] = { error: e.message }; }
+  }
   return out;
 }
 

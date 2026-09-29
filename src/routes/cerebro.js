@@ -303,7 +303,8 @@ router.post('/vision-check', authMiddleware, async (req, res) => {
   try {
     const img = req.body && req.body.image;
     if (!img || typeof img !== 'string') return res.status(400).json({ error: 'envie image (dataURL)' });
-    res.json(await vision.diagnoseVision(img));
+    const arr = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 6) : []);
+    res.json(await vision.diagnoseVision(img, { falEndpoints: arr(req.body.falEndpoints), groqModels: arr(req.body.groqModels) }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
