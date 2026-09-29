@@ -498,6 +498,32 @@ async function buildAd({ request, project, images, refCaptions, deps, onStatus }
   }
   const { buildMotionAd } = require('./motion/motionAd');
   const { logo, product } = await chooseAssets(images, request);
+  // Estúdio: roteiro sob medida (blocos: produto, passo a passo, benefícios...).
+  // Se falhar antes de ficar pronto, cai no modelo "Serviços" de sempre.
+  if (process.env.MOTION_STUDIO !== 'false') {
+    try {
+      const { buildStudioAd } = require('./motion/studio');
+      const st = await buildStudioAd({
+        request, project, logo, product, refCaptions,
+        voice: pickVoice(request),
+        withVoice: wantsVoice(request),
+        deps: { tts, upload: uploadToFal, removeBackground: (src) => require('./logo').removeLogoBackground(src) },
+        onStatus
+      });
+      const sc = st.storyboard.scenes;
+      return {
+        videoUrl: st.videoUrl,
+        style: 'motion',
+        brand: (project && project.brand) || st.storyboard.brand || null,
+        format: '9:16',
+        narration: wantsVoice(request) ? sc.map((x) => x.voice).join(' ') : null,
+        scenes: sc.map((x) => ({ caption: x.title || x.slogan2 || x.slogan1 || x.type })),
+        notes: st.notes || []
+      };
+    } catch (e) {
+      console.error('adVideo: estúdio falhou, usando o modelo Serviços:', e.message);
+    }
+  }
   const out = await buildMotionAd({
     request, project, logo, product, refCaptions,
     voice: pickVoice(request),
