@@ -53,19 +53,23 @@ function directorPrompt() {
     '  {"type":"cta","slogan1":"...","slogan2":"...","phone":"...","label":"...","footer":"...","voice":"..."}',
     ' ]}',
     'Regras do roteiro:',
-    '- 4 a 7 cenas. Comece com hook e termine com cta. Use cada tipo no máximo uma vez.',
+    '- 4 a 6 cenas. Comece com hook e termine com cta. Use cada tipo no máximo uma vez. O vídeo é para Reels/Status: RÁPIDO, 20 a 30 segundos no total.',
     '- product quando houver um produto/serviço para mostrar (se o cliente mandou foto de produto, SEMPRE inclua).',
     '- steps quando o cliente pedir para explicar como funciona, ou quando o produto precisa ser explicado (2 a 4 passos, na ordem real de uso).',
     '- benefits para vantagens concretas (3 ou 4 itens, title até 4 palavras).',
     '- statement para uma virada forte (ex.: "Cliente satisfeito que não avalia é venda perdida").',
     '- Textos na tela curtos: title até 7 palavras; subtitle até 12; desc até 9; slogans até 5.',
-    '- voice: fala em português do Brasil, natural e animada, 8 a 24 palavras por cena (steps e benefits podem ter até 32). O nome da marca deve ser FALADO pelo menos uma vez e na cta. Telefone falado em grupos por extenso.',
+    '- voice: fala em português do Brasil, natural e animada, 6 a 16 palavras por cena (steps e benefits até 20). SOMA de todas as falas: no máximo 75 palavras. O nome da marca deve ser FALADO pelo menos uma vez e na cta.',
+    '- Telefone e preço na voice: escreva com DÍGITOS, exatamente como o cliente escreveu (ex.: "(91) 98888-7777", "R$ 80,00"); o sistema converte para a fala. Nunca escreva números por extenso.',
+    '- Fale SOMENTE do negócio deste pedido. Não misture produtos, imagens ou assuntos de outros pedidos da conversa.',
+    '- hook.mood: use "marca" (cores da marca), a não ser que o cliente peça outra coisa.',
+    '- cta.footer: só endereço, cidade, site ou @ que o cliente informou; senão deixe vazio. Nada de "oferta por tempo limitado" ou promessas que o cliente não fez.',
     `- icon: SOMENTE destes nomes: ${ICON_NAMES.join(', ')}.`,
     '- brand: nome da empresa (do pedido, da conversa ou lido na logo). color: cor da marca (se o cliente disse ou se aparece na logo), senão uma que combine com o ramo.',
     '- NUNCA invente preço, telefone, endereço, prêmio ou estatística que não foram informados.',
     '- NUNCA escreva marcadores de modelo como [Nome da empresa], [Chame a atenção] ou (XX) XXXX-XXXX: o texto vai direto para a tela e para a voz. Se não souber o nome ou o contato, escreva a frase sem eles.',
     '- Marcas de TERCEIROS (Google, Instagram, iFood...) podem ser citadas no texto, mas nunca como logo ou como se o anúncio fosse delas.',
-    '- warnings: até 3 avisos curtos e ÚTEIS para o dono do negócio antes de publicar, como um bom publicitário faria: informação que faltou e que o cliente final vai perguntar (ex.: o que o preço inclui, prazo, entrega), marca de terceiros no produto, regra de plataforma que o argumento pode ferir (só se tiver certeza; diga "confira a regra atual"). Sem avisos óbvios ou genéricos.'
+    '- warnings: 0 a 2 avisos curtos, SÓ sobre informação que faltou e que o comprador vai perguntar (ex.: preço, horário, bairros atendidos, o que o preço inclui). Nada sobre direitos de imagem, logos, link do WhatsApp, DDD ou o que o cliente deveria ter feito. Lista vazia se nada importante faltou.'
   ].join('\n');
 }
 
@@ -89,14 +93,16 @@ function sanitizeStoryboard(raw, project, hasProduct) {
   let scenes = (Array.isArray(r.scenes) ? r.scenes : []).filter((s) => s && TYPES.includes(s.type) && !seen.has(s.type) && seen.add(s.type));
   scenes = scenes.map((s) => {
     const base = { type: s.type, voice: str(s.voice, 420) };
-    if (s.type === 'hook') return { ...base, title: str(s.title, 80), subtitle: str(s.subtitle, 140), icon: safeIcon(s.icon, 'sparkles'), mood: ['quente', 'escuro', 'marca'].includes(s.mood) ? s.mood : 'marca' };
+    if (s.type === 'hook') return { ...base, title: str(s.title, 80), subtitle: str(s.subtitle, 140), icon: safeIcon(s.icon, 'sparkles'), mood: s.mood === 'escuro' ? 'escuro' : 'marca' };
     if (s.type === 'product' || s.type === 'statement') return { ...base, title: str(s.title, 80), subtitle: str(s.subtitle, 140), icon: safeIcon(s.icon, 'star') };
     if (s.type === 'steps') return { ...base, title: str(s.title || 'Como funciona', 30), items: (s.items || []).slice(0, 4).map((it) => ({ icon: safeIcon(it.icon, 'check'), title: str(it.title, 40), desc: str(it.desc, 90) })).filter((it) => it.title) };
     if (s.type === 'benefits') return { ...base, title: str(s.title || 'Vantagens', 40), items: (s.items || []).slice(0, 4).map((it) => ({ icon: safeIcon(it.icon, 'check'), title: str(it.title, 40) })).filter((it) => it.title) };
     // telefone na tela: só dígitos (a IA às vezes escreve por extenso, que é para a VOZ)
     const phone = /\d{4}/.test(String(s.phone || '')) ? str(s.phone, 24) : '';
     // "Visite nosso site" sem site nenhum é promessa vazia
-    const footer = /\b(site|instagram|@|endere[çc]o)\b/i.test(String(s.footer || '')) && !/[\w-]+\.[a-z]{2,}|@\w+|\d/i.test(String(s.footer || '')) ? '' : str(s.footer, 90);
+    const f0 = String(s.footer || '');
+    const footer = (/\b(site|instagram|@|endere[çc]o)\b/i.test(f0) && !/[\w-]+\.[a-z]{2,}|@\w+|\d/i.test(f0)) ||
+      /(tempo limitado|[úu]ltimas unidades|s[óo] hoje|imperd[íi]vel|vagas limitadas|aproveite j[áa])/i.test(f0) ? '' : str(f0, 90);
     return { ...base, slogan1: str(s.slogan1, 50), slogan2: str(s.slogan2, 50), phone, label: str(s.label, 40), footer };
   }).filter((s) => {
     if (s.type === 'steps') return s.items.length >= 2;
@@ -157,14 +163,18 @@ async function planStudio(request, project, refCaptions, hasProduct) {
     refCaptions && refCaptions.length ? `O que está nas imagens enviadas (textos exatos): ${refCaptions.join(' | ')}` : ''
   ].filter(Boolean).join('\n');
   let sb;
-  try {
-    const text = await callLLM(directorPrompt(), user, { temperature: 0.6, maxTokens: 2200, json: true, timeout: 60000 });
-    const cleaned = String(text || '').replace(/```json/gi, '').replace(/```/g, '');
-    const s = cleaned.indexOf('{');
-    const e = cleaned.lastIndexOf('}');
-    if (s >= 0 && e > s) sb = sanitizeStoryboard(JSON.parse(cleaned.slice(s, e + 1)), p, hasProduct);
-  } catch (err) {
-    console.error('studio: roteiro via LLM falhou, usando padrão:', err.message);
+  // 2 tentativas: o roteiro padrão é genérico demais para ser a primeira saída
+  for (let attempt = 1; attempt <= 2 && !sb; attempt++) {
+    try {
+      const text = await callLLM(directorPrompt(), user, { temperature: attempt === 1 ? 0.6 : 0.4, maxTokens: 2200, json: true, timeout: 60000 });
+      const cleaned = String(text || '').replace(/```json/gi, '').replace(/```/g, '');
+      const s = cleaned.indexOf('{');
+      const e = cleaned.lastIndexOf('}');
+      if (s >= 0 && e > s) sb = sanitizeStoryboard(JSON.parse(cleaned.slice(s, e + 1)), p, hasProduct);
+      else console.error(`studio: roteiro sem JSON (tentativa ${attempt}):`, String(text || '').slice(0, 120));
+    } catch (err) {
+      console.error(`studio: roteiro via LLM falhou (tentativa ${attempt}):`, err.message);
+    }
   }
   if (!sb) sb = sanitizeStoryboard(fallbackStoryboard(request, p, hasProduct), p, hasProduct);
   // o telefone da tela final vem do que o CLIENTE escreveu (nunca inventado pela IA)

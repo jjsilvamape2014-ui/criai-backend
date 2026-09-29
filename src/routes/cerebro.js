@@ -87,9 +87,22 @@ function isAdAdjustment(message) {
 }
 
 // Dispara o pipeline do anúncio em segundo plano e responde na hora com o jobId.
+// O roteador reescreve o pedido; telefone e preço do cliente não podem se perder nisso
+function keepFacts(request, message) {
+  const digits = (x) => String(x || '').replace(/\D/g, '');
+  const extra = [];
+  for (const m of String(message || '').match(/\(?\d{2}\)?[\s-]*9?\d{4}[-\s.]?\d{4}/g) || []) {
+    if (!digits(request).includes(digits(m).slice(-8))) extra.push(`WhatsApp ${m.trim()}`);
+  }
+  for (const m of String(message || '').match(/R\$\s*\d[\d.,]*/g) || []) {
+    if (!String(request).includes(m.trim())) extra.push(m.trim());
+  }
+  return extra.length ? `${request}. ${extra.join('. ')}` : request;
+}
+
 // Troca a marca da conversa. Se for OUTRA empresa, apaga o que era da anterior
 // (contato, cores, fatos, último vídeo) para nada vazar de um cliente para outro.
-function switchBrand(session, brand) {
+function switchBrand(session, brand, { keepRefs = null } = {}) {
   const { norm, isGenericBrand } = require('../brandInfo');
   if (!brand || isGenericBrand(brand)) return;
   const p = (session.memory.project = session.memory.project || {});
@@ -102,6 +115,11 @@ function switchBrand(session, brand) {
     p.facts = [];
     p.colors = [];
     session.memory.lastAdRequest = null;
+    // imagens do cliente anterior (a placa não pode virar a pizza do próximo)
+    const keep = new Set(keepRefs || []);
+    session.memory.refImages = (session.memory.refImages || []).filter((r) => keep.has(r));
+    session.memory.refDescriptions = (session.memory.refDescriptions || []).filter((d) => keep.has(d.src));
+    if (!keep.has(session.memory.baseImage)) session.memory.baseImage = session.memory.refImages[0] || null;
   }
 }
 
@@ -163,7 +181,8 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
   setStep(jobId, { step: 'Começando…' });
   // Foto do produto: só imagens de verdade (nunca um vídeo gerado antes)
   const productImage = (session.memory.refImages || []).find((u) => typeof u === 'string' && !/^data:video|\.mp4(\?|$)/i.test(u)) || null;
-  const refCaptions = (session.memory.refDescriptions || []).map((d) => d.caption).filter(Boolean).slice(0, 2);
+  const current = new Set(session.memory.refImages || []);
+  const refCaptions = (session.memory.refDescriptions || []).filter((d) => current.has(d.src)).map((d) => d.caption).filter(Boolean).slice(-2);
 
   const presenter = style === 'presenter';
   const costNote = cost > 1 ? ` Este vídeo usa ${cost} créditos de vídeo.` : '';
@@ -172,7 +191,7 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
     : presenter
     ? `Entendi: um comercial com apresentador. Vou escrever o roteiro, criar a pessoa${productImage ? ' segurando o produto da sua foto' : ''}, gravar as falas com a boca sincronizada e montar com a tela final da sua marca. Leva de 3 a 6 minutos — pode acompanhar aqui.${costNote}`
     : '🎬 Entendi: um anúncio em vídeo' + (adVideo.wantsVoice(request) ? ' com narração' : '') +
-      `. Vou escrever o roteiro, ${adVideo.wantsVoice(request) ? 'gravar a voz, ' : ''}criar as cenas e montar tudo${productImage ? ' usando a foto que você enviou' : ''}. Leva de 1 a 4 minutos — pode acompanhar aqui.${costNote}` +
+      `. Vou escrever o roteiro, ${adVideo.wantsVoice(request) ? 'gravar a voz, ' : ''}criar as cenas e montar tudo${productImage ? ' usando a imagem que você enviou' : ''}. Leva de 1 a 4 minutos — pode acompanhar aqui.${costNote}` +
       (session.memory.project && session.memory.project.brand ? `\n\nEmpresa: ${session.memory.project.brand}. Se for outra, me diga o nome que eu refaço.` : '');
   cerebro.pushHistory(session, 'user', displayMessage || request, null);
   cerebro.pushHistory(session, 'assistant', reply, null);
@@ -413,7 +432,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         const logoCaps = newCaps.filter((c) => /(logo|logotipo|emblema|marca)/i.test(c));
         if (logoCaps.length) {
           const found = await require('../brandInfo').resolveBrand({ project: null, request: '', refCaptions: logoCaps }).catch(() => null);
-          if (found) switchBrand(session, found);
+          if (found) switchBrand(session, found, { keepRefs: pending });
         }
       }
     }
@@ -450,7 +469,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         return startAdVideoJob({ user, session, request, displayMessage: message, res, adjusting: true });
       }
       if (route.action === 'video' || (route.action === 'adjust_video' && !session.memory.lastAdRequest)) {
-        return startAdVideoJob({ user, session, request: aiRouter.requestWithStyle(route.request || message, route.style), displayMessage: message, res });
+        return startAdVideoJob({ user, session, request: keepFacts(aiRouter.requestWithStyle(route.request || message, route.style), message), displayMessage: message, res });
       }
       if (route.action === 'ask' && route.question) {
         if (/(v[íi]deo|an[úu]ncio|comercial|reels)/i.test(`${message} ${route.request}`)) {

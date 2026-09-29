@@ -49,7 +49,8 @@ function buildContext({ message, session }) {
   const mem = (session && session.memory) || {};
   const hist = ((session && session.history) || []).slice(-8)
     .map((h) => `${h.role === 'user' ? 'Cliente' : 'Estúdio'}: ${String(h.message || '').replace(/\s+/g, ' ').slice(0, 300)}${h.videoUrl ? ' [entregou um vídeo]' : ''}${h.imageUrl ? ' [entregou uma imagem]' : ''}`);
-  const imgs = (mem.refDescriptions || []).map((d) => d.caption).filter(Boolean).slice(-3);
+  const current = new Set(mem.refImages || []);
+  const imgs = (mem.refDescriptions || []).filter((d) => current.has(d.src)).map((d) => d.caption).filter(Boolean).slice(-3);
   const p = mem.project || {};
   return [
     `Mensagem atual do cliente: ${message}`,
