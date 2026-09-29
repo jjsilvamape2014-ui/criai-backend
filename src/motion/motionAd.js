@@ -90,7 +90,7 @@ function sanitizePlan(plan, project) {
     const { mentions } = require('../brandInfo');
     if (!out.brand.name || out.brand.name === 'Sua Empresa') out.brand.name = brand.slice(0, 50);
     if (!mentions(out.brand.voice, brand)) out.brand.voice = `Conheça a ${brand}! ${out.brand.voice}`;
-    if (!mentions(out.cta.voice, brand)) out.cta.voice = `${out.cta.voice} ${brand}: chama que a gente resolve!`;
+    if (!mentions(out.cta.voice, brand)) out.cta.voice = `${out.cta.voice} É com a ${brand}!`;
   }
   return out;
 }

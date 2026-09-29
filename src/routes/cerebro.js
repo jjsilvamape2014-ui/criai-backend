@@ -464,6 +464,10 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         return res.json({ success: true, sessionId: session.id, reply: text, imageUrl: null, videoUrl: null, type: 'chat', memory: session.memory, history: session.history.slice(-20), ...extra });
       };
       if (route.action === 'answer' && route.reply) return reply(route.reply);
+      // apresentador custa mais: só quando o CLIENTE pediu pessoa/apresentador (a IA não decide sozinha)
+      const askedPerson = /(apresentador|apresentadora|pessoa|avatar|influencer|garot[oa][- ]propaganda|algu[ée]m falando|\bugc\b)/i.test(message);
+      if (route.style === 'presenter' && !askedPerson) route.style = '';
+      if (route.style === 'photo' && !/(foto|realista)/i.test(message)) route.style = '';
       if (route.action === 'adjust_video' && session.memory.lastAdRequest) {
         const request = `${aiRouter.requestWithStyle(session.memory.lastAdRequest, route.style)}. Ajuste pedido pelo cliente no vídeo anterior: ${message}`;
         return startAdVideoJob({ user, session, request, displayMessage: message, res, adjusting: true });
