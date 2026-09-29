@@ -52,6 +52,18 @@ async function compress(src, maxPx = 768, quality = 70) {
 }
 
 // Descreve uma imagem (dataURL ou URL). Retorna string ou null (sem quebrar o fluxo).
+// A fila da fal devolve só o status; a resposta fica em response_url.
+async function falResultText(pd, data, headers) {
+  const pick = (o) => (typeof o === 'string' ? o : (o && (o.content || o.text)) || null);
+  let out = pick(pd.output);
+  const url = pd.response_url || data.response_url;
+  if (!out && url) {
+    const r = await axios.get(url, { headers, timeout: 20000, validateStatus: (st) => st < 500 });
+    out = pick((r.data || {}).output);
+  }
+  return out;
+}
+
 async function describeReference(src) {
   try {
     if (!isEnabled() || !process.env.FAL_KEY) return null;
@@ -72,6 +84,7 @@ async function describeReference(src) {
       { headers, timeout: 30000, validateStatus: (s) => s < 500 }
     );
     const data = res.data || {};
+    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
     let caption = null;
     if (data.status_url) {
       const deadline = Date.now() + 60000;
@@ -80,7 +93,7 @@ async function describeReference(src) {
         const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
         const pd = pollRes.data || {};
         if (pd.status === 'COMPLETED' || pd.output) {
-          caption = typeof pd.output === 'string' ? pd.output : (pd.output && (pd.output.content || pd.output.text)) || null;
+          caption = await falResultText(pd, data, headers);
           break;
         }
         if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
@@ -139,6 +152,7 @@ async function checkImageQuality(src) {
       { headers, timeout: 30000, validateStatus: (s) => s < 500 }
     );
     const data = res.data || {};
+    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
     let text = null;
     if (data.status_url) {
       const deadline = Date.now() + 45000;
@@ -147,7 +161,7 @@ async function checkImageQuality(src) {
         const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
         const pd = pollRes.data || {};
         if (pd.status === 'COMPLETED' || pd.output) {
-          text = typeof pd.output === 'string' ? pd.output : (pd.output && (pd.output.content || pd.output.text)) || null;
+          text = await falResultText(pd, data, headers);
           break;
         }
         if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
@@ -205,6 +219,7 @@ async function checkImageText(src, tokens) {
       { headers, timeout: 30000, validateStatus: (s) => s < 500 }
     );
     const data = res.data || {};
+    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
     let text = null;
     if (data.status_url) {
       const deadline = Date.now() + 45000;
@@ -213,7 +228,7 @@ async function checkImageText(src, tokens) {
         const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
         const pd = pollRes.data || {};
         if (pd.status === 'COMPLETED' || pd.output) {
-          text = typeof pd.output === 'string' ? pd.output : (pd.output && (pd.output.content || pd.output.text)) || null;
+          text = await falResultText(pd, data, headers);
           break;
         }
         if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
@@ -273,6 +288,7 @@ async function checkImageElements(src, elements) {
       { headers, timeout: 30000, validateStatus: (s) => s < 500 }
     );
     const data = res.data || {};
+    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
     let text = null;
     if (data.status_url) {
       const deadline = Date.now() + 45000;
@@ -281,7 +297,7 @@ async function checkImageElements(src, elements) {
         const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
         const pd = pollRes.data || {};
         if (pd.status === 'COMPLETED' || pd.output) {
-          text = typeof pd.output === 'string' ? pd.output : (pd.output && (pd.output.content || pd.output.text)) || null;
+          text = await falResultText(pd, data, headers);
           break;
         }
         if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
@@ -351,6 +367,7 @@ async function checkImageStrict(src, assertions) {
       { headers, timeout: 30000, validateStatus: (s) => s < 500 }
     );
     const data = res.data || {};
+    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
     let text = null;
     if (data.status_url) {
       const deadline = Date.now() + 45000;
@@ -359,7 +376,7 @@ async function checkImageStrict(src, assertions) {
         const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
         const pd = pollRes.data || {};
         if (pd.status === 'COMPLETED' || pd.output) {
-          text = typeof pd.output === 'string' ? pd.output : (pd.output && (pd.output.content || pd.output.text)) || null;
+          text = await falResultText(pd, data, headers);
           break;
         }
         if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
@@ -426,6 +443,7 @@ async function evaluateAsClient(src) {
       { headers, timeout: 30000, validateStatus: (s) => s < 500 }
     );
     const data = res.data || {};
+    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
     let text = null;
     if (data.status_url) {
       const deadline = Date.now() + 45000;
@@ -434,7 +452,7 @@ async function evaluateAsClient(src) {
         const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
         const pd = pollRes.data || {};
         if (pd.status === 'COMPLETED' || pd.output) {
-          text = typeof pd.output === 'string' ? pd.output : (pd.output && (pd.output.content || pd.output.text)) || null;
+          text = await falResultText(pd, data, headers);
           break;
         }
         if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
