@@ -65,3 +65,21 @@ test('writeText tenta de novo quando o JSON vem inválido', async () => {
   assert.strictEqual(calls, 2);
   assert.strictEqual(w.entrega.headline, 'Promo');
 });
+
+// --- rodada 2 (bateria de 40 frases em produção) ---
+test('comentário sobre o vídeo não vira vídeo novo', () => {
+  assert.strictEqual(C.enforce('answer', 'o video ficou bom obrigado').action, 'answer');
+  assert.strictEqual(C.enforce('answer', 'gostei do vídeo, valeu').action, 'answer');
+});
+test('pedido com verbo continua corrigido', () => {
+  assert.strictEqual(C.enforce('answer', 'faz um vídeo da minha loja').action, 'video');
+});
+test('legenda para a foto anexada → texto', () => {
+  assert.strictEqual(C.detectRequested('escreve a legenda para essa foto').tipo, 'copy');
+  assert.strictEqual(C.detectRequested('tira o fundo dessa foto').tipo, 'imagem');
+});
+test('personagem falando detectado no contrato', () => {
+  assert.strictEqual(C.detectSpeech('cria um video de apresentação, falando bom dia eu sou o delta', true).fala, 'Bom dia eu sou o delta.');
+  assert.strictEqual(C.detectSpeech('vídeo falando sobre a empresa', true), null);
+  assert.strictEqual(C.detectSpeech('faz ele falar oi', false), null);
+});

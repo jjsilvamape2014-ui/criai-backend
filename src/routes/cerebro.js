@@ -294,7 +294,9 @@ async function deliverText({ user, session, message, tipo, res }) {
   const contract = require('../contract');
   const { callLLM } = require('../llm');
   cerebro.pushHistory(session, 'user', message, null);
-  const w = await contract.writeText({ message, tipo, project: session.memory.project, callLLM }).catch(() => null);
+  const current = new Set(session.memory.refImages || []);
+  const captions = (session.memory.refDescriptions || []).filter((d) => current.has(d.src)).map((d) => d.caption).filter(Boolean).slice(-2);
+  const w = await contract.writeText({ message, tipo, project: session.memory.project, callLLM, captions }).catch(() => null);
   const reply = w ? contract.formatText(w) : 'Não consegui escrever agora. Tente de novo em instantes.';
   if (w && tipo === 'roteiro_video') session.memory.lastScript = { request: message, text: reply };
   cerebro.pushHistory(session, 'assistant', reply, null);
@@ -504,6 +506,8 @@ router.post('/route-check', authMiddleware, async (req, res) => {
     const hasImage = !!(req.body && req.body.hasImage);
     const contract = require('../contract');
     const fake = { memory: { project: {}, refImages: hasImage ? ['data:image/png;base64,'] : [], refDescriptions: hasImage && req.body.caption ? [{ src: 'data:image/png;base64,', caption: String(req.body.caption) }] : [] }, history: [] };
+    const sp = contract.detectSpeech(message, hasImage);
+    if (sp) return res.json({ message, final: 'speak', fala: sp.fala });
     const pre = contract.precheck({ message, knowsBusiness: false, hasImage });
     const requested = contract.detectRequested(message);
     const route = pre ? null : await aiRouter.routeMessage({ message, session: fake });
@@ -673,16 +677,8 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       return startAdVideoJob({ user, session, request, displayMessage: message, res, briefed: true });
     }
     // 🗣️ "…falando bom dia, eu sou o Delta" com imagem anexada → o personagem fala (não é anúncio)
-    if ((session.memory.refImages || []).length && !/(an[úu]ncio|promo[çc][ãa]o|vender|venda|pre[çc]o|r\$)/i.test(message)) {
-      const m = message.match(/\b(falando|dizendo|fala|falar|diga|dizer|diz)\b\s*[:,"“']?\s*(.{3,})$/i);
-      if (m && !/^(sobre|do|da|de|com|que)\b/i.test(m[2])) {
-        let fala = m[2].replace(/["”']+$/, '').trim();
-        fala = fala.charAt(0).toUpperCase() + fala.slice(1);
-        if (!/[.!?]$/.test(fala)) fala += '.';
-        const fem = /\b(a|uma)\s+(mascote|personagem|menina|mulher)|\bsou a\b/i.test(message);
-        return startSpeakJob({ user, session, message, speech: fala, voice: fem ? 'pf_dora' : 'pm_alex', res });
-      }
-    }
+    const sp = require('../contract').detectSpeech(message, (session.memory.refImages || []).length > 0);
+    if (sp) return startSpeakJob({ user, session, message, speech: sp.fala, voice: sp.feminina ? 'pf_dora' : 'pm_alex', res });
     // 🧭 A IA entende a mensagem antes de agir (conversa + textos das imagens + último vídeo).
     //    Se ela não responder (sem chave/erro), seguem as regras por palavra-chave abaixo.
     const contract = require('../contract');

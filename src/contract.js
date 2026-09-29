@@ -34,7 +34,8 @@ function detectRequested(message) {
   const onlyText = RX.onlyText.test(m);
   if (hasVideo && onlyText) return { tipo: null, conflito: 'video_vs_texto' };
   if (RX.roteiro.test(m)) return { tipo: 'roteiro_video', conflito: null };
-  if (onlyText || (RX.copy.test(m) && !hasVideo && !hasImage)) return { tipo: 'copy', conflito: null };
+  const textForImage = RX.copy.test(m) && /\b(para|pra|p\/|dessa|desta|nessa|da|do)\s+(essa\s+|esta\s+|a\s+|o\s+|minha\s+)?(foto|imagem|post|arte)\b/.test(m);
+  if (onlyText || textForImage || (RX.copy.test(m) && !hasVideo && !hasImage)) return { tipo: 'copy', conflito: null };
   // "vídeo … (com) legendas" é vídeo com legenda na tela, não pedido de texto
   if (hasVideo && hasImage) {
     // "anúncio em vídeo com a foto do produto": foto é insumo, vídeo é a entrega
@@ -73,8 +74,18 @@ function precheck({ message, knowsBusiness, hasImage }) {
 // Depois do roteador: a ação da IA tem que bater com o que foi pedido.
 // Retorna { action, corrigido, motivo }.
 const ROUTER_TIPO = { video: 'video', adjust_video: 'video', animate: 'video', speak: 'video', image: 'imagem', answer: 'texto', ask: 'pergunta' };
+// É um pedido de criação? ("faz", "cria", "quero"…) — comentário ("ficou bom", "obrigado") não é
+const ASK_VERB = /\b(faz|faca|fazer|fas|cria|crie|criar|gera|gere|gerar|quero|queria|preciso|precisa|manda|mande|monta|monte|produz\w*|desenvolv\w*|elabor\w*|me\s+(da|de|ve|arruma)|pode\s+(fazer|criar)|consegue\s+(fazer|criar))\b/;
+const FEEDBACK = /\b(ficou|gostei|amei|adorei|obrigad\w*|valeu|perfeito|show|top|legal demais|nao gostei|ruim|horrivel|errado|errou)\b/;
+function isCreationRequest(message) {
+  const m = norm(message);
+  if (FEEDBACK.test(m) && !ASK_VERB.test(m)) return false;
+  return ASK_VERB.test(m) || m.split(/\s+/).length <= 8; // pedido curto sem verbo ("reels da minha loja")
+}
+
 function enforce(action, message) {
   const req = detectRequested(message).tipo;
+  if (!isCreationRequest(message)) return { action, corrigido: false };
   const got = ROUTER_TIPO[action] || null;
   if (!req || !got || got === 'pergunta') return { action, corrigido: false };
   if (req === 'imagem' && got === 'video') return { action: 'image', corrigido: true, motivo: 'pediu imagem; a IA escolheu vídeo' };
@@ -124,10 +135,11 @@ function validateWrite(obj, tipo) {
   return out;
 }
 
-async function writeText({ message, tipo, project, callLLM }) {
+async function writeText({ message, tipo, project, callLLM, captions = [] }) {
   const p = project || {};
   const user = [
     `Pedido: ${message}`,
+    captions.length ? `Imagem enviada pelo cliente (descrição): ${captions.join(' | ')}` : '',
     `Tipo a entregar: ${tipo}`,
     p.brand ? `Marca: ${p.brand}` : '',
     (p.facts || []).length ? `Fatos: ${p.facts.map((f) => `${f.key}: ${f.value}`).join('; ')}` : '',
@@ -158,4 +170,15 @@ function formatText(w) {
   return parts.filter(Boolean).join('\n');
 }
 
-module.exports = { detectRequested, isEmptyRequest, precheck, enforce, validateWrite, writeText, formatText, parseJson };
+// "…falando bom dia, eu sou o Delta" com imagem → { fala, feminina } ou null
+function detectSpeech(message, hasImage) {
+  if (!hasImage || /(an[úu]ncio|promo[çc][ãa]o|vender|venda|pre[çc]o|r\$)/i.test(message)) return null;
+  const m = String(message || '').match(/\b(falando|dizendo|fala|falar|diga|dizer|diz)\b\s*[:,"“']?\s*(.{3,})$/i);
+  if (!m || /^(sobre|do|da|de|com|que)\b/i.test(m[2])) return null;
+  let fala = m[2].replace(/["”']+$/, '').trim();
+  fala = fala.charAt(0).toUpperCase() + fala.slice(1);
+  if (!/[.!?]$/.test(fala)) fala += '.';
+  return { fala, feminina: /\b(a|uma)\s+(mascote|personagem|menina|mulher)|\bsou a\b/i.test(message) };
+}
+
+module.exports = { isCreationRequest, detectSpeech, detectRequested, isEmptyRequest, precheck, enforce, validateWrite, writeText, formatText, parseJson };
