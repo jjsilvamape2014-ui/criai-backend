@@ -1,3 +1,5 @@
+// Precisa vir primeiro: registra as fontes (Poppins) antes de qualquer texto renderizado pelo sharp
+require('./fontSetup');
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');

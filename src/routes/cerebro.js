@@ -10,9 +10,103 @@ const logo = require('../logo');
 const vision = require('../vision');
 const axios = require('axios');
 const sharp = require('sharp');
+const adVideo = require('../adVideo');
 
 const router = express.Router();
 const prisma = new PrismaClient();
+
+// 🎬 JOBS de vídeo: o anúncio com voz leva 1–4 min. Em vez de segurar a requisição
+// (o proxy pode derrubar), o /chat devolve um jobId e o front consulta /job/:id.
+const JOBS = new Map(); // jobId → { userId, status, step, result, error, createdAt }
+function newJob(userId) {
+  const id = cerebro.newSessionId();
+  JOBS.set(id, { userId, status: 'running', step: 'Começando…', result: null, error: null, createdAt: Date.now() });
+  // limpeza simples: jobs com mais de 2h saem da memória
+  for (const [k, j] of JOBS) if (Date.now() - j.createdAt > 2 * 3600 * 1000) JOBS.delete(k);
+  return id;
+}
+
+function adCreditsOk(user) {
+  return user.plan === 'PREMIUM' || user.creditsVideos > 0 || user.creditsPurchased > 0;
+}
+
+// Dispara o pipeline do anúncio em segundo plano e responde na hora com o jobId.
+async function startAdVideoJob({ user, session, request, displayMessage, res }) {
+  if (!adCreditsOk(user)) {
+    return res.status(403).json({ error: 'Créditos de vídeo esgotados. Assine o plano para gerar vídeos.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+  }
+  const generation = await prisma.generation.create({
+    data: { userId: user.id, type: 'VIDEO', prompt: '[anuncio-video] ' + request.slice(0, 200), status: 'PROCESSING', cost: 1 }
+  });
+  const usedPurchased = user.plan !== 'PREMIUM' && user.creditsPurchased > 0;
+  if (usedPurchased) {
+    await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
+  } else if (user.plan !== 'PREMIUM') {
+    await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { decrement: 1 } } });
+  }
+
+  const jobId = newJob(user.id);
+  const job = JOBS.get(jobId);
+  // Foto do produto: só imagens de verdade (nunca um vídeo gerado antes)
+  const productImage = (session.memory.refImages || []).find((u) => typeof u === 'string' && !/^data:video|\.mp4(\?|$)/i.test(u)) || null;
+  const refCaptions = (session.memory.refDescriptions || []).map((d) => d.caption).filter(Boolean).slice(0, 2);
+
+  const reply = '🎬 Entendi: um anúncio em vídeo' + (adVideo.wantsVoice(request) ? ' com narração' : '') +
+    `. Vou escrever o roteiro, ${adVideo.wantsVoice(request) ? 'gravar a voz, ' : ''}criar as cenas e montar tudo${productImage ? ' usando a foto que você enviou' : ''}. Leva de 1 a 4 minutos — pode acompanhar aqui.`;
+  cerebro.pushHistory(session, 'user', displayMessage || request, null);
+  cerebro.pushHistory(session, 'assistant', reply, null);
+
+  (async () => {
+    try {
+      const out = await adVideo.buildAd({
+        request,
+        project: session.memory.project,
+        images: session.memory.refImages || [],
+        refCaptions,
+        deps: {
+          generateImageFromProviders: generateRoutes.generateImageFromProviders,
+          generateVideoFromProviders: generateRoutes.generateVideoFromProviders,
+          compressReferenceImage: generateRoutes.compressReferenceImage
+        },
+        onStatus: (t) => { job.step = t; }
+      });
+      await prisma.generation.update({ where: { id: generation.id }, data: { status: 'COMPLETED', imageUrl: out.videoUrl } });
+      const scenesTxt = out.scenes.map((s, i) => `${i + 1}. ${s.caption}`).join('\n');
+      const done = `Pronto! Seu anúncio ${out.style === 'motion' ? 'animado' : 'com fotos'} (${out.format}) está aqui.` +
+        (out.narration ? `\n\n🎙️ Narração:\n“${out.narration}”` : '') +
+        `\n\n🎞️ Cenas:\n${scenesTxt}` +
+        (out.style === 'motion'
+          ? '\n\nQuer outra cor, voz masculina, ou uma versão com fotos realistas ("faz com fotos")? É só pedir. Dica: envie sua LOGO que ela entra no final do vídeo.'
+          : '\n\nQuer mudar o texto da narração, a voz (masculina/feminina) ou o formato (horizontal/quadrado)? É só pedir.');
+      cerebro.pushHistory(session, 'assistant', done, null);
+      session.history[session.history.length - 1].videoUrl = out.videoUrl; // renderiza como <video> ao reabrir
+      const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });
+      job.result = { reply: done, videoUrl: out.videoUrl, credits, history: session.history.slice(-20) };
+      job.status = 'done';
+    } catch (e) {
+      console.error('Cérebro: anúncio em vídeo falhou:', e.message);
+      job.status = 'error';
+      job.error = 'Não consegui montar o anúncio agora. Seu crédito foi devolvido — tente novamente.';
+      try {
+        await prisma.generation.update({ where: { id: generation.id }, data: { status: 'FAILED' } });
+        if (usedPurchased) await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { increment: 1 } } });
+        else if (user.plan !== 'PREMIUM') await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { increment: 1 } } });
+      } catch (e2) {}
+    }
+  })();
+
+  return res.json({
+    success: true,
+    sessionId: session.id,
+    reply,
+    jobId,
+    type: 'video_job',
+    imageUrl: null,
+    videoUrl: null,
+    memory: session.memory,
+    history: session.history.slice(-20)
+  });
+}
 
 // Limite por usuário (chats são baratos, mas a geração de imagem consome)
 const chatLimiter = rateLimit({
@@ -179,6 +273,29 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
           }
         }
       }
+    }
+
+    // 🎬 ANÚNCIO EM VÍDEO (com voz): tem prioridade sobre TODO o fluxo de imagem.
+    //    Antes, "vídeo de anúncio com voz" caía no gerador de imagem (que desenhava a
+    //    palavra "voz"). Se o Cérebro perguntou algo antes, a intenção original fica
+    //    guardada em memory.pendingAd e a resposta do usuário completa o briefing.
+    if (session.memory.pendingAd) {
+      const original = session.memory.pendingAd.request;
+      session.memory.pendingAd = null;
+      const dismissive = /(n[ãa]o sei|tanto faz|voc[êe] escolhe|vc escolhe|voc[êe] decide|faz do seu jeito)/i.test(message);
+      const request = dismissive ? original : `${original}. Detalhes do cliente: ${message}`;
+      return startAdVideoJob({ user, session, request, displayMessage: message, res });
+    }
+    if (adVideo.isAdVideoRequest(message)) {
+      const hasImg = (session.memory.refImages || []).length > 0;
+      if (adVideo.needsAdBriefing(message, session.memory.project, hasImg)) {
+        const q = '🎬 Bora fazer o anúncio! Me diga em uma mensagem: o que é o produto/empresa, a oferta ou preço (se tiver) e o contato (WhatsApp, endereço). Se preferir, envie também uma foto do produto.';
+        session.memory.pendingAd = { request: message, askedAt: Date.now() };
+        cerebro.pushHistory(session, 'user', message, null);
+        cerebro.pushHistory(session, 'assistant', q, null);
+        return res.json({ success: true, sessionId: session.id, reply: q, ask: [q], needInfo: true, imageUrl: null, videoUrl: null, type: 'video', memory: session.memory, history: session.history.slice(-20) });
+      }
+      return startAdVideoJob({ user, session, request: message, res });
     }
 
     // 0) AGENTE conversacional: se o pedido é só uma conversa/dúvida (não é uma ação
@@ -547,8 +664,8 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         const videoUrl = await generateRoutes.generateVideoFromProviders(videoSource, `create a smooth cinematic ${motion === 'orbit' ? '360-degree rotating view' : motion === 'walk' ? 'walking movement' : 'subtle lifelike motion'} of this image`, motion, {});
         if (videoUrl) {
           await prisma.generation.update({ where: { id: generation.id }, data: { status: 'COMPLETED', imageUrl: videoUrl } });
-          session.memory.baseImage = videoUrl;
-          session.memory.refImages[0] = videoUrl;
+          // Não troca a foto de referência pelo vídeo: a próxima edição continua
+          // partindo da imagem (um .mp4 como "imagem" quebrava as edições seguintes).
           const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });
           cerebro.pushHistory(session, 'assistant', 'Vídeo gerado!', videoUrl);
           return res.json({ success: true, sessionId: session.id, reply: 'Vídeo criado a partir da sua imagem.', videoUrl, type: 'video', memory: session.memory, history: session.history.slice(-20), credits });
@@ -962,6 +1079,13 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     console.error('Erro no Cérebro Visual:', err.message);
     res.status(500).json({ error: 'Erro interno ao processar o comando.' });
   }
+});
+
+// GET /api/cerebro/job/:jobId — progresso do anúncio em vídeo
+router.get('/job/:jobId', authMiddleware, (req, res) => {
+  const job = JOBS.get(req.params.jobId);
+  if (!job || job.userId !== req.user.id) return res.status(404).json({ error: 'Tarefa não encontrada' });
+  res.json({ status: job.status, step: job.step, error: job.error, ...(job.result || {}) });
 });
 
 // GET /api/cerebro/memoria/:sessionId — recompõe o chat (histórico + memória)
