@@ -77,6 +77,12 @@ async function callLLM(systemPrompt, userText, opts = {}) {
   const headers = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
   if (provider === 'openrouter') headers['HTTP-Referer'] = 'https://criativa.ai';
 
+  // Modelos que "pensam" antes de responder (ex.: openai/gpt-oss-120b na Groq) gastam
+  // o max_tokens com o raciocínio: com limite baixo a resposta vem VAZIA e o app cai
+  // no plano B sem ninguém perceber. Para eles o limite mínimo é 4096.
+  const reasoning = /gpt-oss|deepseek-r1|qwq|\bo[134](-|$)|reason/i.test(model);
+  let maxTokens = reasoning ? Math.max(opts.maxTokens || 1024, 4096) : (opts.maxTokens || 1024);
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const payload = {
@@ -86,15 +92,24 @@ async function callLLM(systemPrompt, userText, opts = {}) {
           { role: 'user', content: userText }
         ],
         temperature: opts.temperature || 0.2,
-        max_tokens: opts.maxTokens || 1024
+        max_tokens: maxTokens
       };
       if (JSON_MODE_OK[provider] && opts.json !== false) payload.response_format = { type: 'json_object' };
+      // opcional: quanto o modelo pensa (confira os valores aceitos na documentação do provedor)
+      if (reasoning && process.env.LLM_REASONING_EFFORT) payload.reasoning_effort = process.env.LLM_REASONING_EFFORT;
 
-      const res = await axios.post(`${base}/chat/completions`, payload, { timeout: opts.timeout || 60000, headers });
-
-      // Groq/OpenRouter erram o trata array melhor: pega a 1ª escolha
-      const choice = res.data && res.data.choices && res.data.choices[0];
-      const content = choice && choice.message && choice.message.content;
+      let res = await axios.post(`${base}/chat/completions`, payload, { timeout: opts.timeout || 60000, headers });
+      let choice = res.data && res.data.choices && res.data.choices[0];
+      let content = choice && choice.message && choice.message.content;
+      if (!content && choice && choice.finish_reason === 'length') {
+        // o raciocínio consumiu o limite: tenta uma vez com o dobro
+        console.warn(`LLM[${provider}] resposta vazia (limite de ${maxTokens} tokens atingido); tentando com ${maxTokens * 2}`);
+        maxTokens = Math.min(maxTokens * 2, 16384);
+        res = await axios.post(`${base}/chat/completions`, { ...payload, max_tokens: maxTokens }, { timeout: opts.timeout || 60000, headers });
+        choice = res.data && res.data.choices && res.data.choices[0];
+        content = choice && choice.message && choice.message.content;
+      }
+      if (!content) console.warn(`LLM[${provider}] resposta vazia (finish_reason=${choice && choice.finish_reason})`);
       return content || null;
     } catch (e) {
       const status = e.response && e.response.status;
@@ -108,7 +123,7 @@ async function callLLM(systemPrompt, userText, opts = {}) {
             model,
             messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userText }],
             temperature: opts.temperature || 0.2,
-            max_tokens: 1024
+            max_tokens: maxTokens
           }, { timeout: 60000, headers });
           const choice = res.data && res.data.choices && res.data.choices[0];
           return (choice && choice.message && choice.message.content) || null;
