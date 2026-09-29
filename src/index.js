@@ -2,6 +2,11 @@
 require('./fontSetup');
 // Também antes dos módulos de vídeo: acha o ffmpeg (sistema ou pacote ffmpeg-static)
 require('./ffmpegSetup');
+// Um erro solto numa tarefa em segundo plano não pode derrubar o servidor inteiro
+// (derrubava as conversas em memória e o site respondia 502 até reiniciar).
+process.on('unhandledRejection', (reason) => {
+  console.error('unhandledRejection (servidor segue no ar):', reason && reason.stack ? reason.stack : reason);
+});
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');

@@ -55,17 +55,17 @@ function pickGender(message) {
 // 1) Roteiro
 // ---------------------------------------------------------------------------
 function fallbackPlan(request, project) {
-  const brand = (project && project.brand) || 'a nossa loja';
+  const brand = (project && project.brand) || '';
   return {
     look: 'mid-20s, friendly confident smile, casual smart outfit',
     setting: 'bright modern store interior, softly blurred background',
     scenes: [
-      { voice: `Olha só o que eu descobri na ${brand}!`, caption: 'Olha isso!', shot: 'close-up, talking to the camera with excitement' },
+      { voice: brand ? `Olha só o que eu descobri na ${brand}!` : 'Olha só o que eu descobri!', caption: 'Olha isso!', shot: 'close-up, talking to the camera with excitement' },
       { voice: 'Qualidade de verdade, do jeito que você procura.', caption: 'Qualidade de verdade', shot: 'medium shot, showing the product to the camera with both hands' },
       { voice: 'E o melhor: atendimento rápido e preço justo.', caption: 'Preço justo', shot: 'medium close-up, smiling and nodding while talking to the camera' },
       { voice: 'Chama agora no WhatsApp e garanta o seu!', caption: 'Chama no WhatsApp', shot: 'medium shot, pointing at the camera with a big smile' }
     ],
-    cta: { slogan1: brand, slogan2: 'Chame agora', label: 'Atendimento via WhatsApp', footer: '' }
+    cta: { slogan1: brand || 'Fale com a gente', slogan2: 'Chame agora', label: 'Atendimento via WhatsApp', footer: '' }
   };
 }
 
@@ -89,6 +89,7 @@ async function planPresenter(request, project, refCaptions) {
     '- caption: 2 a 4 palavras de destaque que aparecem grandes na tela (ex.: "FRETE GRÁTIS", "R$ 49,90").',
     '- shot: em INGLÊS, o enquadramento e a ação da cena (ex.: "close-up, talking to the camera, raised eyebrows").',
     '- cta: tela final. slogan1 = nome da marca ou frase curta; slogan2 = oferta ou chamada curta; label = texto acima do contato (ex.: "Peça pelo WhatsApp"); footer = endereço ou site, se houver.',
+    '- O NOME DA MARCA precisa ser FALADO pelo apresentador: obrigatório na cena 1 ou 3 e na cena 4. Se o cliente não escreveu o nome, use o que está na logo.',
     '- Use SOMENTE fatos dados pelo cliente (preço, telefone, endereço). Não invente preço, telefone nem promoção.'
   ].join('\n');
   const user = [
@@ -124,6 +125,16 @@ async function planPresenter(request, project, refCaptions) {
     console.error('presenterAd: roteiro via LLM falhou, usando roteiro padrão:', e.message);
   }
   return fallbackPlan(request, p);
+}
+
+// a marca tem que ser dita pelo apresentador, mesmo se a IA esquecer
+function ensureBrandSpoken(plan, brand) {
+  if (!brand) return plan;
+  const { mentions } = require('./brandInfo');
+  const sc = plan.scenes;
+  if (!sc.slice(0, 3).some((s) => mentions(s.voice, brand))) sc[0].voice = `${sc[0].voice} Aqui na ${brand}!`;
+  if (!mentions(sc[3].voice, brand)) sc[3].voice = `${sc[3].voice} É na ${brand}!`;
+  return plan;
 }
 
 // telefone só se o cliente deu (fatos do projeto ou o próprio pedido)
@@ -237,7 +248,7 @@ async function buildPresenterAd({ request, project, logo, product, refCaptions, 
     // 1) Roteiro + logo/cor (em paralelo)
     status('Escrevendo o roteiro do comercial…');
     const [plan, assets] = await Promise.all([
-      planPresenter(request, project, refCaptions),
+      planPresenter(request, project, refCaptions).then((pl) => ensureBrandSpoken(pl, project && project.brand)),
       prepareAssets({ logo, product: null })
     ]);
     const color = colorFromProject(project) || (assets.logoBuf && await colorFromLogo(assets.logoBuf)) || '#E8651A';
@@ -374,4 +385,4 @@ async function buildPresenterAd({ request, project, logo, product, refCaptions, 
   }
 }
 
-module.exports = { buildPresenterAd, planPresenter, isPresenterRequest, pickGender, _internals: { highlightOverlay, renderEndCard, concatWithVoices, findPhone, fallbackPlan } };
+module.exports = { buildPresenterAd, planPresenter, isPresenterRequest, pickGender, _internals: { highlightOverlay, renderEndCard, concatWithVoices, findPhone, fallbackPlan, ensureBrandSpoken } };

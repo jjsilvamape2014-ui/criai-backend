@@ -327,6 +327,9 @@ async function buildAdVideo({ request, project, productImage, refCaptions, deps,
     status('Escrevendo o roteiro do anúncio…');
     const plan = await planAd(request, project, refCaptions);
     const scenes = plan.scenes;
+    if (project && project.brand && !require('./brandInfo').mentions(plan.narration, project.brand)) {
+      plan.narration = `${plan.narration} ${project.brand}: chama agora!`;
+    }
 
     // 2) Narração (em paralelo com as imagens)
     status('Gravando a narração e criando as cenas…');
@@ -463,6 +466,9 @@ async function chooseAssets(images, message) {
 
 async function buildAd({ request, project, images, refCaptions, deps, onStatus }) {
   const style = pickStyle(request);
+  // nome da marca: do projeto, do pedido ou do texto da logo (sem o cliente repetir)
+  const brand = await require('./brandInfo').resolveBrand({ project, request, refCaptions });
+  if (brand) project = { ...(project || {}), brand };
   const { speakable, parsePronunciations } = require('./speech');
   const pronunciations = { ...((project && project.pronunciations) || {}), ...parsePronunciations(request) };
   const tts = (text, voice) => generateNarration(speakable(text, { pronunciations }), voice);
@@ -479,6 +485,7 @@ async function buildAd({ request, project, images, refCaptions, deps, onStatus }
     return {
       videoUrl: out.videoUrl,
       style: 'presenter',
+      brand: project && project.brand,
       format: '9:16',
       narration: out.plan.scenes.map((s) => s.voice).join(' '),
       scenes: out.plan.scenes.map((s) => ({ caption: s.caption || s.voice }))
@@ -487,7 +494,7 @@ async function buildAd({ request, project, images, refCaptions, deps, onStatus }
   if (style === 'photo') {
     const productImage = (images || []).find((u) => typeof u === 'string' && !/^data:video|\.mp4(\?|$)/i.test(u)) || null;
     const out = await buildAdVideo({ request, project, productImage, refCaptions, deps, onStatus, pronunciations });
-    return { ...out, style: 'photo' };
+    return { ...out, style: 'photo', brand: project && project.brand };
   }
   const { buildMotionAd } = require('./motion/motionAd');
   const { logo, product } = await chooseAssets(images, request);
@@ -502,6 +509,7 @@ async function buildAd({ request, project, images, refCaptions, deps, onStatus }
   return {
     videoUrl: out.videoUrl,
     style: 'motion',
+    brand: project && project.brand,
     format: '9:16',
     narration: wantsVoice(request) ? ['hook', 'brand', 'services', 'benefit', 'cta'].map((k) => pl[k].voice).join(' ') : null,
     scenes: [

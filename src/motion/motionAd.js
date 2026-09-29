@@ -35,7 +35,8 @@ function planPrompt() {
     ' "cta":{"slogan1":"...","slogan2":"...","phone":"...","contact":"...","footer":"...","voice":"..."}}',
     'Regras:',
     '- hook: a DOR ou desejo do cliente final (ex.: "Quando o calor do Pará aperta..."). title até 7 palavras; subtitle até 14 palavras. mood "quente" para calor/urgência/fome/promoção; "escuro" para problema/segurança; "marca" para o resto.',
-    '- brand: name = nome do negócio exatamente como o cliente escreveu. tagline até 9 palavras. badges = 3 valores de 1 palavra cada.',
+    '- brand: name = nome do negócio exatamente como o cliente escreveu (ou como está na logo, se ele não escreveu). tagline até 9 palavras. badges = 3 valores de 1 palavra cada.',
+    '- O NOME DA MARCA precisa ser FALADO: obrigatório no voice da cena brand e no voice do cta.',
     '- services.items: 2 a 4 serviços/produtos REAIS do cliente. title até 3 palavras; desc até 9 palavras. Se o cliente não listou, deduza os mais óbvios do ramo.',
     '- benefit: a transformação (title até 5 palavras, subtitle até 10).',
     '- cta: slogan1 e slogan2 curtos (até 5 palavras cada). phone SOMENTE se o cliente informou (senão ""). contact = endereço/@instagram se informado (senão ""). footer = convite final até 10 palavras.',
@@ -82,6 +83,14 @@ function sanitizePlan(plan, project) {
   }
   if (out.services.items.length < 2) out.services.items = fb.services.items;
   if (!out.services.voice) out.services.voice = fb.services.voice;
+  // a marca tem que ser dita (na apresentação e na chamada), mesmo se a IA esquecer
+  const brand = (project && project.brand) || '';
+  if (brand) {
+    const { mentions } = require('../brandInfo');
+    if (!out.brand.name || out.brand.name === 'Sua Empresa') out.brand.name = brand.slice(0, 50);
+    if (!mentions(out.brand.voice, brand)) out.brand.voice = `Conheça a ${brand}! ${out.brand.voice}`;
+    if (!mentions(out.cta.voice, brand)) out.cta.voice = `${out.cta.voice} ${brand}: chama que a gente resolve!`;
+  }
   return out;
 }
 

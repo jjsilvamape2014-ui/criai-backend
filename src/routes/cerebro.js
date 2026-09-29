@@ -77,8 +77,16 @@ async function recoverStaleAdJobs() {
 setTimeout(recoverStaleAdJobs, 20 * 1000).unref();
 setInterval(recoverStaleAdJobs, 10 * 60 * 1000).unref();
 
+// Mensagem que pede mudança no vídeo que acabou de sair (sem ser um pedido novo)
+function isAdAdjustment(message) {
+  const m = String(message || '');
+  const aboutVideo = /(v[íi]deo|an[úu]ncio|narra[çc][ãa]o|\bvoz\b|locu[çc][ãa]o|legenda|cena|m[úu]sica|final do)/i.test(m);
+  const change = /(coloc|p[õo]e|p[oô]r\b|bot[ae]|fal[ae]|falar|diz|dizer|cit[ae]|mud[ae]|troc[ae]|tir[ae]|adicion|inclu|refa[zç]|aument|diminu|corrig|arrum|ajust|nome|telefone|whats|endere[çc]o|pre[çc]o|cor\b|cores|masculin|feminin|mais |menos |sem )/i.test(m);
+  return aboutVideo && change;
+}
+
 // Dispara o pipeline do anúncio em segundo plano e responde na hora com o jobId.
-async function startAdVideoJob({ user, session, request, displayMessage, res }) {
+async function startAdVideoJob({ user, session, request, displayMessage, res, adjusting = false }) {
   const style = adVideo.pickStyle(request);
   const cost = user.plan === 'PREMIUM' ? 0 : adCost(style);
   if (user.plan !== 'PREMIUM' && (user.creditsVideos || 0) + (user.creditsPurchased || 0) < cost) {
@@ -116,7 +124,9 @@ async function startAdVideoJob({ user, session, request, displayMessage, res }) 
 
   const presenter = style === 'presenter';
   const costNote = cost > 1 ? ` Este vídeo usa ${cost} créditos de vídeo.` : '';
-  const reply = presenter
+  const reply = adjusting
+    ? `Certo! Vou refazer o vídeo com esse ajuste. Leva de ${presenter ? '3 a 6' : '1 a 4'} minutos — pode acompanhar aqui.${costNote}`
+    : presenter
     ? `Entendi: um comercial com apresentador. Vou escrever o roteiro, criar a pessoa${productImage ? ' segurando o produto da sua foto' : ''}, gravar as falas com a boca sincronizada e montar com a tela final da sua marca. Leva de 3 a 6 minutos — pode acompanhar aqui.${costNote}`
     : '🎬 Entendi: um anúncio em vídeo' + (adVideo.wantsVoice(request) ? ' com narração' : '') +
       `. Vou escrever o roteiro, ${adVideo.wantsVoice(request) ? 'gravar a voz, ' : ''}criar as cenas e montar tudo${productImage ? ' usando a foto que você enviou' : ''}. Leva de 1 a 4 minutos — pode acompanhar aqui.${costNote}`;
@@ -147,6 +157,10 @@ async function startAdVideoJob({ user, session, request, displayMessage, res }) 
           : out.style === 'motion'
           ? '\n\nQuer outra cor, voz masculina, ou uma versão com fotos realistas ("faz com fotos")? É só pedir. Dica: envie sua LOGO que ela entra no final do vídeo.'
           : '\n\nQuer mudar o texto da narração, a voz (masculina/feminina) ou o formato (horizontal/quadrado)? É só pedir.');
+      if (out.brand) {
+        session.memory.project = session.memory.project || {};
+        if (!session.memory.project.brand) session.memory.project.brand = out.brand; // próximos pedidos já sabem
+      }
       cerebro.pushHistory(session, 'assistant', done, null);
       session.history[session.history.length - 1].videoUrl = out.videoUrl; // renderiza como <video> ao reabrir
       await prisma.generation.update({ where: { id: jobId }, data: { status: 'COMPLETED', imageUrl: out.videoUrl } });
@@ -367,6 +381,12 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         session.memory.project.pronunciations = { ...(session.memory.project.pronunciations || {}), ...pron };
         return startAdVideoJob({ user, session, request: session.memory.lastAdRequest, displayMessage: message, res });
       }
+    }
+    // Ajuste do último vídeo: o cliente comenta o vídeo em vez de fazer um pedido novo
+    // ("consegue falar o nome da empresa no vídeo?", "muda a cor", "põe o telefone")
+    if (session.memory.lastAdRequest && !adVideo.isAdVideoRequest(message) && isAdAdjustment(message)) {
+      const request = `${session.memory.lastAdRequest}. Ajuste pedido pelo cliente no vídeo anterior: ${message}`;
+      return startAdVideoJob({ user, session, request, displayMessage: message, res, adjusting: true });
     }
     if (adVideo.isAdVideoRequest(message)) {
       const hasImg = (session.memory.refImages || []).length > 0;
