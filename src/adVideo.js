@@ -318,7 +318,7 @@ async function assemble(clips, durations, audioPath, outPath, fade = 0.4) {
 // Pipeline principal
 // ---------------------------------------------------------------------------
 // deps: { generateImageFromProviders, generateVideoFromProviders, compressReferenceImage }
-async function buildAdVideo({ request, project, productImage, refCaptions, deps, onStatus }) {
+async function buildAdVideo({ request, project, productImage, refCaptions, deps, onStatus, pronunciations = {} }) {
   const status = (t) => { try { onStatus && onStatus(t); } catch (e) {} };
   const fmt = pickFormat(request);
   const withVoice = wantsVoice(request);
@@ -336,7 +336,7 @@ async function buildAdVideo({ request, project, productImage, refCaptions, deps,
     // 2) Narração (em paralelo com as imagens)
     status('Gravando a narração e criando as cenas…');
     const narrationP = withVoice
-      ? generateNarration(plan.narration, voice).then((u) => saveMedia(u, path.join(tmp, 'voz.mp3')))
+      ? generateNarration(require('./speech').speakable(plan.narration, { pronunciations }), voice).then((u) => saveMedia(u, path.join(tmp, 'voz.mp3')))
       : Promise.resolve(null);
 
     // 3) Imagens das cenas — SEM texto (o texto entra depois, nítido, na montagem)
@@ -468,6 +468,9 @@ async function chooseAssets(images, message) {
 
 async function buildAd({ request, project, images, refCaptions, deps, onStatus }) {
   const style = pickStyle(request);
+  const { speakable, parsePronunciations } = require('./speech');
+  const pronunciations = { ...((project && project.pronunciations) || {}), ...parsePronunciations(request) };
+  const tts = (text, voice) => generateNarration(speakable(text, { pronunciations }), voice);
   if (style === 'presenter') {
     const { buildPresenterAd, pickGender } = require('./presenterAd');
     const { logo, product } = await chooseAssets(images, request);
@@ -475,7 +478,7 @@ async function buildAd({ request, project, images, refCaptions, deps, onStatus }
       request, project, logo, product, refCaptions,
       // a voz acompanha o gênero do apresentador
       voice: pickGender(request) === 'man' ? (process.env.AD_VOICE_MALE || 'pm_alex') : (process.env.AD_VOICE_FEMALE || 'pf_dora'),
-      deps: { ...deps, tts: generateNarration, upload: uploadToFal, falQueue, saveMedia, mediaDuration, sceneClip },
+      deps: { ...deps, tts, upload: uploadToFal, falQueue, saveMedia, mediaDuration, sceneClip },
       onStatus
     });
     return {
@@ -488,7 +491,7 @@ async function buildAd({ request, project, images, refCaptions, deps, onStatus }
   }
   if (style === 'photo') {
     const productImage = (images || []).find((u) => typeof u === 'string' && !/^data:video|\.mp4(\?|$)/i.test(u)) || null;
-    const out = await buildAdVideo({ request, project, productImage, refCaptions, deps, onStatus });
+    const out = await buildAdVideo({ request, project, productImage, refCaptions, deps, onStatus, pronunciations });
     return { ...out, style: 'photo' };
   }
   const { buildMotionAd } = require('./motion/motionAd');
@@ -497,7 +500,7 @@ async function buildAd({ request, project, images, refCaptions, deps, onStatus }
     request, project, logo, product, refCaptions,
     voice: pickVoice(request),
     withVoice: wantsVoice(request),
-    deps: { tts: generateNarration, upload: uploadToFal },
+    deps: { tts, upload: uploadToFal },
     onStatus
   });
   const pl = out.plan;
