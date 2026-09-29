@@ -59,8 +59,9 @@ app.use('/api/legenda', legendaRoutes);
 app.use('/api/video', montarRoutes);
 
 // Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+  const { CODE_REV, COMMIT, toolsStatus } = require('./version');
+  res.json({ status: 'OK', timestamp: new Date().toISOString(), version: CODE_REV, commit: COMMIT, tools: await toolsStatus() });
 });
 
 // Diagnóstico de configuração (só booleans — nunca expõe chaves).
