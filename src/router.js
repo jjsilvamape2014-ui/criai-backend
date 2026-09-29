@@ -12,17 +12,20 @@
 // Sem chave de LLM ou em erro → null, e o Cérebro usa as regras antigas.
 const { callLLM } = require('./llm');
 
-const ACTIONS = ['video', 'adjust_video', 'animate', 'image', 'answer', 'ask'];
+const ACTIONS = ['video', 'adjust_video', 'animate', 'speak', 'image', 'answer', 'ask'];
 const STYLES = ['motion', 'presenter', 'photo'];
 
 const SYSTEM = [
   'Você é o cérebro de um estúdio de criação com IA para pequenos negócios no Brasil (anúncios, vídeos, artes, logos).',
   'Muitos clientes NÃO sabem pedir: escrevem pouco, de forma vaga ou fazem perguntas. Seu trabalho é ENTENDER a intenção real usando todo o contexto e decidir a próxima ação. Deduza o máximo; pergunte só o essencial.',
   'Responda SOMENTE um JSON válido:',
-  '{"action":"video|adjust_video|animate|image|answer|ask","style":"motion|presenter|photo|","request":"...","motion":"...","brand":"...","reply":"...","question":"..."}',
+  '{"action":"video|adjust_video|animate|speak|image|answer|ask","style":"motion|presenter|photo|","request":"...","motion":"...","speech":"...","gender":"male|female","brand":"...","reply":"...","question":"..."}',
   'Como decidir action:',
   '- video: quer um vídeo/anúncio animado/comercial/reels, OU "apresentação/animação/vinheta/abertura da logo ou da marca" (isso é vídeo, não imagem).',
   '- animate: quer dar MOVIMENTO à própria imagem enviada (mascote, personagem, logo, produto), sem pedir anúncio, narração ou roteiro. Ex.: "deixa a barriga do mascote girando como uma betoneira", "faz o boneco acenar", "a logo girando", "faz ele piscar". Tem prioridade sobre video quando a mensagem descreve um movimento de algo DA IMAGEM.',
+  '- speak: quer que o PERSONAGEM/MASCOTE da imagem FALE uma frase (ex.: "cria um vídeo dele falando bom dia, eu sou o Delta", "faz o mascote dizer: aproveite a promoção"). Não é anúncio: a fala é a do cliente.',
+  'speech (só para speak): a fala EXATA pedida, só com pontuação e maiúsculas corrigidas (ex.: "Bom dia! Eu sou o Delta."). gender: male ou female, pelo personagem ("o Delta" → male).',
+  '- Imagem de MASCOTE/personagem com o nome da empresa é o mascote DA EMPRESA, não um brinquedo à venda. Nunca invente que é produto infantil.',
   '- adjust_video: já existe um vídeo recente e a mensagem pede mudar algo NELE (falar o nome, trocar cor, voz, telefone, texto, duração, formato).',
   '- image: quer criar ou editar uma IMAGEM (post, banner, flyer, arte, logo nova, trocar fundo, remover algo da foto).',
   '- answer: é pergunta, dúvida, comentário ou reclamação ("você não consegue ler a imagem?", "ficou bom", "como baixo?"). NUNCA transforme pergunta em edição.',
@@ -79,7 +82,9 @@ async function routeMessage({ message, session }) {
       brand: require('./brandInfo').isGenericBrand(r.brand) ? '' : str(r.brand, 50),
       reply: str(r.reply, 600),
       question: str(r.question, 200),
-      motion: str(r.motion, 700)
+      motion: str(r.motion, 700),
+      speech: str(r.speech, 400),
+      gender: r.gender === 'female' ? 'female' : 'male'
     };
   } catch (e) {
     console.error('router: falhou, usando regras:', e.message);
@@ -97,4 +102,23 @@ function requestWithStyle(request, style) {
   return r;
 }
 
-module.exports = { routeMessage, requestWithStyle, _internals: { buildContext, parseJson, SYSTEM } };
+// Pedido de movimento do cliente (português, do jeito dele) → prompt de image-to-video em inglês,
+// usando o que a visão leu da imagem para nomear as partes. Sem LLM → o próprio texto.
+async function motionPrompt(message, captions = []) {
+  const sys = [
+    'You write prompts for an image-to-video model (Kling). The user (Brazilian Portuguese) describes how the image should move.',
+    'Write ONE English paragraph: WHAT moves, HOW (direction, speed, repetition), and that EVERYTHING ELSE stays identical (same character/object design, colors, letters, pose, background). Static camera. No text added.',
+    'Use the image description to name the parts precisely. Output only the prompt.'
+  ].join('\n');
+  const user = `Image: ${(captions || []).join(' | ') || '(no description)'}\nUser request: ${message}`;
+  try {
+    const t = await callLLM(sys, user, { temperature: 0.2, maxTokens: 400, json: false, timeout: 30000 });
+    const out = String(t || '').replace(/```/g, '').trim();
+    if (out.length > 20) return out.slice(0, 900);
+  } catch (e) {
+    console.error('router: prompt de movimento falhou:', e.message);
+  }
+  return `Animate the image: ${message}. Keep everything else identical. Static camera.`;
+}
+
+module.exports = { routeMessage, requestWithStyle, motionPrompt, _internals: { buildContext, parseJson, SYSTEM } };
