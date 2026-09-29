@@ -66,7 +66,7 @@ function directorPrompt() {
     '- cta.footer: só endereço, cidade, site ou @ que o cliente informou; senão deixe vazio. Nada de "oferta por tempo limitado" ou promessas que o cliente não fez.',
     `- icon: SOMENTE destes nomes: ${ICON_NAMES.join(', ')}.`,
     '- brand: nome da empresa (do pedido, da conversa ou lido na logo). color: cor da marca (se o cliente disse ou se aparece na logo), senão uma que combine com o ramo.',
-    '- NUNCA invente preço, telefone, endereço, prêmio ou estatística que não foram informados.',
+    '- NUNCA invente preço, telefone, endereço, prêmio ou estatística que não foram informados, nem detalhes específicos do produto (ex.: "forno a lenha", "peças importadas", "suporte 24h", "garantia de 1 ano"). Sem a informação, use benefícios gerais e verdadeiros para qualquer negócio do ramo.',
     '- NUNCA escreva marcadores de modelo como [Nome da empresa], [Chame a atenção] ou (XX) XXXX-XXXX: o texto vai direto para a tela e para a voz. Se não souber o nome ou o contato, escreva a frase sem eles.',
     '- Marcas de TERCEIROS (Google, Instagram, iFood...) podem ser citadas no texto, mas nunca como logo ou como se o anúncio fosse delas.',
     '- warnings: 0 a 2 avisos curtos, SÓ sobre informação que faltou e que o comprador vai perguntar (ex.: preço, horário, bairros atendidos, o que o preço inclui). Nada sobre direitos de imagem, logos, link do WhatsApp, DDD ou o que o cliente deveria ter feito. Lista vazia se nada importante faltou.'
@@ -141,7 +141,7 @@ function ensureBrand(sb, brand) {
     const target = sc.find((s) => s.type === 'product') || sc[Math.min(1, sc.length - 2)];
     target.voice = `Conheça a ${brand}! ${target.voice}`;
   }
-  if (!mentions(cta.voice, brand)) cta.voice = `${cta.voice} ${brand}: chama que a gente resolve!`;
+  if (!mentions(cta.voice, brand)) cta.voice = `${cta.voice} É com a ${brand}!`;
   return sb;
 }
 
@@ -493,7 +493,7 @@ async function buildStudioAd({ request, project, logo, product, refCaptions, voi
     // avisos antes de publicar: os do diretor + checagens que não dependem da IA
     const notes = [...sb.warnings];
     const cta = sb.scenes[sb.scenes.length - 1];
-    if (!cta.phone) {
+    if (!cta.phone && !/[\w-]+\.(com|net|org|app|ai|br|io)\b|@\w+/i.test(`${request} ${cta.footer || ''}`)) {
       notes.unshift('O final ficou sem WhatsApp ou telefone. Anúncio sem contato perde quem se interessou: me mande o número que eu refaço o vídeo.');
     }
     return { videoUrl, storyboard: sb, color, duration: video.duration, notes: notes.slice(0, 4) };

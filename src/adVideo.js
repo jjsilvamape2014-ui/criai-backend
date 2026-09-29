@@ -480,7 +480,9 @@ function pickStyle(message) {
 async function chooseAssets(images, message) {
   const imgs = (images || []).filter((u) => typeof u === 'string' && !/^data:video|\.mp4(\?|$)/i.test(u)).slice(0, 4);
   if (!imgs.length) return { logo: null, product: null };
-  const saysLogo = /\blogo|logomarca|minha marca/i.test(String(message || ''));
+  // "logo do Google" na descrição de um produto não é a logo do cliente
+  const msg = String(message || '').replace(/logo(tipo|marca)? (do|da|de) (google|instagram|facebook|whatsapp|ifood|mercado ?(livre|pago)|shopee|youtube|tiktok|apple|samsung)\b/gi, '');
+  const saysLogo = /\blogo|logomarca|minha marca/i.test(msg);
   let logoIdx = -1;
   if (imgs.length >= 2) {
     try { logoIdx = await require('./logo').detectLogoRef(imgs); } catch (e) {}
