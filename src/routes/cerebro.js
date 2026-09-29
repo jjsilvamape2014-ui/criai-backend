@@ -310,7 +310,7 @@ async function makeLogo({ user, session, message, display, res }) {
     const A = adVideo._internals;
     const os = require('os'); const path = require('path'); const fs = require('fs');
     const symbol = await LM.drawSymbol({
-      name, colorName: color.name, hint: LM.businessHint(message, name),
+      name, colorName: color.name, hex: color.hex, hint: LM.businessHint(message, name),
       generate: generateRoutes.generateImageFromProviders,
       toBuffer: async (url) => { const f = path.join(os.tmpdir(), `sym-${Date.now()}.img`); await A.saveMedia(url, f); const b = fs.readFileSync(f); fs.unlinkSync(f); return b; },
     });

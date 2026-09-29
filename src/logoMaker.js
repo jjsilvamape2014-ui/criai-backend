@@ -74,26 +74,59 @@ async function composeLogo({ name, hex, symbol }) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${W}"><rect width="${W}" height="${W}" fill="#ffffff"/>${symbol ? '' : mono}${text}</svg>`;
   const layers = [];
   if (symbol) {
-    const s = await sharp(symbol).resize(symH, symH, { fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 1 } }).flatten({ background: '#ffffff' }).png().toBuffer();
-    layers.push({ input: s, left: Math.round((W - symH) / 2), top });
+    const s = await sharp(symbol).resize(symH, symH, { fit: 'inside' }).png().toBuffer();
+    const sm = await sharp(s).metadata();
+    layers.push({ input: s, left: Math.round((W - sm.width) / 2), top: top + Math.round((symH - sm.height) / 2) });
   }
   return sharp(Buffer.from(svg)).composite(layers).png().toBuffer();
 }
 
-// Símbolo sem texto pela IA de imagem; null se falhar
-async function drawSymbol({ name, colorName, hint, generate, toBuffer }) {
-  const prompt = [
-    `Minimal flat vector logo SYMBOL (icon only) for a brand${hint ? ` in the field of ${hint}` : ''}.`,
-    `Main color: ${colorName || 'blue'}. Simple geometric shapes, bold and clean, centered on a pure white background, generous margin.`,
-    'ABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO NUMBERS anywhere in the image. Icon only. No mockup, no shadow, no gradient background.',
-  ].join(' ');
-  try {
-    const url = await generate(prompt, { width: 1024, height: 1024 });
-    return url ? await toBuffer(url) : null;
-  } catch (e) {
-    console.error('logoMaker: símbolo falhou (usando monograma):', e.message);
-    return null;
+const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+
+// Separa o ícone do fundo branco, pinta na cor da marca (mantendo luz e sombra) e recorta.
+// Rejeita (null) ícone grudado nas bordas ou ocupando quase tudo (ex.: "app icon" com fundo).
+async function processSymbol(buf, hex) {
+  const { data, info } = await sharp(buf).resize(512, 512, { fit: 'fill' }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const W = info.width, H = info.height, N = W * H;
+  const out = Buffer.alloc(N * 4);
+  const [cr, cg, cb] = hexRgb(hex);
+  let count = 0, edge = 0;
+  for (let i = 0; i < N; i++) {
+    const r = data[i * 3], g = data[i * 3 + 1], b = data[i * 3 + 2];
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    const a = Math.max(0, Math.min(1, (245 - Math.min(r, g, b)) / 60)); // distância do branco
+    if (a > 0.5) { count++; const x = i % W, y = (i / W) | 0; if (x < 6 || y < 6 || x >= W - 6 || y >= H - 6) edge++; }
+    const k = 0.55 + 0.45 * (lum / 255); // claro → tom mais claro da marca; escuro → cor cheia
+    out[i * 4] = Math.round(cr * k + 255 * (1 - k) * (lum / 255) * 0.35);
+    out[i * 4 + 1] = Math.round(cg * k + 255 * (1 - k) * (lum / 255) * 0.35);
+    out[i * 4 + 2] = Math.round(cb * k + 255 * (1 - k) * (lum / 255) * 0.35);
+    out[i * 4 + 3] = Math.round(a * 255);
   }
+  const coverage = count / N;
+  if (coverage < 0.02 || coverage > 0.45 || edge > W * 0.5) return null;
+  return sharp(out, { raw: { width: W, height: H, channels: 4 } }).trim({ threshold: 10 }).png().toBuffer();
 }
 
-module.exports = { isLogoRequest, extractName, extractColor, businessHint, composeLogo, drawSymbol, COLORS };
+// Símbolo sem texto pela IA de imagem, limpo e na cor da marca; null se falhar
+async function drawSymbol({ name, colorName, hex, hint, generate, toBuffer }) {
+  const prompt = [
+    `A single simple flat icon (logo symbol) for a brand${hint ? ` in the field of ${hint}` : ''}, solid ${colorName || 'blue'} shapes.`,
+    'Centered, small, on a PURE WHITE (#FFFFFF) background with lots of empty white space around it.',
+    'NOT an app icon: no rounded square tile, no frame, no background shapes, no pattern, no gradient, no shadow, no mockup.',
+    'ABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO NUMBERS.',
+  ].join(' ');
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const url = await generate(prompt, { width: 1024, height: 1024 });
+      if (!url) continue;
+      const clean = await processSymbol(await toBuffer(url), hex || '#1d4ed8');
+      if (clean) return clean;
+      console.warn(`logoMaker: símbolo rejeitado (tentativa ${attempt})`);
+    } catch (e) {
+      console.error('logoMaker: símbolo falhou:', e.message);
+    }
+  }
+  return null;
+}
+
+module.exports = { isLogoRequest, extractName, extractColor, businessHint, composeLogo, drawSymbol, processSymbol, COLORS };
