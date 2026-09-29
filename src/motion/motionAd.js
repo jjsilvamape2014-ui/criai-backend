@@ -221,6 +221,7 @@ async function buildMotionAd({ request, project, logo, product, refCaptions, voi
     const keys = ['hook', 'brand', 'services', 'benefit', 'cta'];
     const durations = {};
     const voiceClips = [];
+    let lastVoiceError = '';
     if (withVoice) {
       status('Gravando a narração…');
       const files = await Promise.all(keys.map(async (k) => {
@@ -233,6 +234,7 @@ async function buildMotionAd({ request, project, logo, product, refCaptions, voi
           return f;
         } catch (e) {
           console.error(`motionAd: voz da cena ${k} falhou:`, e.message);
+          lastVoiceError = e.message;
           return null;
         }
       }));
@@ -243,7 +245,7 @@ async function buildMotionAd({ request, project, logo, product, refCaptions, voi
           voiceClips.push({ key: keys[i], file: files[i] });
         }
       }
-      if (!voiceClips.length) throw new Error('nenhuma narração foi gerada');
+      if (!voiceClips.length) throw new Error(`nenhuma narração foi gerada (voz: ${lastVoiceError || 'sem detalhe'})`);
     }
 
     const spec = { pal: E.palette(color), ...plan, assets, durations };
