@@ -288,6 +288,19 @@ async function prepareForVideo(src) {
     .jpeg({ quality: 92 }).toBuffer();
 }
 
+// ✍️ ENTREGA EM TEXTO (roteiro de vídeo, legenda, copy): JSON validado pelo contrato,
+// sem renderizar e sem gastar crédito de vídeo.
+async function deliverText({ user, session, message, tipo, res }) {
+  const contract = require('../contract');
+  const { callLLM } = require('../llm');
+  cerebro.pushHistory(session, 'user', message, null);
+  const w = await contract.writeText({ message, tipo, project: session.memory.project, callLLM }).catch(() => null);
+  const reply = w ? contract.formatText(w) : 'Não consegui escrever agora. Tente de novo em instantes.';
+  if (w && tipo === 'roteiro_video') session.memory.lastScript = { request: message, text: reply };
+  cerebro.pushHistory(session, 'assistant', reply, null);
+  return res.json({ success: true, sessionId: session.id, reply, contract: w ? { status: 'ok', ...w } : { status: 'erro' }, imageUrl: null, videoUrl: null, type: 'chat', memory: session.memory, history: session.history.slice(-20) });
+}
+
 // 🌀 ANIMAR A IMAGEM: o cliente quer que algo DA IMAGEM se mexa ("a barriga do mascote
 // girando como uma betoneira"). Não é anúncio: é image-to-video (Kling) da própria imagem,
 // com um prompt de movimento preciso escrito pela IA. Custa 1 crédito de vídeo.
@@ -499,7 +512,8 @@ router.post('/vision-check', authMiddleware, async (req, res) => {
 // Aceita: message, sessionId, image (principal, dataURL/string) ou images: [urls/dataURLs] (até 4)
 router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
   try {
-    const { sessionId, message, image, images, portrait } = req.body || {};
+    const { sessionId, image, images, portrait } = req.body || {};
+    let message = (req.body || {}).message;
     const user = req.user;
 
     if (!message || message.trim().length < 2) {
@@ -618,6 +632,21 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       return startAdVideoJob({ user, session, request, displayMessage: message, res, briefed: !!(empresa || whatsapp) });
     }
 
+    // 📜 Resposta a uma pergunta do contrato ("vídeo pronto ou só o texto?")
+    if (session.memory.pendingContract) {
+      const original = session.memory.pendingContract.message;
+      session.memory.pendingContract = null;
+      if (/\b(texto|legenda|roteiro|copy|escrito)\b/i.test(message) && !/\bv[íi]deo pronto\b/i.test(message)) {
+        return deliverText({ user, session, message: original, tipo: /roteiro/i.test(original) ? 'roteiro_video' : 'copy', res });
+      }
+      const clean = original.replace(/,?\s*(mas\s+)?(me\s+)?(entregue\s+|mande\s+|quero\s+)?(s[óo]|apenas|somente)\s+(a\s+|o\s+)?(legenda|legendas|texto|copy|roteiro)[^.,]*/gi, '');
+      return startAdVideoJob({ user, session, request: clean, displayMessage: message, res, briefed: true });
+    }
+    // quem respondeu "quero imagem" à pergunta do anúncio não pode cair no vídeo
+    if (session.memory.pendingAd && /\b(imagem|post|arte|banner|flyer)\b/i.test(message) && !/\bv[íi]deo\b/i.test(message)) {
+      message = `${session.memory.pendingAd.request}. ${message}`;
+      session.memory.pendingAd = null;
+    }
     if (session.memory.pendingAd) {
       const original = session.memory.pendingAd.request;
       session.memory.pendingAd = null;
@@ -638,8 +667,35 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     }
     // 🧭 A IA entende a mensagem antes de agir (conversa + textos das imagens + último vídeo).
     //    Se ela não responder (sem chave/erro), seguem as regras por palavra-chave abaixo.
+    const contract = require('../contract');
+    const projNow = session.memory.project || {};
+    const hasImgNow = (session.memory.refImages || []).length > 0;
+    const pre = contract.precheck({ message, knowsBusiness: !!(projNow.brand || (projNow.facts || []).length), hasImage: hasImgNow });
+    if (pre) {
+      const q = pre.duvidas.join('\n');
+      if (pre.tipo === 'roteiro_video' && /v[íi]deo/i.test(message)) session.memory.pendingContract = { message, at: Date.now() };
+      else session.memory.pendingAd = { request: message, askedAt: Date.now() };
+      cerebro.pushHistory(session, 'user', message, null);
+      cerebro.pushHistory(session, 'assistant', q, null);
+      return res.json({ success: true, sessionId: session.id, reply: q, ask: pre.duvidas, needInfo: true, contract: pre, imageUrl: null, videoUrl: null, type: 'chat', memory: session.memory, history: session.history.slice(-20) });
+    }
+    // roteiro/legenda/texto: entrega TEXTO (não renderiza vídeo nem gasta crédito de vídeo)
+    const requested = contract.detectRequested(message).tipo;
+    const adjustingLast = !!session.memory.lastAdRequest && /\b(refa[zç]\w*|muda|mude|troca|troque|ajusta|ajuste|corrig\w*)\b/i.test(message);
+    if ((requested === 'roteiro_video' || requested === 'copy') && !adjustingLast) {
+      return deliverText({ user, session, message, tipo: requested, res });
+    }
+
     const route = await aiRouter.routeMessage({ message, session });
     if (route) {
+      // o tipo pedido manda: imagem nunca vira vídeo, vídeo nunca vira imagem/resposta
+      const fix = contract.enforce(route.action, message);
+      if (fix.corrigido) {
+        console.warn('contrato: ação corrigida', route.action, '→', fix.action, '|', fix.motivo);
+        if (fix.action === 'write') return deliverText({ user, session, message, tipo: requested || 'copy', res });
+        route.action = fix.action;
+        if (fix.action === 'video' && !route.request) route.request = message;
+      }
       if (route.brand) {
         session.memory.project = session.memory.project || {};
         // escreveu o nome de OUTRA empresa na mensagem → troca; senão só preenche se estava vazio

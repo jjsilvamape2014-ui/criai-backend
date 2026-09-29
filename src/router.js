@@ -71,9 +71,15 @@ function buildContext({ message, session }) {
 async function routeMessage({ message, session }) {
   if (process.env.CEREBRO_ROUTER === 'false') return null;
   try {
-    const text = await callLLM(SYSTEM, buildContext({ message, session }), { temperature: 0.1, maxTokens: 500, maxAttempts: 1, timeout: 25000, json: true });
-    const r = parseJson(text);
-    if (!r || !ACTIONS.includes(r.action)) return null;
+    // JSON validado; se vier inválido, uma segunda tentativa antes de cair nas regras antigas
+    let r = null;
+    for (let attempt = 1; attempt <= 2 && !r; attempt++) {
+      const text = await callLLM(SYSTEM, buildContext({ message, session }), { temperature: attempt === 1 ? 0.1 : 0, maxTokens: 500, maxAttempts: 1, timeout: 25000, json: true });
+      const parsed = parseJson(text);
+      if (parsed && ACTIONS.includes(parsed.action)) r = parsed;
+      else console.warn(`router: JSON inválido (tentativa ${attempt}):`, String(text || '').slice(0, 120));
+    }
+    if (!r) return null;
     const str = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
     return {
       action: r.action,
