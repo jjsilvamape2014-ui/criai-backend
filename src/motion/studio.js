@@ -147,8 +147,10 @@ function ensureBrand(sb, brand) {
 
 // "(91) 99987-9932" / "91 999879932" → "(91) 99987-9932"
 function phoneFrom(text) {
-  const m = String(text || '').match(/\(?\b(\d{2})\)?[\s-]*(9?\d{4})[-\s.]?(\d{4})\b/);
-  return m ? `(${m[1]}) ${m[2]}-${m[3]}` : '';
+  // aceita "91 99987-9932", "(91) 9 9987-9932", "91999879932" e o hífen especial que a IA usa
+  const t = require('../placeholders').normalize(text);
+  const m = t.match(/\(?\b(\d{2})\)?[\s-]*(9?\s?\d{4})[-\s.]?(\d{4})\b/);
+  return m ? `(${m[1]}) ${m[2].replace(/\s/g, '')}-${m[3]}` : '';
 }
 
 async function planStudio(request, project, refCaptions, hasProduct) {
@@ -163,20 +165,24 @@ async function planStudio(request, project, refCaptions, hasProduct) {
     refCaptions && refCaptions.length ? `O que está nas imagens enviadas (textos exatos): ${refCaptions.join(' | ')}` : ''
   ].filter(Boolean).join('\n');
   let sb;
+  const errors = [];
   // 2 tentativas: o roteiro padrão é genérico demais para ser a primeira saída
   for (let attempt = 1; attempt <= 2 && !sb; attempt++) {
     try {
-      const text = await callLLM(directorPrompt(), user, { temperature: attempt === 1 ? 0.6 : 0.4, maxTokens: 2200, json: true, timeout: 60000 });
+      const text = await callLLM(directorPrompt(), user, { temperature: attempt === 1 ? 0.6 : 0.4, maxTokens: 2200, json: true, timeout: 60000, errors });
       const cleaned = String(text || '').replace(/```json/gi, '').replace(/```/g, '');
       const s = cleaned.indexOf('{');
       const e = cleaned.lastIndexOf('}');
       if (s >= 0 && e > s) sb = sanitizeStoryboard(JSON.parse(cleaned.slice(s, e + 1)), p, hasProduct);
-      else console.error(`studio: roteiro sem JSON (tentativa ${attempt}):`, String(text || '').slice(0, 120));
+      else { errors.push(`sem JSON: ${String(text || '(vazio)').slice(0, 80)}`); console.error(`studio: roteiro sem JSON (tentativa ${attempt}):`, String(text || '').slice(0, 120)); }
     } catch (err) {
+      errors.push(`erro: ${err.message}`);
       console.error(`studio: roteiro via LLM falhou (tentativa ${attempt}):`, err.message);
     }
   }
+  const source = sb ? 'ia' : 'padrão';
   if (!sb) sb = sanitizeStoryboard(fallbackStoryboard(request, p, hasProduct), p, hasProduct);
+  sb.debug = { source, errors: errors.slice(0, 4) };
   // o telefone da tela final vem do que o CLIENTE escreveu (nunca inventado pela IA)
   const phoneTyped = phoneFrom(`${request} ${(p.facts || []).map((f) => f.value).join(' ')}`);
   const cta = sb.scenes[sb.scenes.length - 1];
@@ -487,7 +493,7 @@ async function buildStudioAd({ request, project, logo, product, refCaptions, voi
     // avisos antes de publicar: os do diretor + checagens que não dependem da IA
     const notes = [...sb.warnings];
     const cta = sb.scenes[sb.scenes.length - 1];
-    if (!cta.phone && !/\d{4}[-\s]?\d{4}/.test(request)) {
+    if (!cta.phone) {
       notes.unshift('O final ficou sem WhatsApp ou telefone. Anúncio sem contato perde quem se interessou: me mande o número que eu refaço o vídeo.');
     }
     return { videoUrl, storyboard: sb, color, duration: video.duration, notes: notes.slice(0, 4) };

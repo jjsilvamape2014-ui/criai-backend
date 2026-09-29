@@ -229,7 +229,7 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
       session.history[session.history.length - 1].videoUrl = out.videoUrl; // renderiza como <video> ao reabrir
       await prisma.generation.update({ where: { id: jobId }, data: { status: 'COMPLETED', imageUrl: out.videoUrl } });
       const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });
-      setStep(jobId, { reply: done, credits });
+      setStep(jobId, { reply: done, credits, debug: out.debug || null });
     } catch (e) {
       console.error('Cérebro: anúncio em vídeo falhou:', e.stack || e.message);
       // mostra a etapa que falhou (sem chaves/URLs), para dar para diagnosticar sem os logs
@@ -1302,7 +1302,7 @@ router.get('/job/:jobId', authMiddleware, async (req, res) => {
     }
     const mem = JOB_STEPS.get(gen.id) || {};
     if (gen.status === 'COMPLETED') {
-      return res.json({ status: 'done', reply: mem.reply || 'Pronto! Seu vídeo está aqui.', videoUrl: gen.imageUrl, credits: mem.credits || null });
+      return res.json({ status: 'done', reply: mem.reply || 'Pronto! Seu vídeo está aqui.', videoUrl: gen.imageUrl, credits: mem.credits || null, debug: mem.debug || null });
     }
     if (gen.status === 'FAILED') {
       return res.json({ status: 'error', error: mem.error || 'Não consegui montar o vídeo. Seu crédito foi devolvido — tente novamente.' });
