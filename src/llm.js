@@ -73,6 +73,7 @@ async function callLLM(systemPrompt, userText, opts = {}) {
   }
 
   // OpenAI / Groq / OpenRouter — API OpenAI-compatível
+  let rateRetries = 0;
   const base = process.env.LLM_BASE_URL || BASE_URL[provider] || BASE_URL.openai;
   const headers = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
   if (provider === 'openrouter') headers['HTTP-Referer'] = 'https://criativa.ai';
@@ -114,6 +115,17 @@ async function callLLM(systemPrompt, userText, opts = {}) {
     } catch (e) {
       const status = e.response && e.response.status;
       const detail = (e.response && e.response.data && JSON.stringify(e.response.data).slice(0, 300)) || e.message;
+      if (Array.isArray(opts.errors)) opts.errors.push(`HTTP ${status || '-'}: ${String(detail).slice(0, 160)}`);
+      // 429 = muitos pedidos ao mesmo tempo (vários vídeos em paralelo): espera e tenta de novo
+      if (status === 429 && rateRetries < 3) {
+        rateRetries++;
+        const ra = parseFloat((e.response.headers && e.response.headers['retry-after']) || '');
+        const wait = Math.min(20000, Number.isFinite(ra) ? ra * 1000 + 500 : 3000 * rateRetries);
+        console.warn(`LLM[${provider}] limite de pedidos (429), esperando ${Math.round(wait / 1000)}s...`);
+        await sleep(wait);
+        attempt--; // não conta como tentativa
+        continue;
+      }
       const retryable = !status || status >= 500;
       // JSON mode no formato correto nem sempre é suportado (400) → tenta sem response_format
       if (status === 400) {
