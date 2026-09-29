@@ -37,6 +37,8 @@ async function resolveBrand({ project, request, refCaptions }) {
     'Você extrai o NOME DA EMPRESA/MARCA para um anúncio.',
     'Use o pedido do cliente e o texto que aparece nas imagens enviadas (normalmente a logo).',
     'Responda SOMENTE o nome, exatamente como está escrito (ex.: JN Refrigeração). Sem aspas, sem explicação.',
+    'Na logo, a sigla e a palavra do ramo logo abaixo formam o nome completo: "JN" + "REFRIGERAÇÃO" = JN Refrigeração; "SOL" + "PROVEDOR DE INTERNET" = SOL Provedor de Internet. Slogans (ex.: "Climatização com qualidade") NÃO fazem parte do nome.',
+    'Escreva em maiúsculas/minúsculas normais, mantendo siglas em maiúsculas (JN, XYZ).',
     'Se não houver nome de empresa, responda NENHUM.'
   ].join('\n');
   const user = [`Pedido: ${request}`, caps.length ? `Imagens enviadas: ${caps.join(' | ')}` : ''].filter(Boolean).join('\n');
