@@ -306,21 +306,9 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       session.memory.onlyFromDisk = true;
     }
 
-    // Pergunta sobre como funciona → responde com explicação sem gerar nem gastar crédito
-    const HOW_IT_WORKS = /como funciona|cria imagem|gerar imagem|fazer imagem|como você cria|como eu crio|como vc cria|como vc gera|como você (gera|cria|faz)|o que você faz|o que vc faz|explica como|me explica|como funciona a criação|de texto ou imagem/i;
-    if (HOW_IT_WORKS.test(message)) {
-      cerebro.pushHistory(session, 'user', message, null);
-      const reply = '⚙️ Como funciona na prática:\n\n• Texto → Conceitos visuais: você descreve a cena e o modelo entende cada parte.\n\n• Composição → Renderização: o modelo organiza os elementos e gera a imagem pixel por pixel.\n\n• Imagem enviada → Referência: se você manda uma foto, ela serve como base para aplicar mudanças ou estilos.\n\nEnvie a foto + sua logo e peça para colocar a logo — eu sobreponho ela exatamente na posição que você escolher.';
-      cerebro.pushHistory(session, 'assistant', reply, null);
-      return res.json({
-        success: true,
-        sessionId: session.id,
-        reply,
-        imageUrl: null,
-        memory: session.memory,
-        history: session.history.slice(-20)
-      });
-    }
+    // (O atalho antigo "como funciona" foi removido: ele interceptava pedidos como
+    //  "vídeo explicando como funciona" e "cria imagem de…" com um texto pronto.
+    //  Dúvidas de verdade agora são respondidas pelo roteador de IA.)
 
     // Guarda imagem(s) de referência — aceita uma lista de até 4 imagens para edição real
     const refsFromClient = Array.isArray(images) && images.length > 0
