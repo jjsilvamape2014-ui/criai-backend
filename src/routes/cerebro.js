@@ -496,6 +496,24 @@ function multiRefDesignRules(paletteBlock) {
   return lines.join('\n');
 }
 
+// POST /api/cerebro/route-check — o que o Cérebro FARIA com uma frase (sem gerar nada,
+// sem gastar crédito): contrato + roteador de IA + correção. Para testar entendimento.
+router.post('/route-check', authMiddleware, async (req, res) => {
+  try {
+    const message = String((req.body && req.body.message) || '').slice(0, 500);
+    const hasImage = !!(req.body && req.body.hasImage);
+    const contract = require('../contract');
+    const fake = { memory: { project: {}, refImages: hasImage ? ['data:image/png;base64,'] : [], refDescriptions: hasImage && req.body.caption ? [{ src: 'data:image/png;base64,', caption: String(req.body.caption) }] : [] }, history: [] };
+    const pre = contract.precheck({ message, knowsBusiness: false, hasImage });
+    const requested = contract.detectRequested(message);
+    const route = pre ? null : await aiRouter.routeMessage({ message, session: fake });
+    const fix = route ? contract.enforce(route.action, message) : null;
+    res.json({ message, precheck: pre, requested, router: route && { action: route.action, style: route.style, request: route.request }, final: pre ? 'perguntar' : (requested.tipo === 'roteiro_video' || requested.tipo === 'copy') ? 'texto' : fix ? fix.action : (route ? route.action : 'regras-antigas'), corrigido: !!(fix && fix.corrigido) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/cerebro/vision-check — diagnóstico da leitura de imagens (fal e Groq), sem expor chaves
 router.post('/vision-check', authMiddleware, async (req, res) => {
   try {
