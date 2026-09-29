@@ -64,7 +64,7 @@ async function llmVision(imageDataUrl, prompt) {
   if (!key || !imageDataUrl) return null;
   try {
     const r = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-      model: process.env.VISION_LLM_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct',
+      model: process.env.VISION_LLM_MODEL || 'qwen/qwen3.8-27b',
       messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: imageDataUrl } }] }],
       temperature: 0.1,
       max_tokens: 400
@@ -74,9 +74,43 @@ async function llmVision(imageDataUrl, prompt) {
       return null;
     }
     const c = r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message;
-    return (c && c.content) || null;
+    return cleanVisionText(c && c.content);
   } catch (e) {
     console.error('visão (groq) falhou:', e.message);
+    return null;
+  }
+}
+
+// tira raciocínio (<think>) e markdown da resposta de visão
+function cleanVisionText(t) {
+  const s = String(t || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/[*#`_]+/g, '').replace(/^-{3,}$/gm, '').trim();
+  return s || null;
+}
+
+// Visão pela fal (reserva). Endpoint configurável em VISION_FAL_ENDPOINT.
+async function falVision(imageDataUrl, prompt) {
+  if (!process.env.FAL_KEY || !imageDataUrl) return null;
+  const ep = process.env.VISION_FAL_ENDPOINT || 'fal-ai/moondream2';
+  const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
+  try {
+    const res = await axios.post(`https://queue.fal.run/${ep}`, { prompt, image_url: imageDataUrl, max_tokens: 400 },
+      { headers, timeout: 30000, validateStatus: (st) => st < 500 });
+    const data = res.data || {};
+    if (res.status >= 400) {
+      console.error('visão (fal) recusou', res.status, JSON.stringify(data).slice(0, 200));
+      return null;
+    }
+    if (!data.status_url) return cleanVisionText(typeof data.output === 'string' ? data.output : null);
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      await sleep(1500);
+      const pd = (await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (st) => st < 500 })).data || {};
+      if (pd.status === 'COMPLETED' || pd.output) return cleanVisionText(await falResultText(pd, data, headers));
+      if (pd.status === 'ERROR' || pd.status === 'CANCELLED') return null;
+    }
+    return null;
+  } catch (e) {
+    console.error('visão (fal) falhou:', e.message);
     return null;
   }
 }
@@ -106,41 +140,9 @@ async function describeReference(src) {
     const compressed = await compress(src);
     if (!compressed) return null;
 
-    let caption = null;
-    if (process.env.FAL_KEY) {
-      try {
-        const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
-        const res = await axios.post(
-          'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
-          { prompt: PROMPT_VISION, image_url: compressed, max_tokens: 400 },
-          { headers, timeout: 30000, validateStatus: (s) => s < 500 }
-        );
-        const data = res.data || {};
-        if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
-        if (data.status_url) {
-          const deadline = Date.now() + 60000;
-          while (Date.now() < deadline) {
-            await sleep(2000);
-            const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
-            const pd = pollRes.data || {};
-            if (pd.status === 'COMPLETED' || pd.output) {
-              caption = await falResultText(pd, data, headers);
-              break;
-            }
-            if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
-          }
-        } else if (typeof data.output === 'string') {
-          caption = data.output;
-        } else if (data.output && (data.output.content || data.output.text)) {
-          caption = data.output.content || data.output.text;
-        }
-      } catch (e) {
-        console.error('visão (fal) falhou:', e.message);
-      }
-    }
-    // sem fal (ex.: sem saldo) → lê com o modelo de visão da Groq
-    if (!caption) caption = await llmVision(compressed, PROMPT_VISION);
-
+    // 1º Groq (qwen/qwen3.8-27b lê texto de logo muito bem, em português); 2º fal (moondream2)
+    let caption = await llmVision(compressed, PROMPT_VISION);
+    if (!caption) caption = await falVision(compressed, PROMPT_VISION);
     caption = (caption || '').trim().replace(/\s+/g, ' ').slice(0, 400);
     if (caption) {
       cache.set(key, caption);
@@ -569,7 +571,7 @@ async function diagnoseVision(src, { falEndpoints = [], groqModels = [] } = {}) 
     const m = await axios.get('https://api.groq.com/openai/v1/models', { headers: H, timeout: 20000, validateStatus: () => true });
     out.groqModels = ((m.data && m.data.data) || []).map((x) => x.id);
   } catch (e) { out.groqModels = e.message; }
-  const models = (groqModels.length ? groqModels : [process.env.VISION_LLM_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct']).slice(0, 6);
+  const models = (groqModels.length ? groqModels : [process.env.VISION_LLM_MODEL || 'qwen/qwen3.8-27b']).slice(0, 6);
   for (const model of models) {
     try {
       const r = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
