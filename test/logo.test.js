@@ -32,3 +32,8 @@ test('símbolo com fundo/tile é rejeitado; ícone limpo é aceito e recolorido'
   const icon = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><rect width="512" height="512" fill="#fff"/><circle cx="256" cy="256" r="90" fill="#f59e0b"/></svg>')).png().toBuffer();
   assert.ok(await L.processSymbol(icon, '#1d4ed8'));
 });
+test('ajuste da logo: nome não engole a resposta seguinte', () => {
+  assert.strictEqual(L.extractName('cria um logo com o nome Linha Fácil. faz em verde'), 'Linha Fácil');
+  assert.strictEqual(L.extractColor('cria um logo com o nome Linha Fácil. faz em verde').name, 'verde');
+  assert.strictEqual(L.businessOf('cria um logo com o nome Linha Fácil na cor azul. é uma loja de roupas', 'Linha Fácil'), 'roupas');
+});

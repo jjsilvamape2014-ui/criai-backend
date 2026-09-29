@@ -55,6 +55,14 @@ function businessHint(message, name) {
     .replace(/\s+/g, ' ').trim();
 }
 
+// Ramo do negócio reconhecível (no pedido ou no próprio nome). Sem ramo → monograma:
+// um símbolo inventado sem saber o negócio vira uma forma aleatória.
+const BUSINESS = /(padaria|barbearia|pizzaria|restaurante|hamburgueria|lanchonete|cafe|cafeteria|doceria|confeitaria|acai|sorveteria|academia|clinica|odonto\w*|dentista|pet\s?shop|veterinari\w*|oficina|mecanica|auto\s?pecas|imobiliaria|construtora|construcao|concreto|advocacia|advogad\w*|contabilidade|contabil|salao|beleza|estetica|moda|roupas?|calcados|farmacia|otica|escola|curso|igreja|mercado|supermercado|floricultura|tecnologia|informatica|internet|provedor|refrigeracao|ar condicionado|eletrica|eletricista|encanador|transporte|mudancas|turismo|viagens|fotografia|marketing|agencia|seguros|energia solar|hotel|pousada|lavanderia|lava\s?jato|limpeza|jardinagem|arquitetura|engenharia)/;
+function businessOf(message, name) {
+  const m = BUSINESS.exec(norm(`${message} ${name}`));
+  return m ? m[1] : '';
+}
+
 const esc = (t) => String(t).replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
 
 // Monta a logo: símbolo (buffer PNG, opcional) em cima, nome embaixo. PNG 1080x1080 fundo branco.
@@ -129,4 +137,4 @@ async function drawSymbol({ name, colorName, hex, hint, generate, toBuffer }) {
   return null;
 }
 
-module.exports = { isLogoRequest, extractName, extractColor, businessHint, composeLogo, drawSymbol, processSymbol, COLORS };
+module.exports = { businessOf, isLogoRequest, extractName, extractColor, businessHint, composeLogo, drawSymbol, processSymbol, COLORS };
