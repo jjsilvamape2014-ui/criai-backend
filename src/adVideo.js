@@ -152,7 +152,16 @@ async function falQueue(endpoint, body, deadlineMs = 240000) {
   const key = process.env.FAL_KEY;
   if (!key) throw new Error('FAL_KEY não configurada');
   const headers = { Authorization: `Key ${key}`, 'Content-Type': 'application/json' };
-  const sub = await axios.post(`https://queue.fal.run/${endpoint}`, body, { headers, timeout: 60000 });
+  let sub;
+  try {
+    sub = await axios.post(`https://queue.fal.run/${endpoint}`, body, { headers, timeout: 60000 });
+  } catch (e) {
+    // traz o motivo que a fal deu (saldo, chave, texto recusado...) em vez de só "status code 4xx"
+    const st = e.response && e.response.status;
+    const d = e.response && e.response.data;
+    const why = d ? (typeof d === 'string' ? d : JSON.stringify(d.detail || d.message || d)).slice(0, 160) : e.message;
+    throw new Error(`fal ${endpoint}: HTTP ${st || '?'} ${why}`);
+  }
   const { status_url: statusUrl, response_url: responseUrl } = sub.data || {};
   if (!statusUrl || !responseUrl) throw new Error(`fal ${endpoint}: fila não retornou URLs`);
   const deadline = Date.now() + deadlineMs;
@@ -164,7 +173,11 @@ async function falQueue(endpoint, body, deadlineMs = 240000) {
       const rr = await axios.get(responseUrl, { headers, timeout: 30000 });
       return rr.data;
     }
-    if (status === 'ERROR' || status === 'CANCELLED') throw new Error(`fal ${endpoint}: ${status}`);
+    if (status === 'ERROR' || status === 'CANCELLED') {
+      let why = '';
+      try { const rr = await axios.get(responseUrl, { headers, timeout: 20000, validateStatus: () => true }); why = JSON.stringify(rr.data && (rr.data.detail || rr.data.error || rr.data)).slice(0, 160); } catch (e) {}
+      throw new Error(`fal ${endpoint}: ${status} ${why}`);
+    }
   }
   throw new Error(`fal ${endpoint}: tempo esgotado`);
 }

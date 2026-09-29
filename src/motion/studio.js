@@ -396,6 +396,7 @@ async function buildStudioAd({ request, project, logo, product, refCaptions, voi
 
     const durations = [];
     const voiceClips = [];
+    let lastVoiceError = '';
     if (withVoice) {
       status('Gravando a narração…');
       const files = await Promise.all(sb.scenes.map(async (sc, i) => {
@@ -407,6 +408,7 @@ async function buildStudioAd({ request, project, logo, product, refCaptions, voi
           return f;
         } catch (e) {
           console.error(`studio: voz da cena ${i + 1} falhou:`, e.message);
+          lastVoiceError = e.message;
           return null;
         }
       }));
@@ -416,7 +418,7 @@ async function buildStudioAd({ request, project, logo, product, refCaptions, voi
           voiceClips.push({ i, file: files[i] });
         }
       }
-      if (!voiceClips.length) throw new Error('nenhuma narração foi gerada');
+      if (!voiceClips.length) throw new Error(`nenhuma narração foi gerada (voz: ${lastVoiceError || 'sem detalhe'})`);
     }
 
     const S = { pal: E.palette(color), assets: { ...assets, productCut }, brandName };
