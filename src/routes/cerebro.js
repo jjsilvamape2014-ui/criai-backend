@@ -279,11 +279,13 @@ async function prepareForVideo(src) {
     return sharp(flat).resize(Math.round(w * k), Math.round(h * k), { fit: 'fill' }).jpeg({ quality: 92 }).toBuffer();
   }
   // larga ou alta demais (ex.: logo em faixa): centraliza numa tela quadrada, fundo = cor do canto
-  const corner = await sharp(flat).extract({ left: 0, top: 0, width: Math.min(8, w), height: Math.min(8, h) }).stats();
-  const bg = { r: Math.round(corner.channels[0].mean), g: Math.round(corner.channels[1].mean), b: Math.round(corner.channels[2].mean) };
+  // estica a própria borda da imagem (sem retângulo visível de "cor parecida")
   const inner = await sharp(flat).resize(864, 864, { fit: 'inside' }).toBuffer();
-  return sharp({ create: { width: 1080, height: 1080, channels: 3, background: bg } })
-    .composite([{ input: inner, gravity: 'center' }]).jpeg({ quality: 92 }).toBuffer();
+  const m = await sharp(inner).metadata();
+  const padX = Math.round((1080 - m.width) / 2), padY = Math.round((1080 - m.height) / 2);
+  return sharp(inner)
+    .extend({ left: padX, right: 1080 - m.width - padX, top: padY, bottom: 1080 - m.height - padY, extendWith: 'copy' })
+    .jpeg({ quality: 92 }).toBuffer();
 }
 
 // 🌀 ANIMAR A IMAGEM: o cliente quer que algo DA IMAGEM se mexa ("a barriga do mascote
