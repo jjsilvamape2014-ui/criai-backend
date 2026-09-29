@@ -601,6 +601,17 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       const request = dismissive ? original : `${original}. Detalhes do cliente: ${message}`;
       return startAdVideoJob({ user, session, request, displayMessage: message, res, briefed: true });
     }
+    // 🗣️ "…falando bom dia, eu sou o Delta" com imagem anexada → o personagem fala (não é anúncio)
+    if ((session.memory.refImages || []).length && !/(an[úu]ncio|promo[çc][ãa]o|vender|venda|pre[çc]o|r\$)/i.test(message)) {
+      const m = message.match(/\b(falando|dizendo|fala|falar|diga|dizer|diz)\b\s*[:,"“']?\s*(.{3,})$/i);
+      if (m && !/^(sobre|do|da|de|com|que)\b/i.test(m[2])) {
+        let fala = m[2].replace(/["”']+$/, '').trim();
+        fala = fala.charAt(0).toUpperCase() + fala.slice(1);
+        if (!/[.!?]$/.test(fala)) fala += '.';
+        const fem = /\b(a|uma)\s+(mascote|personagem|menina|mulher)|\bsou a\b/i.test(message);
+        return startSpeakJob({ user, session, message, speech: fala, voice: fem ? 'pf_dora' : 'pm_alex', res });
+      }
+    }
     // 🧭 A IA entende a mensagem antes de agir (conversa + textos das imagens + último vídeo).
     //    Se ela não responder (sem chave/erro), seguem as regras por palavra-chave abaixo.
     const route = await aiRouter.routeMessage({ message, session });
