@@ -19,7 +19,6 @@ const { callLLM } = require('../llm');
 
 const run = promisify(execFile);
 const FFMPEG = process.env.FFMPEG_BIN || 'ffmpeg';
-const FFPROBE = process.env.FFPROBE_BIN || 'ffprobe';
 
 // ---------------------------------------------------------------------------
 // Roteiro
@@ -177,11 +176,7 @@ async function prepareAssets({ logo, product }) {
   return out;
 }
 
-async function duration(file) {
-  const p = await run(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file]);
-  const d = parseFloat(String(p.stdout || '').trim());
-  return Number.isFinite(d) ? d : 0;
-}
+const { mediaDuration: duration } = require('../mediaDuration');
 
 // Coloca cada fala no início da sua cena e mistura numa trilha só
 async function mixVoices(clips, outPath) {

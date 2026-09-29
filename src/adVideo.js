@@ -28,7 +28,6 @@ const { callLLM } = require('./llm');
 
 const run = promisify(execFile);
 const FFMPEG = process.env.FFMPEG_BIN || 'ffmpeg';
-const FFPROBE = process.env.FFPROBE_BIN || 'ffprobe';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -196,11 +195,7 @@ async function saveMedia(src, dest) {
   return dest;
 }
 
-async function mediaDuration(file) {
-  const p = await run(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file]);
-  const d = parseFloat(String(p.stdout || '').trim());
-  return Number.isFinite(d) ? d : 0;
-}
+const { mediaDuration } = require('./mediaDuration');
 
 function xmlEscape(s) {
   return String(s || '').replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
