@@ -28,6 +28,7 @@ const { callLLM } = require('./llm');
 const E = require('./motion/engine');
 const servicos = require('./motion/templates/servicos');
 const { prepareAssets, colorFromProject, colorFromLogo } = require('./motion/motionAd');
+const icons = require('./motion/icons');
 
 const run = promisify(execFile);
 const FFMPEG = process.env.FFMPEG_BIN || 'ffmpeg';
@@ -74,18 +75,18 @@ async function planPresenter(request, project, refCaptions) {
   const facts = (p.facts || []).map((f) => `${f.key}: ${f.value}`).join('; ');
   const sys = [
     'Você é diretor de comerciais curtos (Reels/TikTok) no Brasil, no estilo de propaganda de TV com um apresentador carismático.',
-    'Crie um comercial de 15 a 22 segundos, com 4 cenas, a partir do pedido do cliente.',
+    'Crie um comercial RÁPIDO de 12 a 18 segundos, com 4 cenas, a partir do pedido do cliente (ritmo de propaganda de marketplace: cortes rápidos, energia alta).',
     'Responda SOMENTE um JSON válido neste formato:',
     '{"look":"...","setting":"...","scenes":[{"voice":"...","caption":"...","shot":"..."}],"cta":{"slogan1":"...","slogan2":"...","label":"...","footer":"..."}}',
     'Regras:',
-    '- look: em INGLÊS, a aparência do apresentador (idade aproximada, cabelo, roupa com as cores da marca se houver). Pessoa fictícia; nunca uma celebridade.',
-    '- setting: em INGLÊS, o cenário que combina com o negócio (ex.: loja, cozinha, oficina), iluminado como comercial.',
+    '- look: em INGLÊS, a aparência do apresentador (idade aproximada, cabelo). A ROUPA é da COR PRINCIPAL da marca (ex.: "bold red suit over a white shirt"). Pessoa fictícia; nunca uma celebridade nem parecida com uma.',
+    '- setting: em INGLÊS, cenário de estúdio de comercial DOMINADO pela cor principal da marca (paredes, luz e objetos nessa cor), com um toque do ramo do negócio. Ex.: "glossy red commercial studio with red shelves and warm rim light".',
     '- scenes: exatamente 4, nesta ordem:',
     '  1. gancho: o apresentador fala olhando para a câmera (close). Primeira frase forte.',
     '  2. apoio: mostra o produto/serviço em ação (a voz continua por cima).',
     '  3. benefício: o apresentador fala olhando para a câmera (plano médio).',
     '  4. chamada: o apresentador aponta para a câmera ou mostra o celular; termina com a chamada para ação.',
-    '- voice: fala em português do Brasil, 7 a 16 palavras, natural e animada, como gente falando. Sem emojis. Preços e números por extenso quando ajudar a leitura.',
+    '- voice: fala em português do Brasil, 5 a 12 palavras, curta, animada e direta, como gente falando. Sem emojis. Preços e números por extenso quando ajudar a leitura.',
     '- caption: 2 a 4 palavras de destaque que aparecem grandes na tela (ex.: "FRETE GRÁTIS", "R$ 49,90").',
     '- shot: em INGLÊS, o enquadramento e a ação da cena (ex.: "close-up, talking to the camera, raised eyebrows").',
     '- cta: tela final. slogan1 = nome da marca ou frase curta; slogan2 = oferta ou chamada curta; label = texto acima do contato (ex.: "Peça pelo WhatsApp"); footer = endereço ou site, se houver.',
@@ -96,6 +97,7 @@ async function planPresenter(request, project, refCaptions) {
     `Pedido: ${request}`,
     p.brand ? `Marca: ${p.brand}` : '',
     p.colors && p.colors.length ? `Cores da marca: ${p.colors.join(', ')}` : '',
+    p.mainColor ? `Cor principal (use na roupa do apresentador e no cenário, descrevendo o nome da cor em inglês): ${p.mainColor}` : '',
     facts ? `Fatos confirmados: ${facts}` : '',
     refCaptions && refCaptions.length ? `Foto(s) enviada(s) pelo cliente mostram: ${refCaptions.join(' | ')}` : ''
   ].filter(Boolean).join('\n');
@@ -174,7 +176,8 @@ async function highlightOverlay(caption, outPath) {
 // ---------------------------------------------------------------------------
 // Tela final da marca (reaproveita a cena de chamada do modelo "Serviços")
 // ---------------------------------------------------------------------------
-async function renderEndCard({ plan, project, assets, color, phone, outPath, duration = 3.2 }) {
+async function renderEndCard({ plan, project, assets, color, phone, outPath, duration = 3.2, presenterImg = null }) {
+  if (presenterImg) return renderSplitEndCard({ plan, project, assets, color, phone, outPath, duration, presenterImg });
   const brandName = (project && project.brand) || plan.cta.slogan1 || '';
   const S = {
     pal: E.palette(color),
@@ -191,6 +194,56 @@ async function renderEndCard({ plan, project, assets, color, phone, outPath, dur
     }
   };
   const frameSvg = (t) => `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${servicos.sceneCta(t, duration, S)}</svg>`;
+  await E.renderVideo({ frameSvg, duration, outPath, W, H, fps: FPS });
+  return outPath;
+}
+
+// Tela final estilo marketplace: metade de cima na cor da marca (nome, oferta, contato),
+// metade de baixo o apresentador com um zoom lento.
+async function renderSplitEndCard({ plan, project, assets, color, phone, outPath, duration, presenterImg }) {
+  const pal = E.palette(color);
+  const CX = W / 2;
+  const brandName = String((project && project.brand) || plan.cta.slogan1 || '').trim();
+  const offer = String(plan.cta.slogan2 || '').trim();
+  const label = String(plan.cta.label || (phone ? 'Chame no WhatsApp' : 'Fale com a gente'));
+  const main = phone || label;
+  const nm = E.fitText(brandName.toUpperCase(), { size: 120, minSize: 64, maxWidth: 940, maxLines: 2, weight: 800 });
+  const of = E.fitText(offer.toUpperCase(), { size: 56, minSize: 34, maxWidth: 920, maxLines: 2, weight: 800 });
+  const mainSize = E.fitText(main, { size: 60, minSize: 36, maxWidth: 600, maxLines: 1, weight: 800 }).size;
+  // a faixa de cima tem a altura do conteúdo; o resto é do apresentador
+  const hasLogo = !!(assets && assets.logo);
+  const nameBottom = hasLogo ? 400 : 200 + (nm.lines.length - 1) * nm.size * 1.02 + 30;
+  const offerY = nameBottom + of.size + 10;
+  const pillY = offerY + (offer ? (of.lines.length - 1) * of.size * 1.1 + 50 : -of.size + 20);
+  const topH = Math.round(pillY + 140 + 70);
+  const photoH = H - topH + 40;
+  const frameSvg = (t) => {
+    const s = E.prog(t, 0.05, 0.6, E.ease.outBack);
+    const pp = E.prog(t, 0.6, 0.5, E.ease.outBack);
+    const z = 1 + 0.05 * (t / duration);
+    const logoOrName = hasLogo
+      ? `<image x="${CX - 300}" y="90" width="600" height="300" preserveAspectRatio="xMidYMid meet" xlink:href="${assets.logo}"/>`
+      : nm.lines.map((l, i) => `<text x="${CX}" y="${200 + i * nm.size * 1.02}" font-family="${E.FONT}" font-weight="800" font-size="${nm.size}" fill="#FFFFFF" text-anchor="middle">${E.esc(l)}</text>`).join('');
+    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+      <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${pal.primary}"/><stop offset="1" stop-color="${pal.deep}"/></linearGradient>
+      <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${pal.deep}" stop-opacity="1"/><stop offset="1" stop-color="${pal.deep}" stop-opacity="0"/></linearGradient></defs>
+      <rect width="${W}" height="${H}" fill="${pal.deep}"/>
+      <g transform="translate(${CX} ${topH + photoH / 2}) scale(${z.toFixed(4)}) translate(${-CX} ${-(topH + photoH / 2)})">
+        <image x="0" y="${topH - 40}" width="${W}" height="${photoH}" preserveAspectRatio="xMidYMin slice" xlink:href="${presenterImg}"/>
+      </g>
+      <rect x="0" y="${topH - 40}" width="${W}" height="140" fill="url(#fade)"/>
+      <rect width="${W}" height="${topH}" fill="url(#bg)"/>
+      <g transform="${servicos.scaleAround(CX, 260, Math.max(0.001, s))}">${logoOrName}
+        ${of.lines.map((l, i) => `<text x="${CX}" y="${offerY + i * of.size * 1.1}" font-family="${E.FONT}" font-weight="800" font-size="${of.size}" fill="#FFD23F" text-anchor="middle">${E.esc(l)}</text>`).join('')}
+      </g>
+      ${pp <= 0 ? '' : `<g transform="${servicos.scaleAround(CX, pillY + 70, pp)}">
+        <rect x="${CX - 400}" y="${pillY}" width="800" height="140" rx="70" fill="#FFFFFF"/>
+        ${phone ? `<circle cx="${CX - 400 + 75}" cy="${pillY + 70}" r="50" fill="${pal.whatsapp}"/>${icons.icon('whatsapp', CX - 400 + 75, pillY + 70, 66, '#FFFFFF', { strokeWidth: 7 })}` : ''}
+        <text x="${phone ? CX - 400 + 150 : CX}" y="${pillY + 52}" font-family="${E.FONT}" font-weight="600" font-size="22" fill="${pal.deep}" opacity="0.75" letter-spacing="1.5" ${phone ? '' : 'text-anchor="middle"'}>${E.esc(phone ? label.toUpperCase() : '')}</text>
+        <text x="${phone ? CX - 400 + 150 : CX}" y="${pillY + (phone ? 108 : 88)}" font-family="${E.FONT}" font-weight="800" font-size="${mainSize}" fill="${pal.deep}" ${phone ? '' : 'text-anchor="middle"'}>${E.esc(main)}</text>
+      </g>`}
+    </svg>`;
+  };
   await E.renderVideo({ frameSvg, duration, outPath, W, H, fps: FPS });
   return outPath;
 }
@@ -247,11 +300,10 @@ async function buildPresenterAd({ request, project, logo, product, refCaptions, 
   try {
     // 1) Roteiro + logo/cor (em paralelo)
     status('Escrevendo o roteiro do comercial…');
-    const [plan, assets] = await Promise.all([
-      planPresenter(request, project, refCaptions).then((pl) => ensureBrandSpoken(pl, project && project.brand)),
-      prepareAssets({ logo, product: null })
-    ]);
+    // a cor vem primeiro: roupa, cenário e tela final saem todos nela (estilo marketplace)
+    const assets = await prepareAssets({ logo, product: null });
     const color = colorFromProject(project) || (assets.logoBuf && await colorFromLogo(assets.logoBuf)) || '#E8651A';
+    const plan = ensureBrandSpoken(await planPresenter(request, { ...(project || {}), mainColor: color }, refCaptions), project && project.brand);
     const phone = findPhone(request, project);
 
     // 2) Vozes (em paralelo com as imagens)
@@ -358,7 +410,16 @@ async function buildPresenterAd({ request, project, logo, product, refCaptions, 
     status('Criando a tela final da marca…');
     const endPath = path.join(tmp, 'final.mp4');
     const endDur = 3.2;
-    await renderEndCard({ plan, project, assets, color, phone, outPath: endPath, duration: endDur });
+    let presenterImg = null;
+    try {
+      const heroFile = path.join(tmp, 'hero-final.img');
+      await deps.saveMedia(images[images.length - 1] || hero, heroFile);
+      const jpg = await sharp(heroFile).resize(W, Math.round(H * 0.7), { fit: 'cover', position: 'top' }).jpeg({ quality: 88 }).toBuffer();
+      presenterImg = `data:image/jpeg;base64,${jpg.toString('base64')}`;
+    } catch (e) {
+      console.error('presenterAd: tela final sem apresentador:', e.message);
+    }
+    await renderEndCard({ plan, project, assets, color, phone, outPath: endPath, duration: endDur, presenterImg });
     clips.push(endPath);
     durations.push(endDur);
 
