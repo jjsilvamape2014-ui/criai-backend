@@ -1,5 +1,7 @@
 // Precisa vir primeiro: registra as fontes (Poppins) antes de qualquer texto renderizado pelo sharp
 require('./fontSetup');
+// Também antes dos módulos de vídeo: acha o ffmpeg (sistema ou pacote ffmpeg-static)
+require('./ffmpegSetup');
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
