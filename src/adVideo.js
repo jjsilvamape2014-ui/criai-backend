@@ -182,11 +182,32 @@ async function falQueue(endpoint, body, deadlineMs = 240000) {
   throw new Error(`fal ${endpoint}: tempo esgotado`);
 }
 
-async function generateNarration(text, voice) {
+async function generateNarrationFal(text, voice) {
   const out = await falQueue('fal-ai/kokoro/brazilian-portuguese', { prompt: text, voice }, 120000);
   const url = out && ((out.audio && out.audio.url) || (typeof out.audio === 'string' ? out.audio : null));
   if (!url) throw new Error('narração não retornou áudio');
   return url;
+}
+
+// Voz: fal (Kokoro) primeiro; se falhar (saldo, fora do ar), a voz grátis de reserva.
+// TTS_PROVIDER=edge usa a grátis como principal; TTS_FALLBACK=false desliga a reserva.
+async function generateNarration(text, voice) {
+  const { synthesizeFree } = require('./freeTts');
+  if ((process.env.TTS_PROVIDER || '').toLowerCase() === 'edge') {
+    try { return await synthesizeFree(text, voice); } catch (e) { console.error('voz grátis falhou, tentando fal:', e.message); }
+    return generateNarrationFal(text, voice);
+  }
+  try {
+    return await generateNarrationFal(text, voice);
+  } catch (e) {
+    if (process.env.TTS_FALLBACK === 'false') throw e;
+    console.warn('voz da fal falhou, usando a voz grátis de reserva:', e.message);
+    try {
+      return await synthesizeFree(text, voice);
+    } catch (e2) {
+      throw new Error(`${e.message} | reserva: ${e2.message}`);
+    }
+  }
 }
 
 async function uploadToFal(buffer, mime, fileName) {

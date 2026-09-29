@@ -2,7 +2,7 @@
 // não depende do ambiente); o commit vem do Railway, se ele informar.
 const { execFile } = require('child_process');
 
-const CODE_REV = '2026-09-29.9 alternativa-sem-credito';
+const CODE_REV = '2026-09-29.10 voz-gratis-reserva';
 const COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.SOURCE_COMMIT || '').slice(0, 7) || null;
 
 function hasBinary(bin) {
