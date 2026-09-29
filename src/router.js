@@ -27,6 +27,7 @@ const SYSTEM = [
   '- answer: é pergunta, dúvida, comentário ou reclamação ("você não consegue ler a imagem?", "ficou bom", "como baixo?"). NUNCA transforme pergunta em edição.',
   '- Pedido em forma de pergunta é PEDIDO, não pergunta: "consegue fazer um vídeo da minha logo?", "pode colocar o nome?", "dá pra falar o telefone no vídeo?" → video/adjust_video/image.',
   '- Se a mensagem RESOLVE uma pendência da conversa (o estúdio pediu um dado e o cliente responde, mesmo reclamando: "está na logo, você não lê?"), EXECUTE o pedido original com o que você leu (action do pedido original, com request completo) em vez de só responder.',
+  '- NUNCA use ask só porque falta o nome da marca, o telefone ou o preço: crie assim mesmo (o estúdio avisa no final o que faltou). ask é só quando não dá para saber NEM o que anunciar/criar.',
   '- ask: falta um fato essencial que não está no pedido, nas imagens nem na conversa. Raramente necessário.',
   'style (só para video/adjust_video): presenter se pedir pessoa/apresentador(a)/alguém falando; photo se pedir fotos/realista; senão motion.',
   'request: o pedido COMPLETO e claro em português, já com tudo que você deduziu do contexto (marca, ramo, serviços, telefone, cores lidos das imagens ou da conversa). Ex.: "Vídeo de apresentação da marca SOL Provedor de Internet, provedor de internet, cores azul e amarelo, Instagram @sol.provedor". Não invente preço, telefone nem promoção.',
