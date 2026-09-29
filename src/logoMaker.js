@@ -63,10 +63,28 @@ function businessOf(message, name) {
   return m ? m[1] : '';
 }
 
+// Ramo → ícone vetorial do próprio app (limpo, sempre consistente; a IA de imagem gera
+// fotos/borrões quando pedimos símbolo)
+const BIZ_ICON = [
+  [/barbearia|salao|cabelei/, 'scissors'], [/odonto|dentista/, 'tooth'], [/pet|veterinari/, 'paw'],
+  [/padaria|doceria|confeitaria|bolo/, 'cake'], [/pizzaria|restaurante|hamburgueria|lanchonete|cafe|acai|sorveteria/, 'food'],
+  [/oficina|mecanica|auto/, 'wrench'], [/imobiliaria|hotel|pousada/, 'home'], [/construtora|construcao|concreto|arquitetura|engenharia/, 'building'],
+  [/advoca|seguros/, 'shield'], [/contab/, 'chart'], [/beleza|estetica/, 'sparkles'], [/moda|roupa|calcado/, 'bag'],
+  [/farmacia|clinica|igreja/, 'heart'], [/otica|fotografia/, 'eye'], [/escola|curso/, 'star'], [/mercado/, 'cart'],
+  [/floricultura|jardinagem/, 'leaf'], [/tecnologia|informatica/, 'gear'], [/internet|provedor/, 'wifi'],
+  [/refrigeracao|ar condicionado/, 'snowflake'], [/eletric|academia/, 'bolt'], [/encanador|lavanderia|lava\s?jato|limpeza/, 'drop'],
+  [/transporte|mudanca/, 'truck'], [/turismo|viage/, 'location'], [/marketing|agencia/, 'rocket'], [/energia solar/, 'sun'],
+];
+function iconFor(biz) {
+  const b = norm(biz);
+  for (const [re, icon] of BIZ_ICON) if (re.test(b)) return icon;
+  return null;
+}
+
 const esc = (t) => String(t).replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
 
 // Monta a logo: símbolo (buffer PNG, opcional) em cima, nome embaixo. PNG 1080x1080 fundo branco.
-async function composeLogo({ name, hex, symbol }) {
+async function composeLogo({ name, hex, symbol, icon }) {
   const E = require('./motion/engine');
   const W = 1080;
   const fit = E.fitText(name, { size: 150, minSize: 70, maxWidth: 900, maxLines: 2, weight: 800 });
@@ -76,8 +94,11 @@ async function composeLogo({ name, hex, symbol }) {
   const gap = 50;
   const top = Math.round((W - (symH + gap + textH)) / 2);
   const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
-  const mono = `<circle cx="540" cy="${top + symH / 2}" r="${symH / 2 - 10}" fill="${hex}"/>
-    <text x="540" y="${top + symH / 2 + 70}" font-family="${E.FONT}" font-weight="800" font-size="200" fill="#ffffff" text-anchor="middle">${esc(initials)}</text>`;
+  const cy = top + symH / 2;
+  const mono = icon
+    ? `<circle cx="540" cy="${cy}" r="${symH / 2 - 10}" fill="${hex}"/>${require('./motion/icons').icon(icon, 540, cy, 230, '#ffffff', { strokeWidth: 5 })}`
+    : `<circle cx="540" cy="${cy}" r="${symH / 2 - 10}" fill="${hex}"/>
+    <text x="540" y="${cy + 70}" font-family="${E.FONT}" font-weight="800" font-size="200" fill="#ffffff" text-anchor="middle">${esc(initials)}</text>`;
   const text = fit.lines.map((l, i) => `<text x="540" y="${(top + symH + gap + fit.size * 0.9 + i * lh).toFixed(0)}" font-family="${E.FONT}" font-weight="800" font-size="${fit.size}" fill="${hex}" text-anchor="middle" letter-spacing="-1">${esc(l)}</text>`).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${W}"><rect width="${W}" height="${W}" fill="#ffffff"/>${symbol ? '' : mono}${text}</svg>`;
   const layers = [];
@@ -137,4 +158,4 @@ async function drawSymbol({ name, colorName, hex, hint, generate, toBuffer }) {
   return null;
 }
 
-module.exports = { businessOf, isLogoRequest, extractName, extractColor, businessHint, composeLogo, drawSymbol, processSymbol, COLORS };
+module.exports = { iconFor, businessOf, isLogoRequest, extractName, extractColor, businessHint, composeLogo, drawSymbol, processSymbol, COLORS };

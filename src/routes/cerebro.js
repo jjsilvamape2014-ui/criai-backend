@@ -310,21 +310,16 @@ async function makeLogo({ user, session, message, display, res }) {
   const charged = await consumeCredit(user);
   try {
     const A = adVideo._internals;
-    const os = require('os'); const path = require('path'); const fs = require('fs');
     const biz = LM.businessOf(message, name);
-    const symbol = !biz ? null : await LM.drawSymbol({
-      name, colorName: color.name, hex: color.hex, hint: biz,
-      generate: generateRoutes.generateImageFromProviders,
-      toBuffer: async (url) => { const f = path.join(os.tmpdir(), `sym-${Date.now()}.img`); await A.saveMedia(url, f); const b = fs.readFileSync(f); fs.unlinkSync(f); return b; },
-    });
-    const png = await LM.composeLogo({ name, hex: color.hex, symbol });
+    const icon = biz ? LM.iconFor(biz) : null;
+    const png = await LM.composeLogo({ name, hex: color.hex, icon });
     const imageUrl = await A.uploadToFal(png, 'image/png', `logo-${Date.now()}.png`).catch(() => `data:image/png;base64,${png.toString('base64')}`);
     await prisma.generation.create({ data: { userId: user.id, type: 'IMAGE', prompt: `[logo] ${name} ${color.name}`, status: 'COMPLETED', imageUrl, cost: 1 } }).catch(() => {});
     session.memory.project = session.memory.project || {};
     if (!session.memory.project.brand) session.memory.project.brand = name;
     session.memory.lastLogo = { message, at: Date.now() };
     const reply = `Pronto! Logo da ${name} em ${color.name}. O nome foi escrito com fonte profissional, então sai exatamente como você digitou.` +
-      `${symbol ? '' : biz ? ' (Usei um monograma com as iniciais: o símbolo gerado não ficou bom o suficiente.)' : ' Usei um monograma com as iniciais — se me disser o ramo da empresa (ex.: "é uma loja de roupas"), eu crio um símbolo.'}\n\nQuer outra cor ou o nome maior? É só pedir.`;
+      `${icon ? '' : ' Usei um monograma com as iniciais — se me disser o ramo da empresa (ex.: "é uma loja de roupas"), eu coloco um símbolo do ramo.'}\n\nQuer outra cor? É só pedir (ex.: "faz em verde").`;
     cerebro.pushHistory(session, 'user', display || message, null);
     cerebro.pushHistory(session, 'assistant', reply, imageUrl);
     const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });

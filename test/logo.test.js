@@ -37,3 +37,9 @@ test('ajuste da logo: nome não engole a resposta seguinte', () => {
   assert.strictEqual(L.extractColor('cria um logo com o nome Linha Fácil. faz em verde').name, 'verde');
   assert.strictEqual(L.businessOf('cria um logo com o nome Linha Fácil na cor azul. é uma loja de roupas', 'Linha Fácil'), 'roupas');
 });
+test('ramo → ícone do app; sem ramo → monograma', () => {
+  assert.strictEqual(L.iconFor('barbearia'), 'scissors');
+  assert.strictEqual(L.iconFor('roupas'), 'bag');
+  assert.strictEqual(L.iconFor('concreto'), 'building');
+  assert.strictEqual(L.iconFor('xpto'), null);
+});
