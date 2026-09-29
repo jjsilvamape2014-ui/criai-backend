@@ -429,7 +429,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         }
         // 🏷️ Logo NOVA de outra empresa → troca a marca (quem faz vídeo para vários clientes
         //    não pode receber o nome do cliente anterior)
-        const logoCaps = newCaps.filter((c) => /(logo|logotipo|emblema|marca)/i.test(c));
+        const logoCaps = newCaps.filter((c) => require('../adVideo').captionIsLogo(c));
         if (logoCaps.length) {
           const found = await require('../brandInfo').resolveBrand({ project: null, request: '', refCaptions: logoCaps }).catch(() => null);
           if (found) switchBrand(session, found, { keepRefs: pending });
