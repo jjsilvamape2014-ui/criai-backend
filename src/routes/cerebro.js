@@ -261,6 +261,31 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
   });
 }
 
+// A IA de vídeo só aceita imagens de proporção "normal" e tamanho mínimo. Logo larga
+// (faixa) ou transparente falhava: aqui a imagem vai para uma tela aceita — fundo sólido,
+// proporção entre 9:16 e 16:9 (larga demais → quadrado), lado menor >= 720 px.
+async function prepareForVideo(src) {
+  const sharp = require('sharp');
+  const input = String(src).startsWith('data:')
+    ? Buffer.from(String(src).split(',')[1] || '', 'base64')
+    : Buffer.from((await require('axios').get(src, { responseType: 'arraybuffer', timeout: 30000 })).data);
+  const base = sharp(input, { limitInputPixels: false }).rotate();
+  const { width: w = 1024, height: h = 1024 } = await base.metadata();
+  const flat = await base.flatten({ background: '#ffffff' }).toBuffer();
+  const r = w / h;
+  if (r >= 0.5625 && r <= 1.7778) {
+    // proporção aceita: garante lado menor >= 720 e maior <= 1920
+    const k = Math.min(Math.max(1, 720 / Math.min(w, h)), 1920 / Math.max(w, h));
+    return sharp(flat).resize(Math.round(w * k), Math.round(h * k), { fit: 'fill' }).jpeg({ quality: 92 }).toBuffer();
+  }
+  // larga ou alta demais (ex.: logo em faixa): centraliza numa tela quadrada, fundo = cor do canto
+  const corner = await sharp(flat).extract({ left: 0, top: 0, width: Math.min(8, w), height: Math.min(8, h) }).stats();
+  const bg = { r: Math.round(corner.channels[0].mean), g: Math.round(corner.channels[1].mean), b: Math.round(corner.channels[2].mean) };
+  const inner = await sharp(flat).resize(864, 864, { fit: 'inside' }).toBuffer();
+  return sharp({ create: { width: 1080, height: 1080, channels: 3, background: bg } })
+    .composite([{ input: inner, gravity: 'center' }]).jpeg({ quality: 92 }).toBuffer();
+}
+
 // 🌀 ANIMAR A IMAGEM: o cliente quer que algo DA IMAGEM se mexa ("a barriga do mascote
 // girando como uma betoneira"). Não é anúncio: é image-to-video (Kling) da própria imagem,
 // com um prompt de movimento preciso escrito pela IA. Custa 1 crédito de vídeo.
@@ -293,14 +318,11 @@ async function startAnimateJob({ user, session, message, motion, res }) {
   (async () => {
     try {
       const A = adVideo._internals;
-      let src = image;
-      if (String(src).startsWith('data:')) {
-        const compressed = await generateRoutes.compressReferenceImage(src, 1280, 90).catch(() => null);
-        const data = compressed || src;
-        const buf = Buffer.from(String(data).split(',')[1] || '', 'base64');
-        const mime = String(data).slice(5, String(data).indexOf(';')) || 'image/png';
-        src = await A.uploadToFal(buf, mime, `animar-${Date.now()}.${mime.includes('png') ? 'png' : 'jpg'}`).catch(() => data);
-      }
+      setStep(jobId, { step: 'Preparando a imagem…' });
+      const buf = await prepareForVideo(image);
+      const src = await A.uploadToFal(buf, 'image/jpeg', `animar-${Date.now()}.jpg`)
+        .catch(() => `data:image/jpeg;base64,${buf.toString('base64')}`);
+      setStep(jobId, { step: 'Animando a sua imagem (1 a 3 minutos)…' });
       const videoUrl = await generateRoutes.generateVideoFromProviders(src, prompt, 'custom', {});
       const done = 'Pronto! Sua imagem animada está aqui (5 segundos).\n\nSe o movimento não saiu como você imaginou, me diga o que mudar (ex.: "gira mais devagar", "só a barriga, os braços parados").';
       cerebro.pushHistory(session, 'assistant', done, null);
@@ -313,7 +335,7 @@ async function startAnimateJob({ user, session, message, motion, res }) {
       const outOfBalance = /exhausted balance|user is locked|top up your balance|HTTP 402|status code 403/i.test(String(e.message || ''));
       setStep(jobId, { error: outOfBalance
         ? 'Nosso estúdio de vídeo está em manutenção por alguns instantes. Seu crédito foi devolvido — tente de novo em alguns minutos.'
-        : 'Não consegui animar a imagem agora. Seu crédito foi devolvido — tente novamente.' });
+        : `Não consegui animar a imagem agora. Seu crédito foi devolvido — tente novamente. (Detalhe técnico: ${String(e.message || '').replace(/https?:\/\/\S+/g, '[url]').replace(/Key\s+\S+/gi, 'Key ***').slice(0, 160)})` });
       try {
         const upd = await prisma.generation.updateMany({ where: { id: jobId, status: 'PROCESSING' }, data: { status: 'FAILED' } });
         if (upd.count) await refundVideoCredits(user.id, charge);
