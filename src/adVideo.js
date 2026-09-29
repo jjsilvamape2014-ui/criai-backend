@@ -489,7 +489,12 @@ async function chooseAssets(images, message) {
     let alpha = false;
     try {
       const buf = imgs[0].startsWith('data:') ? Buffer.from(imgs[0].split(',')[1] || '', 'base64') : null;
-      if (buf) alpha = !!(await sharp(buf).metadata()).hasAlpha;
+      // PNG com canal alfa não é logo por si só (prints e fotos de celular vêm assim):
+      // só conta se houver transparência DE VERDADE em algum pixel
+      if (buf && (await sharp(buf).metadata()).hasAlpha) {
+        const st = await sharp(buf).stats();
+        alpha = !!(st.channels[3] && st.channels[3].min < 250);
+      }
     } catch (e) {}
     if (saysLogo || alpha) logoIdx = 0;
   }
