@@ -109,7 +109,8 @@ async function planPresenter(request, project, refCaptions) {
     const s = cleaned.indexOf('{');
     const e = cleaned.lastIndexOf('}');
     if (s >= 0 && e > s) {
-      const plan = require('./placeholders').cleanPlan(JSON.parse(cleaned.slice(s, e + 1)), p.brand || '');
+      const C = require('./claims');
+      const plan = C.cleanPlan(require('./placeholders').cleanPlan(JSON.parse(cleaned.slice(s, e + 1)), p.brand || ''), C.sourceOf({ request, project: p, refCaptions }));
       if (plan && Array.isArray(plan.scenes) && plan.scenes.length >= 4) {
         const fb = fallbackPlan(request, p);
         return {

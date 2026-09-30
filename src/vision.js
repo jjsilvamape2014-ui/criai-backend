@@ -59,7 +59,7 @@ function llmVisionKey() {
   return (k.startsWith('gsk_') || process.env.LLM_PROVIDER === 'groq') && process.env.VISION_LLM !== 'false' ? k : '';
 }
 
-async function llmVision(imageDataUrl, prompt) {
+async function llmVision(imageDataUrl, prompt, maxTokens = 400) {
   const key = llmVisionKey();
   if (!key || !imageDataUrl) return null;
   try {
@@ -67,7 +67,7 @@ async function llmVision(imageDataUrl, prompt) {
       model: process.env.VISION_LLM_MODEL || 'qwen/qwen3.8-27b',
       messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: imageDataUrl } }] }],
       temperature: 0.1,
-      max_tokens: 400
+      max_tokens: Math.max(maxTokens, 400)
     }, { headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: (st) => st < 500 });
     if (r.status >= 400) {
       console.error('visão (groq) recusou', r.status, JSON.stringify(r.data || {}).slice(0, 200));
@@ -113,6 +113,15 @@ async function falVision(imageDataUrl, prompt) {
     console.error('visão (fal) falhou:', e.message);
     return null;
   }
+}
+
+// Pergunta à visão (Groq primeiro, fal de reserva). null = nenhuma visão respondeu.
+// (O endpoint antigo fal-ai/qwen/qwen2.5-vl-7b-instruct foi retirado: todas as
+//  checagens de qualidade estavam desligadas sem ninguém perceber.)
+async function askVision(imageDataUrl, prompt, maxTokens = 300) {
+  const a = await llmVision(imageDataUrl, prompt, maxTokens);
+  if (a) return a;
+  return falVision(imageDataUrl, prompt);
 }
 
 // A fila da fal devolve só o status; a resposta fica em response_url.
@@ -173,7 +182,7 @@ const PROMPT_QA = [
 
 async function checkImageQuality(src) {
   try {
-    if (!isEnabled() || !process.env.FAL_KEY) return null;
+    if (!isEnabled() || (!process.env.FAL_KEY && !llmVisionKey())) return null;
     let key = src;
     if (src && src.startsWith('data:')) {
       const b64 = src.split(',')[1];
@@ -184,32 +193,8 @@ async function checkImageQuality(src) {
     const compressed = await compress(src, 640, 66);
     if (!compressed) return null;
 
-    const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
-    const res = await axios.post(
-      'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
-      { prompt: PROMPT_QA, image_url: compressed, max_tokens: 80 },
-      { headers, timeout: 30000, validateStatus: (s) => s < 500 }
-    );
-    const data = res.data || {};
-    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
-    let text = null;
-    if (data.status_url) {
-      const deadline = Date.now() + 45000;
-      while (Date.now() < deadline) {
-        await sleep(2000);
-        const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
-        const pd = pollRes.data || {};
-        if (pd.status === 'COMPLETED' || pd.output) {
-          text = await falResultText(pd, data, headers);
-          break;
-        }
-        if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
-      }
-    } else if (typeof data.output === 'string') {
-      text = data.output;
-    } else if (data.output && (data.output.content || data.output.text)) {
-      text = data.output.content || data.output.text;
-    }
+    const text = await askVision(compressed, PROMPT_QA, 200);
+    if (text == null) return null; // sem visão disponível: não bloqueia a entrega
 
     const raw = (text || '').trim();
     const ok = !/^BAD:/i.test(raw);
@@ -227,7 +212,7 @@ async function checkImageQuality(src) {
 // APARECERAM corretos na imagem gerada. Retorna { ok, missing? } ou null (não quebra).
 async function checkImageText(src, tokens) {
   try {
-    if (!isEnabled() || !process.env.FAL_KEY) return null;
+    if (!isEnabled() || (!process.env.FAL_KEY && !llmVisionKey())) return null;
     if (!tokens || !tokens.length) return null;
     const tag = Array.isArray(tokens) ? tokens.join(' | ') : String(tokens);
     let key = src;
@@ -251,32 +236,8 @@ async function checkImageText(src, tokens) {
       'Ignore unrelated text. Reply nothing else.'
     ].join(' ');
 
-    const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
-    const res = await axios.post(
-      'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
-      { prompt, image_url: compressed, max_tokens: 100 },
-      { headers, timeout: 30000, validateStatus: (s) => s < 500 }
-    );
-    const data = res.data || {};
-    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
-    let text = null;
-    if (data.status_url) {
-      const deadline = Date.now() + 45000;
-      while (Date.now() < deadline) {
-        await sleep(2000);
-        const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
-        const pd = pollRes.data || {};
-        if (pd.status === 'COMPLETED' || pd.output) {
-          text = await falResultText(pd, data, headers);
-          break;
-        }
-        if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
-      }
-    } else if (typeof data.output === 'string') {
-      text = data.output;
-    } else if (data.output && (data.output.content || data.output.text)) {
-      text = data.output.content || data.output.text;
-    }
+    const text = await askVision(compressed, prompt, 200);
+    if (text == null) return null; // sem visão disponível: não bloqueia a entrega
 
     const raw = (text || '').trim();
     const out = { ok: !/^MISSING:/i.test(raw), missing: raw.replace(/^MISSING:\s*/i, '').slice(0, 160) || '' };
@@ -295,7 +256,7 @@ async function checkImageText(src, tokens) {
 // É o coração do "gera → analisa → corrige": a IA só entrega se cumpriu o pedido.
 async function checkImageElements(src, elements) {
   try {
-    if (!isEnabled() || !process.env.FAL_KEY) return null;
+    if (!isEnabled() || (!process.env.FAL_KEY && !llmVisionKey())) return null;
     const list = (Array.isArray(elements) ? elements : []).filter((e) => e && typeof e === 'string' && e.trim());
     if (!list.length) return null;
     const tag = list.map((e) => e.trim().slice(0, 40)).join(' | ');
@@ -320,32 +281,8 @@ async function checkImageElements(src, elements) {
       'Ignore style or composition taste. Reply nothing else.'
     ].join(' ');
 
-    const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
-    const res = await axios.post(
-      'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
-      { prompt, image_url: compressed, max_tokens: 120 },
-      { headers, timeout: 30000, validateStatus: (s) => s < 500 }
-    );
-    const data = res.data || {};
-    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
-    let text = null;
-    if (data.status_url) {
-      const deadline = Date.now() + 45000;
-      while (Date.now() < deadline) {
-        await sleep(2000);
-        const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
-        const pd = pollRes.data || {};
-        if (pd.status === 'COMPLETED' || pd.output) {
-          text = await falResultText(pd, data, headers);
-          break;
-        }
-        if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
-      }
-    } else if (typeof data.output === 'string') {
-      text = data.output;
-    } else if (data.output && (data.output.content || data.output.text)) {
-      text = data.output.content || data.output.text;
-    }
+    const text = await askVision(compressed, prompt, 200);
+    if (text == null) return null; // sem visão disponível: não bloqueia a entrega
 
     const raw = (text || '').trim();
     const out = {
@@ -372,7 +309,7 @@ async function checkImageElements(src, elements) {
 // falhar entra na lista missing. Retorna { ok, missing: [] } ou null.
 async function checkImageStrict(src, assertions) {
   try {
-    if (!isEnabled() || !process.env.FAL_KEY) return null;
+    if (!isEnabled() || (!process.env.FAL_KEY && !llmVisionKey())) return null;
     const list = (Array.isArray(assertions) ? assertions : []).filter((a) => a && typeof a === 'string' && a.trim());
     if (!list.length) return null;
     const tag = list.join(' | ');
@@ -399,32 +336,8 @@ async function checkImageStrict(src, assertions) {
       'Reply nothing else, no explanations.'
     ].join(' ');
 
-    const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
-    const res = await axios.post(
-      'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
-      { prompt, image_url: compressed, max_tokens: 200 },
-      { headers, timeout: 30000, validateStatus: (s) => s < 500 }
-    );
-    const data = res.data || {};
-    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
-    let text = null;
-    if (data.status_url) {
-      const deadline = Date.now() + 45000;
-      while (Date.now() < deadline) {
-        await sleep(2000);
-        const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
-        const pd = pollRes.data || {};
-        if (pd.status === 'COMPLETED' || pd.output) {
-          text = await falResultText(pd, data, headers);
-          break;
-        }
-        if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
-      }
-    } else if (typeof data.output === 'string') {
-      text = data.output;
-    } else if (data.output && (data.output.content || data.output.text)) {
-      text = data.output.content || data.output.text;
-    }
+    const text = await askVision(compressed, prompt, 200);
+    if (text == null) return null; // sem visão disponível: não bloqueia a entrega
 
     const raw = (text || '').trim();
     const out = {
@@ -451,7 +364,7 @@ async function checkImageStrict(src, assertions) {
 // o que está impedindo a imagem de parecer profissional.
 async function evaluateAsClient(src) {
   try {
-    if (!isEnabled() || !process.env.FAL_KEY) return null;
+    if (!isEnabled() || (!process.env.FAL_KEY && !llmVisionKey())) return null;
     let key = src;
     if (src && src.startsWith('data:')) {
       key = 'review:' + crypto.createHash('sha1').update(src.split(',')[1] || '').digest('hex');
@@ -475,32 +388,8 @@ async function evaluateAsClient(src) {
       '{"attention":8,"clarity":7,"desire":9,"professionalism":8,"verdict":"<1 short PT sentence>","suggestion":"<1 short PT sentence, specific fix>"}'
     ].join(' ');
 
-    const headers = { Authorization: `Key ${process.env.FAL_KEY}`, 'Content-Type': 'application/json' };
-    const res = await axios.post(
-      'https://queue.fal.run/fal-ai/qwen/qwen2.5-vl-7b-instruct',
-      { prompt, image_url: compressed, max_tokens: 160 },
-      { headers, timeout: 30000, validateStatus: (s) => s < 500 }
-    );
-    const data = res.data || {};
-    if (res.status >= 400) console.error('visão: fal recusou', res.status, JSON.stringify(data).slice(0, 200));
-    let text = null;
-    if (data.status_url) {
-      const deadline = Date.now() + 45000;
-      while (Date.now() < deadline) {
-        await sleep(2000);
-        const pollRes = await axios.get(data.status_url, { headers, timeout: 20000, validateStatus: (s) => s < 500 });
-        const pd = pollRes.data || {};
-        if (pd.status === 'COMPLETED' || pd.output) {
-          text = await falResultText(pd, data, headers);
-          break;
-        }
-        if (pd.status === 'ERROR' || pd.status === 'CANCELLED') break;
-      }
-    } else if (typeof data.output === 'string') {
-      text = data.output;
-    } else if (data.output && (data.output.content || data.output.text)) {
-      text = data.output.content || data.output.text;
-    }
+    const text = await askVision(compressed, prompt, 200);
+    if (text == null) return null; // sem visão disponível: não bloqueia a entrega
 
     let obj = null;
     try {
@@ -585,4 +474,4 @@ async function diagnoseVision(src, { falEndpoints = [], groqModels = [] } = {}) 
   return out;
 }
 
-module.exports = { describeReference, checkImageQuality, checkImageText, checkImageElements, checkImageStrict, evaluateAsClient, diagnoseVision };
+module.exports = { askVision, describeReference, checkImageQuality, checkImageText, checkImageElements, checkImageStrict, evaluateAsClient, diagnoseVision };

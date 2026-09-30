@@ -146,7 +146,11 @@ async function writeText({ message, tipo, project, callLLM, captions = [] }) {
   ].filter(Boolean).join('\n');
   for (let attempt = 1; attempt <= 2; attempt++) {
     const text = await callLLM(WRITE_SYSTEM, user, { temperature: attempt === 1 ? 0.6 : 0.3, maxTokens: 1500, json: true, timeout: 45000 });
-    const ok = validateWrite(parseJson(text), tipo);
+    const C = require('./claims');
+    const src = C.sourceOf({ request: message, project: p, refCaptions: captions });
+    const raw = parseJson(text);
+    if (raw && raw.entrega) raw.entrega = C.cleanPlan(raw.entrega, src);
+    const ok = validateWrite(raw, tipo);
     if (ok) return ok;
   }
   return null;
