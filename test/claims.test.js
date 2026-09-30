@@ -8,6 +8,8 @@ test('promessa que o cliente não fez sai da fala; o resto fica', () => {
   assert.strictEqual(out, 'Chame no WhatsApp.');
   assert.strictEqual(C.cleanVoice('Conforto imediato e economia de energia.', 'JN'), '');
   assert.deepStrictEqual(C.disallowed('nosso técnico instala em até 48h', 'JN'), ['prazo']);
+  assert.deepStrictEqual(C.disallowed('Economize energia e sinta o conforto', 'JN'), ['economia']);
+  assert.deepStrictEqual(C.disallowed('É a única pizza grande por menos de cinquenta reais', 'Forno Bom'), ['lider / numero 1']);
 });
 test('prompt sem texto não manda escrever nada', () => {
   const p = TC.textFreePrompt('Instagram post for Forno Bom pizzeria, steaming pizza, while bold text **Promoção de Terça** in black font and price **R$ 49,90** appear; warm lighting.');

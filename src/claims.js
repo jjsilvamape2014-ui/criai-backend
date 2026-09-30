@@ -17,10 +17,10 @@ const CLAIMS = [
   ['desconto', /\bdesconto\b|\b\d{1,2} ?% ?(off|de desconto)?\b|\boff\b/, ['desconto', '%', 'off']],
   ['prazo', /\bno prazo( certo)?\b|\bem (ate )?\d+ ?(h|hs|horas|dias|minutos|min)\b|\bpontualidade\b|\bpontua(l|is)\b|\bentrega (rapida|no mesmo dia|expressa|imediata)\b|\bno mesmo dia\b/, ['prazo', 'pontual', 'mesmo dia', 'rapid', 'express', 'imediat']],
   ['melhor/menor preco', /\b(melhor|menor) (preco|custo|valor)\b|\bmais barat[oa]\b|\bpreco imbativel\b|\bmelhor custo[- ]beneficio\b/, ['melhor preco', 'menor preco', 'barat', 'imbativel', 'custo-beneficio', 'custo beneficio']],
-  ['lider / numero 1', /\blider(es)?\b|\bnumero 1\b|\bn[ºo°]\.? ?1\b|\bo melhor da (regiao|cidade|bairro)\b|\breferencia (na|em)\b/, ['lider', 'numero 1', 'n 1', 'melhor da', 'referencia']],
+  ['lider / numero 1', /\b(o|a) unic[oa]\b|\bunic[oa] (da|na|do|no|em) (regiao|cidade|bairro|mercado)\b|\bexclusividade\b|\blider(es)?\b|\bnumero 1\b|\bn[ºo°]\.? ?1\b|\bo melhor da (regiao|cidade|bairro)\b|\breferencia (na|em)\b/, ['lider', 'numero 1', 'n 1', 'melhor da', 'referencia', 'unic', 'exclusiv']],
   ['experiencia', /\b\d+ anos (de|no) (experiencia|mercado)\b|\bmais de \d+ (anos|clientes|mil)\b|\b\d+ mil clientes\b/, ['anos', 'clientes', 'mil']],
   ['certificado', /\bcertificad[oa]s?\b|\bcertificacao\b|\bnbr\b|\biso ?\d+\b|\baprovad[oa] pel[oa]\b/, ['certific', 'nbr', 'iso', 'aprovad']],
-  ['economia', /\b(economi[az]a?r?|reduz(ir|a)?) (de |na |a )?(energia|conta de luz|conta)\b|\bmenor conta\b/, ['econom', 'conta de luz', 'energia']],
+  ['economia', /\b(economi\w*|reduz\w*|diminu\w*|poup\w*) (de |na |a |sua |seu |o |com )?(energia|conta de luz|conta|luz)\b|\bmenor conta\b/, ['econom', 'conta de luz', 'energia']],
   ['avaliacao/orcamento gratis', /\b(avaliacao|orcamento|visita|diagnostico) (tecnic[oa] )?(gratis|gratuit[oa]|sem compromisso)\b/, ['grat', 'sem compromisso']],
 ];
 

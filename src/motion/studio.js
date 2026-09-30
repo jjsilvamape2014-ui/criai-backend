@@ -194,7 +194,7 @@ async function planStudio(request, project, refCaptions, hasProduct) {
   const src = C.sourceOf({ request, project: p, refCaptions });
   sb.scenes = C.cleanPlan(sb.scenes, src);
   for (const s of sb.scenes) {
-    if (!s.voice) s.voice = s.title || s.slogan1 || '';
+    // fala removida por promessa → a cena fica só com a imagem (falar o título soava robótico)
     if (s.voice && !/[.!?]$/.test(s.voice.trim())) s.voice = `${s.voice.trim()}.`;
   }
   return ensureBrand(sb, p.brand || sb.brand);
