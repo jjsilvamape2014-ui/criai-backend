@@ -12,7 +12,7 @@ const squash = (s) => String(s || '').toLowerCase().replace(/[\s"“”'’.,:;!
 // Só textos que precisam aparecer: entre aspas, preço, %, idade, nomes próprios.
 // Números soltos (ex.: tamanho 1080x1350) não contam.
 function requiredTexts(tokens) {
-  return [...new Set((tokens || []).map((t) => String(t).trim()).filter((t) =>
+  return [...new Set((tokens || []).map((t) => String(t).trim().replace(/[\s.,;:!?]+$/, '')).filter((t) =>
     t.length >= 2 && (/\p{L}/u.test(t) || /%|R\$/.test(t)) && !/^\d+\s*x\s*\d+$/i.test(t)))].slice(0, 4);
 }
 
@@ -72,4 +72,11 @@ async function overlayText(imageUrl, texts, { hex = '#1d4ed8' } = {}) {
   return img.composite([{ input: Buffer.from(svg), left: 0, top: 0 }]).png().toBuffer();
 }
 
-module.exports = { requiredTexts, transcribe, verify, overlayText };
+// Tira do prompt tudo que manda escrever texto (senão "sem texto" + "texto em negrito" se contradizem)
+function textFreePrompt(prompt) {
+  const parts = String(prompt || '').split(/(?<=[.;,])\s+|\n+/);
+  const kept = parts.filter((p) => !/\b(text|texts|font|typograph\w*|headline|title|caption|lettering|letters?|words?|wordmark|price|slogan|label|written|printed|reads?|saying)\b|R\$|\*\*|["“”]|%/i.test(p));
+  return `${kept.join(' ').trim()}\nABSOLUTELY NO TEXT, NO LETTERS, NO NUMBERS, NO PRICE TAGS, NO SIGNS anywhere in the image. Keep the lower quarter calm (no important subject) for a caption.`;
+}
+
+module.exports = { textFreePrompt, requiredTexts, transcribe, verify, overlayText };

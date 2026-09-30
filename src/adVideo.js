@@ -138,7 +138,7 @@ async function planAd(request, project, refCaptions) {
         plan.narration = String(plan.narration).replace(/\s+/g, ' ').trim().slice(0, 500);
         const C = require('./claims');
         const src = C.sourceOf({ request, project: p, refCaptions });
-        plan.narration = C.cleanVoice(plan.narration, src);
+        plan.narration = C.cleanVoice(plan.narration, src) || C.cleanText(plan.narration, src);
         plan.scenes.forEach((sc) => { sc.caption = C.cleanText(sc.caption, src); });
         return plan;
       }

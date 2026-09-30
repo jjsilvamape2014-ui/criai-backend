@@ -1579,9 +1579,15 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
           if (retry && r2 && r2.ok) {
             imageUrl = retry;
           } else {
-            const clean = await generateRoutes.generateImageFromProviders(
-              `${finalPrompt}\nABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO NUMBERS in the image. Leave the lower quarter of the image calm (no important subject) for a caption.`,
-              { width, height }).catch(() => null);
+            // imagem SEM texto (até 2 tentativas, conferidas pela visão)
+            let clean = null;
+            for (let k = 0; k < 2 && !clean; k++) {
+              const c = await generateRoutes.generateImageFromProviders(TC.textFreePrompt(finalPrompt), { width, height }).catch(() => null);
+              if (!c) continue;
+              const seen = await TC.transcribe(c).catch(() => null);
+              if (seen === null || !seen.replace(/[^\p{L}\d]/gu, '').length) clean = c;
+              else console.warn('Cérebro Visual: imagem "sem texto" veio com texto:', seen.slice(0, 60));
+            }
             const colors = (session.memory.project && session.memory.project.colors) || [];
             const hex = (require('../logoMaker').extractColor(`${message} ${colors.join(' ')}`) || {}).hex;
             const png = await TC.overlayText(clean || retry || imageUrl, mustText, hex ? { hex } : {});

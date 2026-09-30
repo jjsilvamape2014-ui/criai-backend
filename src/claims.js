@@ -15,7 +15,7 @@ const CLAIMS = [
   ['24 horas', /\b((suporte|atendimento|plantao) )?24 ?h(oras)?\b|\b24\/7\b|\bplantao\b/, ['24']],
   ['gratis', /\b((com )?(frete|entrega|instalacao|avaliacao|orcamento|visita|consulta|brinde) )?(gratis|gratuit[oa]s?)\b|\bfree\b|\bsem custo\b|\bde graca\b/, ['grat', 'sem custo', 'de graca', 'free']],
   ['desconto', /\bdesconto\b|\b\d{1,2} ?% ?(off|de desconto)?\b|\boff\b/, ['desconto', '%', 'off']],
-  ['prazo', /\bno prazo( certo)?\b|\bpontualidade\b|\bpontua(l|is)\b|\bentrega (rapida|no mesmo dia|expressa|imediata)\b|\bno mesmo dia\b/, ['prazo', 'pontual', 'mesmo dia', 'rapid', 'express', 'imediat']],
+  ['prazo', /\bno prazo( certo)?\b|\bem (ate )?\d+ ?(h|hs|horas|dias|minutos|min)\b|\bpontualidade\b|\bpontua(l|is)\b|\bentrega (rapida|no mesmo dia|expressa|imediata)\b|\bno mesmo dia\b/, ['prazo', 'pontual', 'mesmo dia', 'rapid', 'express', 'imediat']],
   ['melhor/menor preco', /\b(melhor|menor) (preco|custo|valor)\b|\bmais barat[oa]\b|\bpreco imbativel\b|\bmelhor custo[- ]beneficio\b/, ['melhor preco', 'menor preco', 'barat', 'imbativel', 'custo-beneficio', 'custo beneficio']],
   ['lider / numero 1', /\blider(es)?\b|\bnumero 1\b|\bn[ºo°]\.? ?1\b|\bo melhor da (regiao|cidade|bairro)\b|\breferencia (na|em)\b/, ['lider', 'numero 1', 'n 1', 'melhor da', 'referencia']],
   ['experiencia', /\b\d+ anos (de|no) (experiencia|mercado)\b|\bmais de \d+ (anos|clientes|mil)\b|\b\d+ mil clientes\b/, ['anos', 'clientes', 'mil']],
@@ -38,7 +38,8 @@ function cleanVoice(text, source) {
   // frase com promessa sai INTEIRA (cortar só o trecho deixava frases quebradas:
   // "com peças.", "Qualidade, rapidez e que protegem..."). Se nada sobrar, corta o trecho.
   const out = (s.match(/[^.!?]+[.!?]*/g) || []).map((y) => y.trim()).filter((x) => x && !disallowed(x, source).length);
-  return out.length ? out.join(' ') : cleanText(s, source);
+  // tudo tinha promessa → vazio (quem chama usa o título/legenda da cena no lugar)
+  return out.join(' ');
 }
 
 // texto de tela: remove só o trecho da promessa

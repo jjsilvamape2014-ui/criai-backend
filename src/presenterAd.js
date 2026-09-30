@@ -117,7 +117,7 @@ async function planPresenter(request, project, refCaptions) {
           look: String(plan.look || fb.look).slice(0, 300),
           setting: String(plan.setting || fb.setting).slice(0, 300),
           scenes: plan.scenes.slice(0, 4).map((sc, i) => ({
-            voice: String(sc.voice || fb.scenes[i].voice).replace(/\s+/g, ' ').trim().slice(0, 160),
+            voice: String(sc.voice || sc.caption || fb.scenes[i].voice).replace(/\s+/g, ' ').trim().slice(0, 160),
             caption: String(sc.caption || '').replace(/\s+/g, ' ').trim().slice(0, 40),
             shot: String(sc.shot || fb.scenes[i].shot).slice(0, 300)
           })),
