@@ -57,7 +57,7 @@ function directorPrompt() {
     '- product quando houver um produto/serviço para mostrar (se o cliente mandou foto de produto, SEMPRE inclua).',
     '- steps quando o cliente pedir para explicar como funciona, ou quando o produto precisa ser explicado (2 a 4 passos, na ordem real de uso).',
     '- benefits para vantagens concretas (3 ou 4 itens, title até 4 palavras).',
-    '- statement para uma virada forte (ex.: "Cliente satisfeito que não avalia é venda perdida").',
+    '- statement para uma virada forte, específica deste negócio (nunca frases genéricas copiadas).',
     '- Textos na tela curtos: title até 7 palavras; subtitle até 12; desc até 9; slogans até 5.',
     '- voice: fala em português do Brasil, natural e animada, 6 a 16 palavras por cena (steps e benefits até 20). SOMA de todas as falas: no máximo 75 palavras. O nome da marca deve ser FALADO pelo menos uma vez e na cta.',
     '- Telefone e preço na voice: escreva com DÍGITOS, exatamente como o cliente escreveu (ex.: "(91) 98888-7777", "R$ 80,00"); o sistema converte para a fala. Nunca escreva números por extenso.',
@@ -193,7 +193,10 @@ async function planStudio(request, project, refCaptions, hasProduct) {
   const C = require('../claims');
   const src = C.sourceOf({ request, project: p, refCaptions });
   sb.scenes = C.cleanPlan(sb.scenes, src);
-  for (const s of sb.scenes) if (!s.voice) s.voice = s.title || s.slogan1 || '';
+  for (const s of sb.scenes) {
+    if (!s.voice) s.voice = s.title || s.slogan1 || '';
+    if (s.voice && !/[.!?]$/.test(s.voice.trim())) s.voice = `${s.voice.trim()}.`;
+  }
   return ensureBrand(sb, p.brand || sb.brand);
 }
 
