@@ -1558,6 +1558,39 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       }
     }
 
+    // 5a2) CONFERÊNCIA DO TEXTO: lê o texto da imagem pronta e compara (em código) com o
+    //      que o cliente pediu. Errado → refaz 1x reforçando o texto; ainda errado → gera
+    //      SEM texto e escreve o texto por código (sempre certo). Sem cobrar a mais.
+    try {
+      const TC = require('../textCheck');
+      const mustText = TC.requiredTexts(extractTextTokens(message));
+      if (imageUrl && mustText.length && !onlyPlace && !isPortrait) {
+        let r = await TC.verify(imageUrl, mustText);
+        if (r && !r.ok) {
+          console.warn('Cérebro Visual: texto errado na imagem →', r.missing.join(' | '), '| lido:', r.seen.slice(0, 80));
+          const list = mustText.map((t) => `"${t}"`).join(', ');
+          const retry = await generateRoutes.generateImageFromProviders(
+            `${finalPrompt}\nThe image MUST contain exactly these printed texts, spelled letter by letter with correct accents: ${list}. No other words.`,
+            { width, height }).catch(() => null);
+          const r2 = retry ? await TC.verify(retry, mustText) : null;
+          if (retry && r2 && r2.ok) {
+            imageUrl = retry;
+          } else {
+            const clean = await generateRoutes.generateImageFromProviders(
+              `${finalPrompt}\nABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO NUMBERS in the image. Leave the lower quarter of the image calm (no important subject) for a caption.`,
+              { width, height }).catch(() => null);
+            const colors = (session.memory.project && session.memory.project.colors) || [];
+            const hex = (require('../logoMaker').extractColor(`${message} ${colors.join(' ')}`) || {}).hex;
+            const png = await TC.overlayText(clean || retry || imageUrl, mustText, hex ? { hex } : {});
+            imageUrl = await adVideo._internals.uploadToFal(png, 'image/png', `peca-${Date.now()}.png`).catch(() => `data:image/png;base64,${png.toString('base64')}`);
+            cmd.reply = `${cmd.reply || 'Pronto!'} Conferi o texto da imagem: a IA tinha escrito errado, então eu mesmo escrevi ${list} com a grafia exata.`;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Cérebro Visual: conferência de texto falhou (seguindo):', e.message);
+    }
+
     // 5b) REALCE DE QUALIDADE (Magnific Mystic — opcional, pago). Só quando o usuário
     //     pedir explicitamente "melhorar/realçar/mais detalhe" e MAGNIFIC_API_KEY existir.
     //     Re-processa a imagem final em 2K mantendo estrutura (referência = resultado).
@@ -1587,7 +1620,9 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     //      + CTA + hashtags no próprio chat (texto barato, não quebra se falhar).
     if (imageUrl && process.env.LLM_API_KEY) {
       try {
-        const caps = await generateCaptions(finalPrompt, session.memory.project);
+        const C = require('../claims');
+        const capsRaw = await generateCaptions(finalPrompt, session.memory.project);
+        const caps = capsRaw && capsRaw.split('\n').map((l) => C.cleanVoice(l, C.sourceOf({ request: message, project: session.memory.project }))).join('\n');
         if (caps && caps.trim()) {
           cmd.reply = `${cmd.reply || 'Pronto!'}\n\n${caps}`;
         }

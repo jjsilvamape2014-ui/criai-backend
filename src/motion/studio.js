@@ -189,6 +189,11 @@ async function planStudio(request, project, refCaptions, hasProduct) {
   const cta = sb.scenes[sb.scenes.length - 1];
   if (phoneTyped) cta.phone = phoneTyped;
   else if (cta.phone && !phoneFrom(cta.phone)) cta.phone = '';
+  // promessas que o cliente não fez saem (garantia, 24h, grátis, tempo limitado...)
+  const C = require('../claims');
+  const src = C.sourceOf({ request, project: p, refCaptions });
+  sb.scenes = C.cleanPlan(sb.scenes, src);
+  for (const s of sb.scenes) if (!s.voice) s.voice = s.title || s.slogan1 || '';
   return ensureBrand(sb, p.brand || sb.brand);
 }
 

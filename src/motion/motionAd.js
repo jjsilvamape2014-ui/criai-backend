@@ -110,7 +110,10 @@ async function planMotionAd(request, project, refCaptions) {
     const cleaned = String(text || '').replace(/```json/gi, '').replace(/```/g, '');
     const s = cleaned.indexOf('{');
     const e = cleaned.lastIndexOf('}');
-    if (s >= 0 && e > s) return sanitizePlan(JSON.parse(cleaned.slice(s, e + 1)), p);
+    if (s >= 0 && e > s) {
+      const C = require('../claims');
+      return sanitizePlan(C.cleanPlan(JSON.parse(cleaned.slice(s, e + 1)), C.sourceOf({ request, project: p, refCaptions })), p);
+    }
   } catch (e) {
     console.error('motionAd: roteiro via LLM falhou, usando padrão:', e.message);
   }
