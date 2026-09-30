@@ -35,13 +35,9 @@ function disallowed(text, source) {
 function cleanVoice(text, source) {
   const s = String(text || '');
   if (!disallowed(s, source).length) return s;
-  // frase com promessa: corta só o trecho; se sobrar pouco (< 4 palavras), a frase sai
-  const out = [];
-  for (const x of (s.match(/[^.!?]+[.!?]*/g) || []).map((y) => y.trim()).filter(Boolean)) {
-    if (!disallowed(x, source).length) { out.push(x); continue; }
-    const c = cleanText(x, source);
-    if (c.split(/\s+/).filter((w) => /\p{L}{2,}/u.test(w)).length >= 4) out.push(/[.!?]$/.test(c) ? c : `${c}.`);
-  }
+  // frase com promessa sai INTEIRA (cortar só o trecho deixava frases quebradas:
+  // "com peças.", "Qualidade, rapidez e que protegem..."). Se nada sobrar, corta o trecho.
+  const out = (s.match(/[^.!?]+[.!?]*/g) || []).map((y) => y.trim()).filter((x) => x && !disallowed(x, source).length);
   return out.length ? out.join(' ') : cleanText(s, source);
 }
 

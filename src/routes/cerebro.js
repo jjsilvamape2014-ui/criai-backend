@@ -962,9 +962,12 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       const wantsBrandStrong = /(logo|logomarca|marca|identidade|assinatura)/i.test(message);
       const wantsObjStrong = /(banner|post|an[úu]cio|capa|cartaz|flyer|panfleto|p[ôo]ster|folder|comercial|campanha|publicidade|material|cart[ãa]o|impulso|story|logo|imagem|arte|arte final)/i.test(message) || /\b(para|destinado|voltado)\b/i.test(message);
       const qStrong = [];
-      if (wantsBrandStrong && !projStrong.brand && !askedStrong.includes('brand')) qStrong.push({ field: 'brand', q: 'Qual é o nome/marca que deve aparecer na peça?' });
-      if (wantsObjStrong && !projStrong.objective && !askedStrong.includes('objective')) qStrong.push({ field: 'objective', q: 'Qual o objetivo/tipo da peça (ex: post p/ Instagram, banner, capa, cartaz, anúncio...)?' });
-      if (!(projStrong.colors && projStrong.colors.length) && !askedStrong.includes('colors')) qStrong.push({ field: 'colors', q: 'Quais cores devo usar (cores da sua marca ou preferência)?' });
+      // Só pergunta o NOME, e só se o pedido não trouxer nenhum (aspas ou nome próprio).
+      // Tipo da peça e cores NÃO são perguntados: têm padrão (post quadrado, cores do ramo).
+      // (Antes a pergunta do tipo saía justamente quando o cliente JÁ tinha dito "post".)
+      void wantsObjStrong;
+      const hasName = /["“”']/.test(message) || /\b[A-ZÀ-Ú][\wÀ-ú]+(?:\s+[A-ZÀ-Ú][\wÀ-ú]+)+/.test(message.replace(/^\s*\S+/, ''));
+      if (wantsBrandStrong && !projStrong.brand && !hasName && !askedStrong.includes('brand')) qStrong.push({ field: 'brand', q: 'Qual é o nome/marca que deve aparecer na peça?' });
       if (qStrong.length) {
         const firstStrong = qStrong[0];
         session.memory.asked = [...new Set([...askedStrong, firstStrong.field])];
