@@ -81,4 +81,14 @@ async function remove(key) {
   try { await db().$executeRawUnsafe('DELETE FROM cerebro_sessions WHERE key = $1', key); } catch (e) { /* só log */ }
 }
 
-module.exports = { load, save, remove, slim };
+// Na subida do servidor: cria a tabela e informa quantas conversas estão guardadas
+async function warmup() {
+  if (!enabled()) return console.log('💾 conversas no banco: desligado');
+  if (!(await ensureTable())) return;
+  try {
+    const r = await db().$queryRawUnsafe('SELECT COUNT(*)::int AS n FROM cerebro_sessions');
+    console.log(`💾 conversas no banco: ${r[0].n} guardadas`);
+  } catch (e) { console.error('sessionStore: contagem falhou:', e.message); }
+}
+
+module.exports = { load, save, remove, slim, warmup };

@@ -129,6 +129,7 @@ app.post('/api/admin/premium', async (req, res) => {
 });
 
 app.listen(PORT, () => {
+  require('./sessionStore').warmup().catch(() => {});
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
   console.log(`📡 API: http://localhost:${PORT}/api`);
   startCron();
