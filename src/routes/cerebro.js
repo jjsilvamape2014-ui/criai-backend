@@ -590,6 +590,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     const isPortrait = !!(portrait || /(uploaded selfie|uploaded person|original reference image|the picture provided)/i.test(message || ''));
 
     const sid = typeof sessionId === 'string' && sessionId ? sessionId : cerebro.newSessionId();
+    await cerebro.hydrate(user.id, sid).catch(() => null); // conversa salva no banco (sobrevive a deploys)
     const session = cerebro.getOrCreateSession(user.id, sid);
 
     // 🗂️ MEMÓRIA DE LONGO PRAZO: hidrata o projeto com o que o usuário já decidiu
@@ -1702,6 +1703,7 @@ router.get('/job/:jobId', authMiddleware, async (req, res) => {
 
 // GET /api/cerebro/memoria/:sessionId — recompõe o chat (histórico + memória)
 router.get('/memoria/:sessionId', authMiddleware, async (req, res) => {
+  await cerebro.hydrate(req.user.id, req.params.sessionId).catch(() => null);
   const session = cerebro.getSession(req.user.id, req.params.sessionId);
   if (!session) {
     return res.status(404).json({ error: 'Sessão não encontrada' });

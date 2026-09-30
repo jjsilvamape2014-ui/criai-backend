@@ -82,12 +82,23 @@ function getOrCreateSession(userId, sessionId) {
   return s;
 }
 
+// Traz do banco a conversa que o servidor não tem na memória (ex.: depois de um deploy)
+async function hydrate(userId, sessionId) {
+  if (!sessionId) return null;
+  const k = keyFor(userId, sessionId);
+  if (STORE.has(k)) return STORE.get(k);
+  const s = await require('./sessionStore').load(k);
+  if (s && String(s.userId) === String(userId)) { STORE.set(k, s); return s; }
+  return null;
+}
+
 function getSession(userId, sessionId) {
   const k = keyFor(userId, sessionId);
   return STORE.get(k) || null;
 }
 
 function resetSession(userId, sessionId) {
+  require('./sessionStore').remove(keyFor(userId, sessionId));
   return STORE.delete(keyFor(userId, sessionId));
 }
 
@@ -103,6 +114,7 @@ function listSessions(userId) {
 function pushHistory(session, role, message, imageUrl) {
   session.history.push({ role, message, imageUrl: imageUrl || null, ts: Date.now() });
   session.updatedAt = Date.now();
+  require('./sessionStore').save(keyFor(session.userId, session.id), session);
   return session.history;
 }
 
@@ -167,6 +179,7 @@ module.exports = {
   newSessionId,
   getOrCreateSession,
   getSession,
+  hydrate,
   resetSession,
   listSessions,
   pushHistory,
