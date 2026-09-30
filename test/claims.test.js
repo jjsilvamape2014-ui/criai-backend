@@ -5,8 +5,7 @@ const TC = require('../src/textCheck');
 
 test('promessa que o cliente não fez sai da fala; o resto fica', () => {
   const out = C.cleanVoice('A JN Refrigeração instala seu ar-condicionado com garantia. Fazemos avaliação gratuita. Chame no WhatsApp.', 'vídeo da JN Refrigeração, WhatsApp');
-  assert.ok(out.includes('JN Refrigeração instala'));
-  assert.ok(!/garantia|gratuita/i.test(out));
+  assert.strictEqual(out, 'Chame no WhatsApp.');
 });
 test('promessa que o cliente fez fica', () => {
   assert.strictEqual(C.cleanVoice('Aproveite a promoção com 20% de desconto!', 'promoção 20% de desconto'), 'Aproveite a promoção com 20% de desconto!');
