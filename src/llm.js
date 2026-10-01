@@ -38,8 +38,12 @@ async function callLLM(systemPrompt, userText, opts = {}) {
   const provider = getProvider();
   if (!key || !provider) return null;
 
-  const model = process.env.LLM_MODEL || DEFAULT_MODEL[provider] || DEFAULT_MODEL.openai;
+  let model = process.env.LLM_MODEL || DEFAULT_MODEL[provider] || DEFAULT_MODEL.openai;
   const maxAttempts = opts.maxAttempts || 2;
+  // Modelo reserva para quando o principal bate o limite por minuto (429): cada modelo da
+  // Groq tem limite próprio. Sem isso, com vários clientes juntos o app caía no roteiro padrão.
+  const fallbackModel = process.env.LLM_FALLBACK_MODEL === 'none' ? null
+    : (process.env.LLM_FALLBACK_MODEL || (provider === 'groq' ? 'openai/gpt-oss-20b' : null));
 
   // Gemini usa corpo diferente (generateContent)
   if (provider === 'gemini') {
@@ -81,7 +85,7 @@ async function callLLM(systemPrompt, userText, opts = {}) {
   // Modelos que "pensam" antes de responder (ex.: openai/gpt-oss-120b na Groq) gastam
   // o max_tokens com o raciocínio: com limite baixo a resposta vem VAZIA e o app cai
   // no plano B sem ninguém perceber. Para eles o limite mínimo é 4096.
-  const reasoning = /gpt-oss|deepseek-r1|qwq|\bo[134](-|$)|reason/i.test(model);
+  const reasoning = /gpt-oss|deepseek-r1|qwq|\bo[134](-|$)|reason/i.test(model) || /gpt-oss/i.test(fallbackModel || '');
   let maxTokens = reasoning ? Math.max(opts.maxTokens || 1024, 4096) : (opts.maxTokens || 1024);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -117,6 +121,12 @@ async function callLLM(systemPrompt, userText, opts = {}) {
       const detail = (e.response && e.response.data && JSON.stringify(e.response.data).slice(0, 300)) || e.message;
       if (Array.isArray(opts.errors)) opts.errors.push(`HTTP ${status || '-'}: ${String(detail).slice(0, 160)}`);
       // 429 = muitos pedidos ao mesmo tempo (vários vídeos em paralelo): espera e tenta de novo
+      if (status === 429 && fallbackModel && model !== fallbackModel) {
+        console.warn(`LLM[${provider}] limite do modelo ${model} (429) → usando o reserva ${fallbackModel}`);
+        model = fallbackModel;
+        attempt--;
+        continue;
+      }
       if (status === 429 && rateRetries < 3) {
         rateRetries++;
         const ra = parseFloat((e.response.headers && e.response.headers['retry-after']) || '');

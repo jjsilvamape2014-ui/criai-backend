@@ -85,6 +85,11 @@ function isCreationRequest(message) {
   return ASK_VERB.test(m) || m.split(/\s+/).length <= 8; // pedido curto sem verbo ("reels da minha loja")
 }
 
+// pergunta (termina com ? ou começa com qual/como/quando…), não pedido de peça
+function isQuestion(message) {
+  return /\?\s*$/.test(String(message || '')) || /^(qual|quais|como|quando|onde|por ?que|o que|quanto|quantos|tem como|da pra|d[aá] para)\b/.test(norm(message));
+}
+
 function enforce(action, message) {
   const req = detectRequested(message).tipo;
   if (!isCreationRequest(message)) return { action, corrigido: false };
@@ -93,8 +98,7 @@ function enforce(action, message) {
   if (req === 'imagem' && got === 'video') return { action: 'image', corrigido: true, motivo: 'pediu imagem; a IA escolheu vídeo' };
   if (req === 'video' && got === 'imagem') return { action: 'video', corrigido: true, motivo: 'pediu vídeo; a IA escolheu imagem' };
   if (req === 'video' && got === 'texto') return { action: 'video', corrigido: true, motivo: 'pediu vídeo; a IA só respondeu' };
-  const question = /\?\s*$/.test(String(message)) || /^(qual|quais|como|quando|onde|por ?que|o que|quanto|quantos|tem como|da pra|d[aá] para)\b/.test(norm(message));
-  if (req === 'imagem' && got === 'texto' && !question) return { action: 'image', corrigido: true, motivo: 'pediu imagem/post; a IA só respondeu' };
+  if (req === 'imagem' && got === 'texto' && !isQuestion(message)) return { action: 'image', corrigido: true, motivo: 'pediu imagem/post; a IA só respondeu' };
   if ((req === 'roteiro_video' || req === 'copy') && (got === 'video' || got === 'imagem')) {
     return { action: 'write', corrigido: true, motivo: `pediu ${req === 'copy' ? 'texto' : 'roteiro'}; a IA ia renderizar` };
   }
@@ -189,4 +193,4 @@ function detectSpeech(message, hasImage) {
   return { fala, feminina: /\b(a|uma)\s+(mascote|personagem|menina|mulher)|\bsou a\b/i.test(message) };
 }
 
-module.exports = { isCreationRequest, detectSpeech, detectRequested, isEmptyRequest, precheck, enforce, validateWrite, writeText, formatText, parseJson };
+module.exports = { isQuestion, isCreationRequest, detectSpeech, detectRequested, isEmptyRequest, precheck, enforce, validateWrite, writeText, formatText, parseJson };
