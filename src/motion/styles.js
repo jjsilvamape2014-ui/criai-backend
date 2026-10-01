@@ -61,6 +61,8 @@ const BUSINESS = [
 ];
 
 function pickStyle(request, project, llmStyle) {
+  const mark = String(request || '').match(/\[\[estilo:(\w+)\]\]/);
+  if (mark && KEYS.includes(mark[1])) return { key: mark[1], why: 'pedido' };
   const t = norm(request);
   // o pedido mais recente manda ("...Ajuste pedido pelo cliente no vídeo anterior: estilo elegante")
   const parts = t.split(/ajuste pedido pelo cliente no video anterior:/).reverse();
