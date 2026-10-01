@@ -25,7 +25,19 @@ function isLogoRequest(message) {
 }
 
 // Nome da marca escrito no pedido
+// "Linha Fácil azul" → "Linha Fácil" (cor solta no fim não faz parte do nome)
+function dropColor(name) {
+  const words = String(name || '').trim().split(/\s+/);
+  while (words.length > 1 && Object.keys(COLORS).includes(norm(words[words.length - 1]))) words.pop();
+  return words.join(' ');
+}
+
 function extractName(message) {
+  const n = extractNameRaw(message);
+  return n ? dropColor(n) : n;
+}
+
+function extractNameRaw(message) {
   const s = String(message || '');
   const q = s.match(/["“']([^"”']{2,40})["”']/);
   if (q) return q[1].trim();
@@ -35,7 +47,8 @@ function extractName(message) {
     if (name.length >= 2 && name.length <= 40 && !/^(minha|meu|a|o|uma|um)\b/i.test(name)) return name;
   }
   // "logo da Linha Fácil" / "logo para Padaria São João" (nome com maiúsculas)
-  const cap = s.match(/\blogo\w*\s+(?:da|do|de|para|pra)\s+((?:[A-ZÀ-Ú][\wÀ-ú'&.-]*\s?){1,4})/);
+  // (aceita artigo no meio: "logo para a Doce Sabor", "logomarca pro Bar do Zé")
+  const cap = s.match(/\blogo\w*\s+(?:da|do|de|para|pra|pro)\s+(?:(?:a|o)\s+)?((?:[A-ZÀ-Ú][\wÀ-ú'&.-]*(?:\s(?:da|do|de|dos|das|e)(?=\s[A-ZÀ-Ú]))?\s?){1,4})/);
   if (cap) return cap[1].trim();
   return '';
 }

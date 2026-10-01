@@ -43,3 +43,11 @@ test('ramo → ícone do app; sem ramo → monograma', () => {
   assert.strictEqual(L.iconFor('concreto'), 'building');
   assert.strictEqual(L.iconFor('xpto'), null);
 });
+
+test('nome da logo com artigo antes e cor solta depois', () => {
+  const L = require('../src/logoMaker');
+  assert.strictEqual(L.extractName('Quero uma logo para a Doce Sabor Confeitaria, cor rosa. Sem enrolação.'), 'Doce Sabor Confeitaria');
+  assert.strictEqual(L.extractName('cria uma logomarca pro Bar do Zé, cor verde'), 'Bar do Zé');
+  assert.strictEqual(L.extractName('faz um logo com o nome Linha Fácil azul'), 'Linha Fácil');
+  assert.strictEqual(L.extractName('logo com o nome "Azul Turismo"'), 'Azul Turismo');
+});
