@@ -99,30 +99,89 @@ function iconFor(biz) {
 const esc = (t) => String(t).replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
 
 // Monta a logo: símbolo (buffer PNG, opcional) em cima, nome embaixo. PNG 1080x1080 fundo branco.
-async function composeLogo({ name, hex, symbol, icon }) {
+// Composições de logo (antes era sempre símbolo redondo + nome embaixo, na mesma fonte):
+//   stack      → símbolo em cima, nome embaixo
+//   horizontal → símbolo à esquerda, nome à direita
+//   emblem     → selo na cor da marca com símbolo e nome em branco
+//   wordmark   → só o nome forte, com um traço e o símbolo pequeno
+// A fonte segue o ramo (salão → Playfair, pizzaria → Anton, técnico → Montserrat).
+// O cliente pode pedir: "logo horizontal", "em selo/emblema", "só o nome".
+const LOGO_LAYOUTS = ['stack', 'horizontal', 'emblem', 'wordmark'];
+function pickLogoLayout(message, name) {
+  const m = norm(message);
+  if (/horizontal|lado a lado|deitad/.test(m)) return 'horizontal';
+  if (/selo|emblema|carimbo|badge|brasao/.test(m)) return 'emblem';
+  if (/so (o )?nome|apenas (o )?nome|sem (simbolo|icone|desenho)|tipografic/.test(m)) return 'wordmark';
+  if (/vertical|empilhad/.test(m)) return 'stack';
+  let h = 2166136261;
+  for (const ch of norm(name)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  return LOGO_LAYOUTS[(h >>> 7) % LOGO_LAYOUTS.length];
+}
+
+async function composeLogo({ name, hex, symbol, icon, layout = 'stack', look = 'moderno' }) {
   const E = require('./motion/engine');
+  const ST = require('./motion/styles');
+  const { icon: drawIcon } = require('./motion/icons');
+  const st = ST.get(look);
+  const font = ST.fontStack(st);
+  const heavy = st.flatWeight ? 400 : 800;
   const W = 1080;
-  const fit = E.fitText(name, { size: 150, minSize: 70, maxWidth: 900, maxLines: 2, weight: 800 });
-  const lh = fit.size * 1.05;
-  const textH = fit.lines.length * lh;
-  const symH = 420;
-  const gap = 50;
-  const top = Math.round((W - (symH + gap + textH)) / 2);
   const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
-  const cy = top + symH / 2;
-  const mono = icon
-    ? `<circle cx="540" cy="${cy}" r="${symH / 2 - 10}" fill="${hex}"/>${require('./motion/icons').icon(icon, 540, cy, 230, '#ffffff', { strokeWidth: 5 })}`
-    : `<circle cx="540" cy="${cy}" r="${symH / 2 - 10}" fill="${hex}"/>
-    <text x="540" y="${cy + 70}" font-family="${E.FONT}" font-weight="800" font-size="200" fill="#ffffff" text-anchor="middle">${esc(initials)}</text>`;
-  const text = fit.lines.map((l, i) => `<text x="540" y="${(top + symH + gap + fit.size * 0.9 + i * lh).toFixed(0)}" font-family="${E.FONT}" font-weight="800" font-size="${fit.size}" fill="${hex}" text-anchor="middle" letter-spacing="-1">${esc(l)}</text>`).join('');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${W}"><rect width="${W}" height="${W}" fill="#ffffff"/>${symbol ? '' : mono}${text}</svg>`;
+  const mark = (cx, cy, r, bg, fg) => (icon
+    ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${bg}"/>${drawIcon(icon, cx, cy, r * 1.1, fg, { strokeWidth: 5 })}`
+    : `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${bg}"/><text x="${cx}" y="${cy + r * 0.34}" font-family="${font}" font-weight="${heavy}" font-size="${r * 0.95}" fill="${fg}" text-anchor="middle">${esc(initials)}</text>`);
+  const t = (x, y, l, size, fill, anchor = 'middle', w = heavy, sp = -1) => `<text x="${x}" y="${y.toFixed(0)}" font-family="${font}" font-weight="${w}" font-size="${size}" fill="${fill}" text-anchor="${anchor}" letter-spacing="${sp}">${esc(l)}</text>`;
   const layers = [];
-  if (symbol) {
-    const s = await sharp(symbol).resize(symH, symH, { fit: 'inside' }).png().toBuffer();
+  let body = '';
+  E.withWidth(st.widthK, () => {
+    if (layout === 'horizontal') {
+      const r = 150;
+      const fit = E.fitText(name, { size: 130, minSize: 60, maxWidth: 540, maxLines: 2, weight: heavy });
+      const lh = fit.size * 1.05;
+      const cy = 540;
+      body = (symbol ? '' : mark(80 + r, cy, r, hex, '#ffffff')) +
+        fit.lines.map((l, i) => t(80 + 2 * r + 50, cy - ((fit.lines.length - 1) * lh) / 2 + fit.size * 0.35 + i * lh, l, fit.size, hex, 'start')).join('');
+      if (symbol) layers.push({ symbol, box: [80, cy - r, 2 * r, 2 * r] });
+    } else if (layout === 'emblem') {
+      const fit = E.fitText(name.toUpperCase(), { size: 110, minSize: 50, maxWidth: 760, maxLines: 2, weight: heavy });
+      const lh = fit.size * 1.08;
+      const textH = fit.lines.length * lh;
+      const symR = 120;
+      const boxH = symR * 2 + 60 + textH + 120;
+      const y0 = (W - boxH) / 2;
+      body = `<rect x="110" y="${y0}" width="860" height="${boxH}" rx="70" fill="${hex}"/><rect x="135" y="${y0 + 25}" width="810" height="${boxH - 50}" rx="55" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="4"/>` +
+        (symbol ? '' : mark(540, y0 + 60 + symR, symR, '#ffffff', hex)) +
+        fit.lines.map((l, i) => t(540, y0 + 60 + 2 * symR + 50 + fit.size * 0.85 + i * lh, l, fit.size, '#ffffff', 'middle', heavy, 2)).join('');
+      if (symbol) layers.push({ symbol, box: [540 - symR, y0 + 60, 2 * symR, 2 * symR], white: true });
+    } else if (layout === 'wordmark') {
+      const fit = E.fitText(name, { size: 170, minSize: 70, maxWidth: 920, maxLines: 2, weight: heavy });
+      const lh = fit.size * 1.05;
+      const textH = fit.lines.length * lh;
+      const y0 = (W - textH - 90) / 2;
+      body = fit.lines.map((l, i) => t(540, y0 + fit.size * 0.85 + i * lh, l, fit.size, '#16181d')).join('') +
+        `<rect x="${540 - 260}" y="${y0 + textH + 40}" width="380" height="14" rx="7" fill="${hex}"/>` +
+        (icon ? `<circle cx="${540 + 190}" cy="${y0 + textH + 47}" r="34" fill="${hex}"/>${drawIcon(icon, 540 + 190, y0 + textH + 47, 40, '#ffffff', { strokeWidth: 7 })}` : `<circle cx="${540 + 170}" cy="${y0 + textH + 47}" r="14" fill="${hex}"/>`);
+    } else {
+      const fit = E.fitText(name, { size: 150, minSize: 70, maxWidth: 900, maxLines: 2, weight: heavy });
+      const lh = fit.size * 1.05;
+      const textH = fit.lines.length * lh;
+      const symH = 420;
+      const top = Math.round((W - (symH + 50 + textH)) / 2);
+      const cy = top + symH / 2;
+      body = (symbol ? '' : mark(540, cy, symH / 2 - 10, hex, '#ffffff')) +
+        fit.lines.map((l, i) => t(540, top + symH + 50 + fit.size * 0.9 + i * lh, l, fit.size, hex)).join('');
+      if (symbol) layers.push({ symbol, box: [540 - symH / 2, top, symH, symH] });
+    }
+  });
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${W}"><rect width="${W}" height="${W}" fill="#ffffff"/>${body}</svg>`;
+  const comps = [];
+  for (const L of layers) {
+    let s = await sharp(L.symbol).resize(Math.round(L.box[2]), Math.round(L.box[3]), { fit: 'inside' }).png().toBuffer();
+    if (L.white) s = await sharp(s).tint({ r: 255, g: 255, b: 255 }).png().toBuffer();
     const sm = await sharp(s).metadata();
-    layers.push({ input: s, left: Math.round((W - sm.width) / 2), top: top + Math.round((symH - sm.height) / 2) });
+    comps.push({ input: s, left: Math.round(L.box[0] + (L.box[2] - sm.width) / 2), top: Math.round(L.box[1] + (L.box[3] - sm.height) / 2) });
   }
-  return sharp(Buffer.from(svg)).composite(layers).png().toBuffer();
+  return sharp(Buffer.from(svg)).composite(comps).png().toBuffer();
 }
 
 const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -173,4 +232,4 @@ async function drawSymbol({ name, colorName, hex, hint, generate, toBuffer }) {
   return null;
 }
 
-module.exports = { iconFor, businessOf, isLogoRequest, extractName, extractColor, businessHint, composeLogo, drawSymbol, processSymbol, COLORS };
+module.exports = { pickLogoLayout, iconFor, businessOf, isLogoRequest, extractName, extractColor, businessHint, composeLogo, drawSymbol, processSymbol, COLORS };

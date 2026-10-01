@@ -318,14 +318,23 @@ async function makeLogo({ user, session, message, display, res }) {
     const A = adVideo._internals;
     const biz = LM.businessOf(message, name);
     const icon = biz ? LM.iconFor(biz) : null;
-    const png = await LM.composeLogo({ name, hex: color.hex, icon });
+    // composição e fonte variam: pedido do cliente ("horizontal", "selo", "só o nome"),
+    // "outro modelo" (próxima da lista) ou o próprio nome escolhe
+    const prevLayout = session.memory.lastLogo && session.memory.lastLogo.layout;
+    let layout = LM.pickLogoLayout(message, name);
+    if (prevLayout && /(outr[oa] (modelo|vers[ãa]o|layout|op[çc][ãa]o|jeito)|diferente)/i.test(message)) {
+      const L = ['stack', 'horizontal', 'emblem', 'wordmark'];
+      layout = L[(L.indexOf(prevLayout) + 1) % L.length];
+    }
+    const look = require('../motion/styles').pickStyle(`${message} ${biz || ''}`, session.memory.project).key;
+    const png = await LM.composeLogo({ name, hex: color.hex, icon, layout, look });
     const imageUrl = await A.uploadToFal(png, 'image/png', `logo-${Date.now()}.png`).catch(() => `data:image/png;base64,${png.toString('base64')}`);
     await prisma.generation.create({ data: { userId: user.id, type: 'IMAGE', prompt: `[logo] ${name} ${color.name}`, status: 'COMPLETED', imageUrl, cost: 1 } }).catch(() => {});
     session.memory.project = session.memory.project || {};
     if (!session.memory.project.brand) session.memory.project.brand = name;
-    session.memory.lastLogo = { message, at: Date.now() };
+    session.memory.lastLogo = { message, at: Date.now(), layout };
     const reply = `Pronto! Logo da ${name} em ${color.name}. O nome foi escrito com fonte profissional, então sai exatamente como você digitou.` +
-      `${icon ? '' : ' Usei um monograma com as iniciais — se me disser o ramo da empresa (ex.: "é uma loja de roupas"), eu coloco um símbolo do ramo.'}\n\nQuer outra cor? É só pedir (ex.: "faz em verde").`;
+      `${icon ? '' : ' Usei um monograma com as iniciais — se me disser o ramo da empresa (ex.: "é uma loja de roupas"), eu coloco um símbolo do ramo.'}\n\nQuer outra cor ou outro modelo? É só pedir (ex.: "faz em verde", "logo horizontal", "em selo", "só o nome" ou "outro modelo").`;
     cerebro.pushHistory(session, 'user', display || message, null);
     cerebro.pushHistory(session, 'assistant', reply, imageUrl);
     const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });
@@ -609,7 +618,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       if (!(proj.colors && proj.colors.length) && Array.isArray(longMem.colors) && longMem.colors.length) {
         proj.colors = longMem.colors;
       }
-      if (!proj.style && longMem.style) proj.style = longMem.style;
+      // estilo visual NÃO vem de conversas antigas (fazia toda peça nova sair igual à primeira)
       if (!proj.objective && longMem.objective) proj.objective = longMem.objective;
       if (!(proj.facts && proj.facts.length) && Array.isArray(longMem.facts) && longMem.facts.length) {
         proj.facts = longMem.facts;
@@ -710,7 +719,8 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       const LM = require('../logoMaker');
       const saysBiz = LM.businessOf(message, '') && /(^|\s)([ée]\s+(uma?|o|a)|ramo|trabalh\w*|somos|vend\w*)(\s|$)/i.test(message);
       const saysColor = LM.extractColor(message) && /\b(cor|em|faz|muda|troca|deixa|quero)\b/i.test(message);
-      if (saysBiz || saysColor) {
+      const saysLayout = /(horizontal|vertical|selo|emblema|s[óo] (o )?nome|outr[oa] (modelo|vers[ãa]o|layout|op[çc][ãa]o|jeito)|diferente)/i.test(message);
+      if (saysBiz || saysColor || saysLayout) {
         const base = session.memory.lastLogo.message.replace(saysColor ? new RegExp(`\\b(na cor|em|cor)?\\s*${(LM.extractColor(session.memory.lastLogo.message) || {}).name || '#none#'}\\b`, 'i') : /$^/, '');
         return makeLogo({ user, session, message: `${base.trim()}. ${message}`, display: message, res });
       }
@@ -779,10 +789,11 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       if (session.memory.pieceBase && (session.memory.pieceTexts || []).length && !attached && TC.isTextOnlyFix(message)) {
         try {
           const texts = TC.mergePieceTexts(session.memory.pieceTexts, TC.pieceTexts(extractTextTokens(message), message));
-          const png = await TC.overlayText(session.memory.pieceBase, texts, session.memory.pieceHex ? { hex: session.memory.pieceHex } : {});
+          const png = await TC.overlayText(session.memory.pieceBase, texts, { ...(session.memory.pieceHex ? { hex: session.memory.pieceHex } : {}), ...(session.memory.pieceLayout || {}) });
           const url = await adVideo._internals.uploadToFal(png, 'image/png', `peca-${Date.now()}.png`).catch(() => `data:image/png;base64,${png.toString('base64')}`);
           session.memory.pieceTexts = texts;
           session.memory.baseImage = url;
+          session.memory.lastOutput = url;
           if (session.memory.refImages && session.memory.refImages[0]) session.memory.refImages[0] = url;
           const reply = `Pronto! Mantive a mesma imagem e troquei só o texto: ${texts.map((t) => `"${t}"`).join(', ')}. Essa correção não gastou crédito.`;
           cerebro.pushHistory(session, 'user', message, null);
@@ -1048,6 +1059,19 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
           history: session.history.slice(-20)
         });
       }
+    }
+
+    // 🆕 PEÇA NOVA sem imagem anexada: começa do zero. Antes, o app editava a imagem
+    //    anterior ("mantenha a composição") e somava o prompt antigo → tudo com o mesmo layout.
+    const attachedNow = refsFromClient.length > 0 || !!image;
+    const freshPiece = !attachedNow && !!session.memory.lastOutput && require('../contract').isNewPiece(message);
+    if (freshPiece) {
+      const last = session.memory.lastOutput;
+      session.memory.refImages = (session.memory.refImages || []).filter((u) => u !== last);
+      if (session.memory.baseImage === last) session.memory.baseImage = session.memory.refImages[0] || null;
+      session.memory.currentPrompt = '';
+      session.memory.pieceTexts = null;
+      session.memory.pieceBase = null;
     }
 
     // 1) Entender o que o usuário quer (LLM se houver saldo, senão heurística)
@@ -1656,9 +1680,13 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
               else console.warn('Cérebro Visual: imagem "sem texto" veio com texto:', seen.slice(0, 60));
             }
             const colors = (session.memory.project && session.memory.project.colors) || [];
-            const hex = (require('../logoMaker').extractColor(`${message} ${colors.join(' ')}`) || {}).hex;
+            // cor de destaque: a que o cliente pediu/da marca; senão a cor dominante da própria imagem
+            let hex = (require('../logoMaker').extractColor(`${message} ${colors.join(' ')}`) || {}).hex;
             const base = await TC.fitAspect(clean || retry || imageUrl, width, height).catch(() => clean || retry || imageUrl);
-            const png = await TC.overlayText(base, mustText, hex ? { hex } : {});
+            if (!hex) hex = await require('../motion/motionAd').colorFromLogo(await TC.toBuffer(base)).catch(() => null);
+            const pick = require('../textLayouts').chooseLayout({ texts: mustText, message, project: session.memory.project });
+            const png = await TC.overlayText(base, mustText, { ...(hex ? { hex } : {}), look: pick.look, layout: pick.layout });
+            session.memory.pieceLayout = pick;
             // guarda a imagem limpa: corrigir só o texto depois não gera outra imagem
             try {
               const baseBuf = Buffer.from(String(base).split(',')[1] || '', 'base64');
@@ -1726,6 +1754,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     });
 
     session.memory.baseImage = imageUrl;
+    session.memory.lastOutput = imageUrl; // a peça que o APP gerou (não é referência do cliente)
     if (session.memory.refImages[0]) session.memory.refImages[0] = imageUrl;
     session.memory.edits.push({
       message,

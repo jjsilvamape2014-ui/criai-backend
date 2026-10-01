@@ -85,6 +85,16 @@ function isCreationRequest(message) {
   return ASK_VERB.test(m) || m.split(/\s+/).length <= 8; // pedido curto sem verbo ("reels da minha loja")
 }
 
+// PEÇA NOVA ("faz um post para a padaria…") x AJUSTE da peça anterior ("muda o fundo",
+// "deixa o texto maior"). Peça nova não pode partir da imagem anterior: era isso que
+// fazia tudo sair com o mesmo layout, como se o app tivesse "gravado" o primeiro projeto.
+const PIECE = /\b(post|arte|banner|flyer|panfleto|imagem|story|stories|card|convite|cartaz|anuncio|propaganda|capa|thumbnail|logo\w*)\b/;
+const EDIT = /\b(mud\w*|troc\w*|ajust\w*|coloc\w*|poe|por|tir[ae]\w*|remov\w*|aument\w*|diminu\w*|deix\w*|corrig\w*|acrescent\w*|adicion\w*|substitu\w*|refa\w*|melhor[ae]\w*|essa|esta|nessa|nesta|dela|nela|nele|mesm[ao]|aqui)\b/;
+function isNewPiece(message) {
+  const m = norm(message);
+  return isCreationRequest(message) && PIECE.test(m) && !EDIT.test(m);
+}
+
 // pergunta (termina com ? ou começa com qual/como/quando…), não pedido de peça
 function isQuestion(message) {
   return /\?\s*$/.test(String(message || '')) || /^(qual|quais|como|quando|onde|por ?que|o que|quanto|quantos|tem como|da pra|d[aá] para)\b/.test(norm(message));
@@ -193,4 +203,4 @@ function detectSpeech(message, hasImage) {
   return { fala, feminina: /\b(a|uma)\s+(mascote|personagem|menina|mulher)|\bsou a\b/i.test(message) };
 }
 
-module.exports = { isQuestion, isCreationRequest, detectSpeech, detectRequested, isEmptyRequest, precheck, enforce, validateWrite, writeText, formatText, parseJson };
+module.exports = { isNewPiece, isQuestion, isCreationRequest, detectSpeech, detectRequested, isEmptyRequest, precheck, enforce, validateWrite, writeText, formatText, parseJson };
