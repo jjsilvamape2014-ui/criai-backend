@@ -77,3 +77,13 @@ test('promoção relâmpago, "até o fim da semana" e premium inventados saem', 
   assert.strictEqual(C.cleanVoice('Bom dia! Aproveite 15 % de desconto até o fim da semana!', 'post de bom dia'), 'Bom dia!');
   assert.strictEqual(C.cleanVoice('Sabor premium por preço popular. Peça já.', 'pizzaria'), 'Peça já.');
 });
+
+test('preço e telefone do cliente sempre falados no vídeo', () => {
+  const st = require('../src/motion/studio')._internals;
+  const sb = { scenes: [{ type: 'hook', voice: 'Quer pizza?' }, { type: 'product', voice: 'Nossa pizza grande.' }, { type: 'cta', voice: 'Peça já!' }] };
+  st.ensureFacts(sb, 'pizza grande R$ 45,90 WhatsApp (11) 96666-2222', '(11) 96666-2222');
+  assert.match(sb.scenes[1].voice, /R\$ 45,90/);
+  assert.match(sb.scenes[2].voice, /\(11\) 96666-2222/);
+  const C = require('../src/claims');
+  assert.strictEqual(C.cleanVoice('Quer a melhor pizza da cidade? Peça já!', 'pizzaria'), 'Peça já!');
+});
