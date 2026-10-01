@@ -199,7 +199,25 @@ async function planStudio(request, project, refCaptions, hasProduct) {
     // fala removida por promessa → a cena fica só com a imagem (falar o título soava robótico)
     if (s.voice && !/[.!?]$/.test(s.voice.trim())) s.voice = `${s.voice.trim()}.`;
   }
+  ensureFacts(sb, `${request} ${(p.facts || []).map((f) => f.value).join(' ')}`, phoneTyped);
   return ensureBrand(sb, p.brand || sb.brand);
+}
+
+// Preço e telefone que o CLIENTE deu têm que ser falados (o modelo reserva às vezes esquece)
+function ensureFacts(sb, text, phone) {
+  const digits = (x) => String(x || '').replace(/\D/g, '');
+  const sc = sb.scenes;
+  const allVoice = () => sc.map((s) => s.voice || '').join(' ');
+  for (const m of String(text).match(/R\$\s*\d[\d.]*(?:,\d{2})?/gi) || []) {
+    if (digits(allVoice()).includes(digits(m))) continue;
+    const target = sc.find((s) => s.type === 'product') || sc.find((s) => s.type === 'hook') || sc[0];
+    target.voice = `${String(target.voice || '').trim()} Por ${m.replace(/R\$\s*/i, 'R$ ')}.`.trim();
+  }
+  if (phone && !digits(allVoice()).includes(digits(phone).slice(-8))) {
+    const cta = sc[sc.length - 1];
+    cta.voice = `${String(cta.voice || '').trim()} WhatsApp ${phone}.`.trim();
+  }
+  return sb;
 }
 
 // ---------------------------------------------------------------------------
@@ -531,4 +549,4 @@ async function buildStudioAd({ request, project, logo, product, refCaptions, voi
   }
 }
 
-module.exports = { buildStudioAd, planStudio, sanitizeStoryboard, _internals: { build, fallbackStoryboard, ensureBrand, RENDER, phoneFrom } };
+module.exports = { buildStudioAd, planStudio, sanitizeStoryboard, _internals: { build, fallbackStoryboard, ensureBrand, ensureFacts, RENDER, phoneFrom } };
