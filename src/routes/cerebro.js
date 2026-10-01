@@ -79,6 +79,10 @@ setTimeout(recoverStaleAdJobs, 20 * 1000).unref();
 setInterval(recoverStaleAdJobs, 10 * 60 * 1000).unref();
 
 // Mensagem que pede mudança no vídeo que acabou de sair (sem ser um pedido novo)
+// Perguntas que não mudam o resultado o bastante para segurar o cliente: faz com o padrão
+// (post quadrado, cores do ramo, sem logo) e ele ajusta depois se quiser
+const OPTIONAL_Q = /\b(logo|logotipo|cores?|estilo|fonte|paleta|refer[êe]ncias?|formato|tamanho|identidade visual|imagem atual)\b/i;
+
 function isAdAdjustment(message) {
   const m = String(message || '');
   const aboutVideo = /(v[íi]deo|an[úu]ncio|narra[çc][ãa]o|\bvoz\b|locu[çc][ãa]o|legenda|cena|m[úu]sica|final do)/i.test(m);
@@ -856,8 +860,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       }
       // pergunta OPCIONAL (logo? cores? estilo?) quando já sabemos de quem é a peça: não pergunta,
       // faz com o que tem (o cliente reclama de perguntas que não mudam nada)
-      const optionalQ = route.action === 'ask' && /\b(logo|logotipo|cores?|estilo|fonte|paleta|refer[êe]ncias?|formato|tamanho|identidade visual|imagem atual)\b/i.test(route.question || '') &&
-        !!(route.brand || (session.memory.project && session.memory.project.brand)) && contract.isCreationRequest(message);
+      const optionalQ = route.action === 'ask' && OPTIONAL_Q.test(route.question || '') && contract.isCreationRequest(message);
       if (optionalQ) console.warn('Cérebro: pergunta opcional da IA ignorada:', String(route.question).slice(0, 80));
       if (route.action === 'ask' && route.question && !optionalQ) {
         if (/(v[íi]deo|an[úu]ncio|comercial|reels)/i.test(`${message} ${route.request}`)) {
@@ -1202,6 +1205,8 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     //     e guarda as perguntas pendentes para continuar quando o usuário responder.
     //     Proteção anti-loop: se já estávamos coletando, força geração com o que temos.
     const alreadyCollecting = session.memory.collecting;
+    // perguntas opcionais (formato? cores? logo?) não seguram a criação: faz com o padrão
+    if (cmd.ask && cmd.ask.length && require('../contract').isCreationRequest(message)) cmd.ask = cmd.ask.filter((q) => !OPTIONAL_Q.test(q));
     if (cmd.ask && cmd.ask.length > 0 && !alreadyCollecting) {
       // Mapeia a pergunta para o campo do projeto (para o briefing guiado não repetir).
       const inferField = (q) => {
