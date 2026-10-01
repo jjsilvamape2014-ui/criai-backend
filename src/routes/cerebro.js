@@ -785,6 +785,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         if (fix.action === 'video' && !route.request) route.request = message;
       }
       if (route.brand) {
+        route.brand = require('../brandInfo').extendBrand(message, route.brand);
         session.memory.project = session.memory.project || {};
         // escreveu o nome de OUTRA empresa na mensagem → troca; senão só preenche se estava vazio
         if (!session.memory.project.brand) session.memory.project.brand = route.brand;
@@ -1574,18 +1575,27 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // 5a2) CONFERÊNCIA DO TEXTO: lê o texto da imagem pronta e compara (em código) com o
     //      que o cliente pediu. Errado → refaz 1x reforçando o texto; ainda errado → gera
     //      SEM texto e escreve o texto por código (sempre certo). Sem cobrar a mais.
+    let textCheckInfo = null;
     try {
       const TC = require('../textCheck');
-      const mustText = TC.requiredTexts(extractTextTokens(message));
+      let mustText = TC.pieceTexts(extractTextTokens(message), message);
+      // correção da peça anterior (sem texto novo entre aspas, sem pedir peça nova): mantém os textos dela
+      const newPiece = /["“”]|(\b(faz|fa[çc]a|cria|crie|gera|gere)\w*\s+(um|uma|outr[oa]|nov[oa]))/i.test(message);
+      if (!newPiece && session.memory.pieceTexts && session.memory.pieceTexts.length) mustText = TC.mergePieceTexts(session.memory.pieceTexts, mustText);
       if (imageUrl && mustText.length && !onlyPlace && !isPortrait) {
-        let r = await TC.verify(imageUrl, mustText);
+        // preço/telefone: sempre escritos por código (a IA de imagem erra dígitos)
+        const exactList = mustText.filter((t) => /R\$\s*\d|^\(\d{2}\) \d{4,5}-\d{4}$/.test(t));
+        const exact = exactList.length > 0;
+        session.memory.pieceTexts = mustText;
+        let r = exact ? { ok: false, missing: exactList, seen: '(preço/telefone: escrito por código)' } : await TC.verify(imageUrl, mustText);
+        textCheckInfo = { required: mustText, exact, ok: r ? r.ok : null, missing: r ? r.missing : null, seen: r ? r.seen : null };
         if (r && !r.ok) {
           console.warn('Cérebro Visual: texto errado na imagem →', r.missing.join(' | '), '| lido:', r.seen.slice(0, 80));
           const list = mustText.map((t) => `"${t}"`).join(', ');
-          const retry = await generateRoutes.generateImageFromProviders(
+          const retry = exact ? null : await generateRoutes.generateImageFromProviders(
             `${finalPrompt}\nThe image MUST contain exactly these printed texts, spelled letter by letter with correct accents: ${list}. No other words.`,
             { width, height }).catch(() => null);
-          const r2 = retry ? await TC.verify(retry, mustText) : null;
+          const r2 = retry && !exact ? await TC.verify(retry, mustText) : null;
           if (retry && r2 && r2.ok) {
             imageUrl = retry;
           } else {
@@ -1600,9 +1610,13 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
             }
             const colors = (session.memory.project && session.memory.project.colors) || [];
             const hex = (require('../logoMaker').extractColor(`${message} ${colors.join(' ')}`) || {}).hex;
-            const png = await TC.overlayText(clean || retry || imageUrl, mustText, hex ? { hex } : {});
+            const base = await TC.fitAspect(clean || retry || imageUrl, width, height).catch(() => clean || retry || imageUrl);
+            const png = await TC.overlayText(base, mustText, hex ? { hex } : {});
             imageUrl = await adVideo._internals.uploadToFal(png, 'image/png', `peca-${Date.now()}.png`).catch(() => `data:image/png;base64,${png.toString('base64')}`);
-            cmd.reply = `${cmd.reply || 'Pronto!'} Conferi o texto da imagem: a IA tinha escrito errado, então eu mesmo escrevi ${list} com a grafia exata.`;
+            textCheckInfo.overlay = true;
+            cmd.reply = exact
+              ? `${cmd.reply || 'Pronto!'} Preço e contato foram escritos por mim, conferidos dígito por dígito: ${list}.`
+              : `${cmd.reply || 'Pronto!'} Conferi o texto da imagem: a IA tinha escrito errado, então eu mesmo escrevi ${list} com a grafia exata.`;
           }
         }
       }
@@ -1679,6 +1693,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       imageUrl,
       prompt: finalPrompt,
       fromLLM: !!cmd.fromLLM,
+      textCheck: textCheckInfo,
       memory: session.memory,
       history: session.history.slice(-20),
       credits

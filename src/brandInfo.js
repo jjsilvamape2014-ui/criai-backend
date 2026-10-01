@@ -57,4 +57,30 @@ async function resolveBrand({ project, request, refCaptions }) {
   }
 }
 
-module.exports = { resolveBrand, mentions, norm, isGenericBrand, isThirdPartyBrand };
+// A IA às vezes corta o nome: "XYZ Tecnologia" quando o cliente escreveu
+// "XYZ Tecnologia em Concreto". Se no texto do cliente o nome continua com
+// conector + palavra com maiúscula, usa o nome inteiro como ele escreveu.
+function extendBrand(message, brand) {
+  const b = String(brand || '').trim();
+  if (!b) return b;
+  const m = String(message || '');
+  const i = m.toLowerCase().indexOf(b.toLowerCase());
+  if (i < 0) return b;
+  const rest = m.slice(i + b.length);
+  // com conector ("em Concreto", "e Filhos") só se a palavra for de ramo/sociedade:
+  // "JN Refrigeração em Belém" é a cidade, não o nome
+  const SEG = /^(concreto|constru\w*|tecnologia|refrigera\w*|climatiza\w*|engenharia|inform[aá]tica|servi[cç]os|transportes?|log[ií]stica|alimentos|beleza|est[eé]tica|sa[uú]de|m[oó]veis|materiais|equipamentos|im[oó]veis|seguros|eventos|turismo|viagens|moda|cal[cç]ados|filhos|irm[aã]os|cia|companhia|associados|advogados|contabilidade|com[eé]rcio|ind[uú]stria|energia|solar|pe[cç]as|ve[ií]culos|automa[cç][aã]o|seguran[cç]a)$/i;
+  const STOP = /^(em|de|do|da|e|whats[^\s]*|zap|instagram|insta|facebook|tiktok|telefone|tel|fone|contato|endere[^\s]*|rua|av|avenida|site|email|pre[çc]o|promo[^\s]*|hoje|amanh[ãa]|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro|cidade|bairro|centro|n[ãa]o|sem|com|para|pra|quero|fa[çz]a?|cria|v[íi]deo|an[úu]ncio|post|logo)$/i;
+  let out = m.slice(i, i + b.length);
+  let r = rest;
+  for (let k = 0; k < 3; k++) {
+    const plain = r.match(/^\s+([A-ZÀ-Ú][\wÀ-ú'-]*)/);
+    const conn = r.match(/^\s+(em|de|do|da|dos|das|e|&)\s+([A-ZÀ-Ú][\wÀ-ú'-]*)/);
+    if (conn && SEG.test(conn[2])) { out += conn[0]; r = r.slice(conn[0].length); continue; }
+    if (plain && !STOP.test(plain[1])) { out += plain[0]; r = r.slice(plain[0].length); continue; }
+    break;
+  }
+  return out.trim();
+}
+
+module.exports = { extendBrand, resolveBrand, mentions, norm, isGenericBrand, isThirdPartyBrand };

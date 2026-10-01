@@ -27,3 +27,30 @@ test('texto de tela perde só o trecho', () => {
 test('textos obrigatórios ignoram tamanho da imagem', () => {
   assert.deepStrictEqual(TC.requiredTexts(['1350', 'Black Friday', 'R$ 49,90']), ['Black Friday', 'R$ 49,90']);
 });
+
+test('"garante" e "na hora" sem o cliente dizer saem da fala', () => {
+  const C = require('../src/claims');
+  assert.strictEqual(C.cleanVoice('Tecnologia XYZ garante resistência. Concreto bombeado na hora! Peça já.', 'concreto usinado'), 'Peça já.');
+  assert.ok(C.cleanVoice('Atendimento na hora!', 'atendimento na hora').includes('na hora'));
+});
+
+test('nome da empresa não é cortado pela IA', () => {
+  const B = require('../src/brandInfo');
+  assert.strictEqual(B.extendBrand('Vídeo para a XYZ Tecnologia em Concreto: concreto usinado', 'XYZ Tecnologia'), 'XYZ Tecnologia em Concreto');
+  assert.strictEqual(B.extendBrand('vídeo da JN Refrigeração em Belém', 'JN Refrigeração'), 'JN Refrigeração');
+  assert.strictEqual(B.extendBrand('post da Bella Napoli WhatsApp 11 9999', 'Bella Napoli'), 'Bella Napoli');
+});
+
+test('preço e telefone viram texto exato da peça', () => {
+  const TC = require('../src/textCheck');
+  const m = 'post da Pizzaria Bella Napoli "Pizza grande R$ 49,90" WhatsApp (11) 97777-1234';
+  assert.deepStrictEqual(TC.exactTexts(m), ['(11) 97777-1234', 'R$ 49,90']);
+  assert.deepStrictEqual(TC.pieceTexts(['Pizza grande R$ 49,90', '49', '11'], m), ['Pizza grande R$ 49,90', '(11) 97777-1234']);
+});
+
+test('qualidades inventadas saem (premium, aditivos, equipe qualificada)', () => {
+  const C = require('../src/claims');
+  assert.strictEqual(C.cleanVoice('Equipe qualificada, produtos premium e conforto total. Agende já.', 'salão'), 'Agende já.');
+  assert.strictEqual(C.cleanText('Profissionais qualificados e ambiente acolhedor', 'salão'), 'ambiente acolhedor');
+  assert.ok(C.cleanVoice('Nossos especialistas cuidam de você.', 'temos especialistas').includes('especialistas'));
+});

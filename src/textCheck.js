@@ -13,13 +13,33 @@ const squash = (s) => String(s || '').toLowerCase().replace(/[\s"“”'’.,:;!
 // Números soltos (ex.: tamanho 1080x1350) não contam.
 function requiredTexts(tokens) {
   return [...new Set((tokens || []).map((t) => String(t).trim().replace(/[\s.,;:!?]+$/, '')).filter((t) =>
-    t.length >= 2 && (/\p{L}/u.test(t) || /%|R\$/.test(t)) && !/^\d+\s*x\s*\d+$/i.test(t)))].slice(0, 4);
+    t.length >= 2 && (/\p{L}/u.test(t) || /%|R\$/.test(t) || /^\(\d{2}\) \d{4,5}-\d{4}$/.test(t)) && !/^\d+\s*x\s*\d+$/i.test(t)))].slice(0, 4);
+}
+
+// Textos que precisam sair EXATOS: preço e telefone. A IA de imagem erra dígitos com
+// frequência (R$ 499,90; "RBS 49.90") e a visão às vezes "corrige" ao ler, então nesses
+// casos o texto é sempre escrito por código.
+function exactTexts(message) {
+  const s = String(message || '');
+  const out = [];
+  const phone = s.match(/\(?\b(\d{2})\)?[\s-]*(9?\s?\d{4})[-\s.]?(\d{4})\b/);
+  if (phone) out.push(`(${phone[1]}) ${phone[2].replace(/\s/g, '')}-${phone[3]}`);
+  for (const m of s.match(/R\$\s*\d[\d.]*(?:,\d{2})?/gi) || []) out.push(m.replace(/R\$\s*/i, 'R$ '));
+  return [...new Set(out)];
+}
+
+// Textos da peça: os pedidos (aspas, nomes) + preço e telefone, sem repetir o que já
+// está dentro de outro ("Pizza grande R$ 49,90" já contém "R$ 49,90")
+function pieceTexts(tokens, message) {
+  const base = requiredTexts(tokens);
+  const extra = exactTexts(message).filter((e) => !base.some((b) => squash(b).includes(squash(e))));
+  return [...base, ...extra].slice(0, 4);
 }
 
 async function transcribe(imageUrl) {
   const vision = require('./vision');
   const small = await toDataUrl(imageUrl, 1024);
-  const prompt = 'Transcribe ALL text visible in this image exactly as written, keeping accents, spelling and capitalization. One line per text block. If there is no text at all, reply NONE. Reply with the transcription only.';
+  const prompt = 'Transcribe ALL text visible in this image character by character, EXACTLY as printed — do NOT fix spelling, digits, currency symbols or punctuation, even if they look wrong (e.g. write "RBS 499.90" if that is what is printed). Keep accents and capitalization. One line per text block. If there is no text at all, reply NONE. Reply with the transcription only.';
   const out = await vision.askVision(small, prompt, 300);
   if (out == null) return null;
   return /^\s*none\s*$/i.test(out) ? '' : String(out);
@@ -79,4 +99,29 @@ function textFreePrompt(prompt) {
   return `${kept.join(' ').trim()}\nABSOLUTELY NO TEXT, NO LETTERS, NO NUMBERS, NO PRICE TAGS, NO SIGNS anywhere in the image. Keep the lower quarter calm (no important subject) for a caption.`;
 }
 
-module.exports = { textFreePrompt, requiredTexts, transcribe, verify, overlayText };
+// Recorta/ajusta a imagem para o formato pedido (o gerador às vezes devolve 4:3 num post quadrado)
+async function fitAspect(src, width, height) {
+  const b = await sharp(await toBuffer(src)).resize(width, height, { fit: 'cover', position: 'attention' }).png().toBuffer();
+  return `data:image/png;base64,${b.toString('base64')}`;
+}
+
+// Correção de uma peça ("o preço está errado, é R$ 39,90"): mantém os textos da peça
+// anterior e troca só o que mudou (preço novo no lugar do antigo, telefone idem).
+const PRICE = /R\$\s*\d[\d.]*(?:,\d{2})?/i;
+const PHONE = /^\(\d{2}\) \d{4,5}-\d{4}$/;
+function mergePieceTexts(prev, cur) {
+  const p = (prev || []).slice();
+  const c = (cur || []).slice();
+  if (!p.length) return c;
+  const newPrice = c.find((t) => PRICE.test(t));
+  const newPhone = c.find((t) => PHONE.test(t));
+  let out = p.map((t) => {
+    if (newPhone && PHONE.test(t)) return newPhone;
+    if (newPrice && PRICE.test(t)) return t.replace(PRICE, newPrice.match(PRICE)[0]);
+    return t;
+  });
+  for (const t of c) if (!out.some((o) => squash(o).includes(squash(t)))) out.push(t);
+  return [...new Set(out)].slice(0, 4);
+}
+
+module.exports = { mergePieceTexts, fitAspect, exactTexts, pieceTexts, textFreePrompt, requiredTexts, transcribe, verify, overlayText };
