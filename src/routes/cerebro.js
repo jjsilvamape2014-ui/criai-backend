@@ -974,7 +974,9 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     }
     // "post de bom dia para a Ótica…" é pedido de PEÇA, não conversa (o "bom dia" enganava)
     const askedPiece = contract.isCreationRequest(message) && contract.detectRequested(message).tipo === 'imagem' && !/\?\s*$/.test(message);
-    if (intent === 'conversation' && !askedPiece) {
+    // pergunta pura ("quais horários são melhores para postar?") é conversa, mesmo citando post/Instagram
+    const pureQuestion = contract.isQuestion(message) && !/\b(faz\w*|fa[çc]a|cri[ae]\w*|ger[ae]\w*|quero|queria|preciso|manda|monta|consegue|pode)\b/i.test(message);
+    if ((intent === 'conversation' && !askedPiece) || pureQuestion) {
       cerebro.pushHistory(session, 'user', message, null);
       const C = require('../claims');
       const raw = await replyConversation(message, session.memory);

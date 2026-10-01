@@ -93,3 +93,9 @@ test('pergunta sobre Instagram continua sendo resposta, não imagem', () => {
   const c = require('../src/contract');
   assert.strictEqual(c.enforce('answer', 'quais horários são melhores para postar no Instagram?').action, 'answer');
 });
+
+test('pergunta x pedido em forma de pergunta', () => {
+  const c = require('../src/contract');
+  assert.ok(c.isQuestion('quais horários são melhores para postar no Instagram?'));
+  assert.ok(!c.isQuestion('post de bom dia para a Ótica Visão Clara'));
+});
