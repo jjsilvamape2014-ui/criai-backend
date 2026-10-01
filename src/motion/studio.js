@@ -43,7 +43,7 @@ function directorPrompt() {
     'Muitos clientes pedem pouco e de forma vaga. Use TUDO que foi dado (pedido, conversa, textos lidos nas imagens) para entender o produto/serviço, quem compra, a dor e o melhor ângulo — como um bom publicitário faria sem precisar perguntar.',
     'Depois monte o roteiro escolhendo BLOCOS de cena na ordem que conta a melhor história para ESTE caso.',
     'Responda SOMENTE um JSON válido:',
-    '{"brief":{"what":"...","audience":"...","pain":"...","angle":"..."},"brand":"...","color":"#RRGGBB","warnings":["..."],',
+    '{"brief":{"what":"...","audience":"...","pain":"...","angle":"..."},"brand":"...","color":"#RRGGBB","style":"moderno|impacto|elegante|tecnologico","warnings":["..."],',
     ' "scenes":[',
     '  {"type":"hook","title":"...","subtitle":"...","icon":"...","mood":"quente|escuro|marca","voice":"..."},',
     '  {"type":"product","title":"...","subtitle":"...","icon":"...","voice":"..."},',
@@ -62,6 +62,7 @@ function directorPrompt() {
     '- voice: fala em português do Brasil, natural e animada, 6 a 16 palavras por cena (steps e benefits até 20). SOMA de todas as falas: no máximo 75 palavras. O nome da marca deve ser FALADO pelo menos uma vez e na cta.',
     '- Telefone e preço na voice: escreva com DÍGITOS, exatamente como o cliente escreveu (ex.: "(91) 98888-7777", "R$ 80,00"); o sistema converte para a fala. Nunca escreva números por extenso.',
     '- Fale SOMENTE do negócio deste pedido. Não misture produtos, imagens ou assuntos de outros pedidos da conversa.',
+    '- style: o visual que combina com o negócio e o tom do pedido — impacto (varejo, promoção, comida rápida), elegante (beleza, moda, saúde, serviços finos), tecnologico (tecnologia, engenharia, indústria, serviços técnicos), moderno (o resto).',
     '- hook.mood: use "marca" (cores da marca), a não ser que o cliente peça outra coisa.',
     '- cta.footer: só endereço, cidade, site ou @ que o cliente informou; senão deixe vazio. Nada de "oferta por tempo limitado" ou promessas que o cliente não fez.',
     `- icon: SOMENTE destes nomes: ${ICON_NAMES.join(', ')}.`,
@@ -127,6 +128,7 @@ function sanitizeStoryboard(raw, project, hasProduct) {
     brief: r.brief || {},
     brand: str(r.brand || (project && project.brand), 50),
     color: /^#[0-9a-f]{6}$/i.test(r.color || '') ? r.color : null,
+    style: str(r.style, 20),
     warnings: (r.warnings || []).map((w) => str(w, 160)).filter(Boolean).slice(0, 3),
     scenes: scenes.slice(0, 7)
   };
@@ -368,6 +370,9 @@ const RENDER = { hook: sceneHookBlock, product: sceneProduct, steps: sceneSteps,
 const MIN = { hook: 2.6, product: 3, statement: 2.6, cta: 4 }; // mínimos curtos: quem manda é a fala
 
 function build(sb, S, durations) {
+  const ST = require('./styles');
+  const look = ST.get(S.look);
+  const X = look.dur || XFADE;
   const timeline = [];
   let start = 0;
   sb.scenes.forEach((sc, i) => {
@@ -375,23 +380,36 @@ function build(sb, S, durations) {
     if (sc.type === 'steps') min = 0.9 + sc.items.length * 1.4;
     if (sc.type === 'benefits') min = 1.0 + sc.items.length * 0.6;
     const dur = Math.max(min, Number(durations[i]) || 0);
-    timeline.push({ sc, start, dur });
+    // transição de ENTRADA desta cena (a primeira não tem); varia ao longo do vídeo
+    const kind = i === 0 ? null : look.transitions[(i - 1) % look.transitions.length];
+    timeline.push({ sc, start, dur, kind });
     start += dur;
   });
   const duration = start + 0.3;
   function frameSvg(t) {
-    let body = '';
-    for (let i = 0; i < timeline.length; i++) {
-      const it = timeline[i];
-      const lt = t - it.start;
-      if (lt < 0) continue;
-      if (i < timeline.length - 1 && lt > it.dur + XFADE) continue;
-      const op = i === 0 ? 1 : E.clamp(lt / XFADE);
-      body += `<g opacity="${op.toFixed(3)}">${RENDER[it.sc.type](lt, it.dur, S, it.sc)}</g>`;
-    }
-    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${body}</svg>`;
+    return E.withWidth(look.widthK, () => {
+      let body = '';
+      for (let i = 0; i < timeline.length; i++) {
+        const it = timeline[i];
+        const lt = t - it.start;
+        if (lt < 0) continue;
+        if (i < timeline.length - 1 && lt > it.dur + X) continue;
+        const scene = RENDER[it.sc.type](lt, it.dur, S, it.sc);
+        const ctx = { Wd: W, Hd: H, id: `tr${i}`, pal: S.pal };
+        // entrando
+        const inT = i > 0 && lt < X ? ST.transition(it.kind, lt / X, ctx) : null;
+        // saindo (a próxima cena está entrando)
+        const next = timeline[i + 1];
+        const outT = next && lt > it.dur ? ST.transition(next.kind, (lt - it.dur) / X, { ...ctx, id: `tr${i + 1}` }) : null;
+        let g = scene;
+        if (outT) g = `${outT.outOpen}${g}${outT.outClose}`;
+        if (inT) g = `${inT.inOpen}${g}${inT.inClose}${inT.overlay}`;
+        body += g;
+      }
+      return ST.applyFont(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${body}</svg>`, look, E.FONT);
+    });
   }
-  return { duration, timeline, frameSvg };
+  return { duration, timeline, frameSvg, look };
 }
 
 // Corta o silêncio do começo e do fim da fala (a voz grátis deixa ~0,5–1 s no fim,
@@ -476,7 +494,9 @@ async function buildStudioAd({ request, project, logo, product, refCaptions, voi
       if (!voiceClips.length) throw new Error(`nenhuma narração foi gerada (voz: ${lastVoiceError || 'sem detalhe'})`);
     }
 
-    const S = { pal: E.palette(color), assets: { ...assets, productCut }, brandName };
+    // estilo visual (fonte + transições) de acordo com o pedido
+    const look = require('./styles').pickStyle(request, project, sb.style);
+    const S = { pal: E.palette(color), assets: { ...assets, productCut }, brandName, look: look.key };
     const video = build(sb, S, durations);
 
     let audioPath = null;
@@ -505,7 +525,7 @@ async function buildStudioAd({ request, project, logo, product, refCaptions, voi
     if (!cta.phone && !/[\w-]+\.(com|net|org|app|ai|br|io)\b|@\w+/i.test(`${request} ${cta.footer || ''}`)) {
       notes.unshift('O final ficou sem WhatsApp ou telefone. Anúncio sem contato perde quem se interessou: me mande o número que eu refaço o vídeo.');
     }
-    return { videoUrl, storyboard: sb, color, duration: video.duration, notes: notes.slice(0, 4) };
+    return { videoUrl, storyboard: sb, color, look: look.key, duration: video.duration, notes: notes.slice(0, 4) };
   } finally {
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
   }

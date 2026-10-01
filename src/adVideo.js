@@ -574,6 +574,7 @@ async function buildAd({ request, project, images, refCaptions, deps, onStatus }
         narration: wantsVoice(request) ? sc.map((x) => x.voice).join(' ') : null,
         scenes: sc.map((x) => ({ caption: x.title || x.slogan2 || x.slogan1 || x.type })),
         notes: st.notes || [],
+        look: st.look,
         debug: { request: String(request).slice(0, 300), roteiro: st.storyboard.debug, product: !!product, logo: !!logo }
       };
     } catch (e) {
