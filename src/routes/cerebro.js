@@ -854,7 +854,12 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       if (route.action === 'video' || (route.action === 'adjust_video' && !session.memory.lastAdRequest)) {
         return startAdVideoJob({ user, session, request: keepFacts(aiRouter.requestWithStyle(route.request || message, route.style), message), displayMessage: message, res });
       }
-      if (route.action === 'ask' && route.question) {
+      // pergunta OPCIONAL (logo? cores? estilo?) quando já sabemos de quem é a peça: não pergunta,
+      // faz com o que tem (o cliente reclama de perguntas que não mudam nada)
+      const optionalQ = route.action === 'ask' && /\b(logo|logotipo|cores?|estilo|fonte|paleta|refer[êe]ncias?|formato|tamanho|identidade visual|imagem atual)\b/i.test(route.question || '') &&
+        !!(route.brand || (session.memory.project && session.memory.project.brand)) && contract.isCreationRequest(message);
+      if (optionalQ) console.warn('Cérebro: pergunta opcional da IA ignorada:', String(route.question).slice(0, 80));
+      if (route.action === 'ask' && route.question && !optionalQ) {
         if (/(v[íi]deo|an[úu]ncio|comercial|reels)/i.test(`${message} ${route.request}`)) {
           session.memory.pendingAd = { request: route.request || message, askedAt: Date.now() };
         }

@@ -20,7 +20,9 @@ const COLORS = {
 // É pedido de CRIAR uma logo? ("cria um logo…", "faz uma logomarca…", "quero um logotipo…")
 function isLogoRequest(message) {
   const m = norm(message);
-  return /\b(cri\w*|faz\w*|faca|fazer|gera\w*|desenh\w*|quero|queria|preciso|monta\w*)\b[^.]{0,30}\b(logo|logotipo|logomarca)\b/.test(m) &&
+  // com verbo ("cria uma logo…") ou começando pela peça ("logo da Auto Center Silva em vermelho")
+  return (/\b(cri\w*|faz\w*|faca|fazer|gera\w*|desenh\w*|quero|queria|preciso|monta\w*)\b[^.]{0,30}\b(logo|logotipo|logomarca)\b/.test(m) ||
+    /^(uma? )?(nova )?(logo|logotipo|logomarca) (da|do|de|para|pra|pro)\b/.test(m)) &&
     !/\b(anim\w*|gir\w*|video|reels|coloc\w*|adicion\w*|p[oõ]e)\b/.test(m);
 }
 

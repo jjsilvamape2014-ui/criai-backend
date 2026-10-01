@@ -82,7 +82,8 @@ function fallbackStoryboard(request, project, hasProduct) {
   const scenes = [
     { type: 'hook', title: 'Procurando quem faz direito?', subtitle: 'Qualidade e atendimento que você merece.', icon: 'sparkles', mood: 'marca', voice: 'Procurando quem faz direito, com qualidade e atendimento de verdade?' },
     { type: 'product', title: brand || 'Feito para você', subtitle: 'Cuidado do início ao fim.', icon: 'star', voice: brand ? `Conheça a ${brand}. Cuidado do início ao fim.` : 'Cuidado do início ao fim, do jeito que você procura.' },
-    { type: 'benefits', title: 'Por que escolher', items: [{ icon: 'clock', title: 'Atendimento rápido' }, { icon: 'star', title: 'Qualidade de verdade' }, { icon: 'shield', title: 'Garantia' }], voice: 'Atendimento rápido, qualidade de verdade e a tranquilidade que você procura.' },
+    // roteiro de reserva (IA fora do ar): só frases verdadeiras para qualquer negócio, sem promessas
+    { type: 'benefits', title: 'Fale com a gente', items: [{ icon: 'chat', title: 'Tire suas dúvidas' }, { icon: 'calendar', title: 'Agende pelo WhatsApp' }, { icon: 'people', title: 'Atendimento direto' }], voice: 'Tire suas dúvidas e agende direto pelo WhatsApp.' },
     { type: 'cta', slogan1: 'Fale com a gente', slogan2: 'Atendimento de verdade', phone: '', label: 'Atendimento via WhatsApp', footer: 'Chame agora!', voice: brand ? `Chame a ${brand} agora no WhatsApp!` : 'Chame agora no WhatsApp!' }
   ];
   if (!hasProduct && !brand) scenes.splice(1, 1);
