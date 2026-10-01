@@ -83,6 +83,37 @@ setInterval(recoverStaleAdJobs, 10 * 60 * 1000).unref();
 // (post quadrado, cores do ramo, sem logo) e ele ajusta depois se quiser
 const OPTIONAL_Q = /\b(logo|logotipo|cores?|estilo|fonte|paleta|refer[êe]ncias?|formato|tamanho|identidade visual|imagem atual)\b/i;
 
+// 🎞️ POST ANIMADO: a última peça vira vídeo curto (zoom + textos entrando), por código.
+// Usa a imagem limpa + os textos conferidos quando existem; senão anima a imagem pronta.
+const MOTION_ASK = /\b(vers[ãa]o animada|post animado|arte animada|animad[oa]|motion|anima(r)? (o|esse|este|a|essa|esta) (post|arte|imagem|pe[çc]a|banner))\b/i;
+function motionFormat(message) {
+  if (/\b(feed|4:5|4x5)\b/i.test(message)) return '4:5';
+  if (/\bquadrad[oa]|1:1\b/i.test(message)) return '1:1';
+  return '9:16';
+}
+async function renderMotionFor(session, message) {
+  const mem = session.memory;
+  const fs = require('fs');
+  const format = motionFormat(message);
+  const useClean = !!(mem.pieceBase && (mem.pieceTexts || []).length);
+  const out = await require('../motionPost').renderMotionPost({
+    image: useClean ? mem.pieceBase : mem.lastOutput,
+    texts: useClean ? mem.pieceTexts : [],
+    hex: mem.pieceHex || undefined,
+    message,
+    project: mem.project,
+    ...(useClean && mem.pieceLayout ? mem.pieceLayout : {}),
+    format
+  });
+  try {
+    const buf = fs.readFileSync(out.path);
+    const url = await adVideo._internals.uploadToFal(buf, 'video/mp4', `post-animado-${Date.now()}.mp4`).catch(() => `data:video/mp4;base64,${buf.toString('base64')}`);
+    return { url, format };
+  } finally {
+    try { fs.rmSync(require('path').dirname(out.path), { recursive: true, force: true }); } catch (e) {}
+  }
+}
+
 function isAdAdjustment(message) {
   const m = String(message || '');
   const aboutVideo = /(v[íi]deo|an[úu]ncio|narra[çc][ãa]o|\bvoz\b|locu[çc][ãa]o|legenda|cena|m[úu]sica|final do)/i.test(m);
@@ -755,6 +786,28 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // 🗣️ "…falando bom dia, eu sou o Delta" com imagem anexada → o personagem fala (não é anúncio)
     const sp = require('../contract').detectSpeech(message, (session.memory.refImages || []).length > 0);
     if (sp) return startSpeakJob({ user, session, message, speech: sp.fala, voice: sp.feminina ? 'pf_dora' : 'pm_alex', res });
+    // 🎞️ "quero a versão animada" / "anima esse post para o status" → anima a última peça
+    const attachedMotion = (Array.isArray(req.body.images) && req.body.images.length) || req.body.image;
+    if (session.memory.lastOutput && !attachedMotion && MOTION_ASK.test(message) &&
+        !require('../contract').isNewPiece(message) && !/(mascote|personagem|boneco|logo|gir\w*|falando|fal[ae]r?)\b/i.test(message)) {
+      try {
+        const mv = await renderMotionFor(session, message);
+        const reply = `Pronto! Versão animada (${mv.format}, 7 segundos) para ${mv.format === '9:16' ? 'Reels e Status' : 'o feed'}. Os textos são os mesmos da peça, conferidos.` +
+          (mv.format === '9:16' ? ' Quer no formato do feed? Peça "animado para o feed".' : ' Quer para Reels/Status? Peça "animado para o status".');
+        cerebro.pushHistory(session, 'user', message, null);
+        cerebro.pushHistory(session, 'assistant', reply, null);
+        return res.json({ success: true, sessionId: session.id, reply, imageUrl: null, videoUrl: mv.url, type: 'video', memory: session.memory, history: session.history.slice(-20) });
+      } catch (e) {
+        console.error('Cérebro: post animado falhou:', e.message);
+      }
+    }
+    // "faz um post animado para…": cria o post e já devolve a versão animada junto
+    let wantMotionNew = false;
+    if (/\b(post|arte|imagem|banner|story|stories|an[úu]ncio)\s+animad[oa]\b/i.test(message)) {
+      wantMotionNew = true;
+      message = message.replace(/\s+animad[oa]\b/i, ''); // "animado" no prompt faz a IA desenhar desenho animado
+    }
+    session.memory.wantMotion = wantMotionNew;
     // 🧭 A IA entende a mensagem antes de agir (conversa + textos das imagens + último vídeo).
     //    Se ela não responder (sem chave/erro), seguem as regras por palavra-chave abaixo.
     const contract = require('../contract');
@@ -1776,6 +1829,19 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     });
     cerebro.pushHistory(session, 'assistant', cmd.reply, imageUrl);
 
+    // 🎞️ post animado pedido junto ("faz um post animado…") ou oferta da versão animada
+    let motionUrl = null;
+    if (imageUrl && session.memory.wantMotion) {
+      try {
+        const mv = await renderMotionFor(session, message);
+        motionUrl = mv.url;
+        cmd.reply = `${cmd.reply || 'Pronto!'}\n\n🎞️ Versão animada (${mv.format}) pronta para Reels/Status. A imagem parada continua no seu histórico.`;
+      } catch (e) { console.error('Cérebro: post animado falhou:', e.message); }
+      session.memory.wantMotion = false;
+    } else if (imageUrl && (session.memory.pieceTexts || []).length) {
+      cmd.reply = `${cmd.reply || 'Pronto!'}\n\n🎞️ Quer a versão animada para Reels/Status? É só pedir "versão animada".`;
+    }
+
     const credits = await prisma.user.findUnique({
       where: { id: user.id },
       select: { creditsImages: true, creditsVideos: true, creditsPurchased: true }
@@ -1790,6 +1856,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       prompt: finalPrompt,
       fromLLM: !!cmd.fromLLM,
       textCheck: textCheckInfo,
+      videoUrl: motionUrl,
       memory: session.memory,
       history: session.history.slice(-20),
       credits

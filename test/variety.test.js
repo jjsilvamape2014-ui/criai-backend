@@ -43,3 +43,14 @@ test('textos da peça: tema, nome, produto com preço, telefone', () => {
   const c = require('../src/contract');
   assert.ok(c.isNewPiece('post para o salão Studio Bela: escova progressiva R$ 120,00. WhatsApp (21) 98888-1111'));
 });
+
+test('layout animado: elementos entram em sequência e no fim fica igual ao parado', () => {
+  const L = require('../src/textLayouts');
+  const args = { W: 1080, H: 1920, texts: ['Pão Quente', 'Pão francês R$ 12,90', '(11) 95555-1212'], hex: '#8d4e1f', look: 'impacto', layout: 'tag' };
+  const start = L.layoutSvg({ ...args, t: 0 });
+  const mid = L.layoutSvg({ ...args, t: 0.9 });
+  const end = L.layoutSvg({ ...args, t: 6 });
+  assert.ok(!start.includes('95555'), 'nada aparece no instante 0');
+  assert.ok(mid.length > start.length);
+  assert.ok(end.includes('R$ 12,90') && end.includes('95555-1212') && !/NaN/.test(end));
+});
