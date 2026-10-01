@@ -15,13 +15,14 @@ const CLAIMS = [
   ['24 horas', /\b((suporte|atendimento|plantao) )?24 ?h(oras)?\b|\b24\/7\b|\bplantao\b/, ['24']],
   ['gratis', /\b((com )?(frete|entrega|instalacao|avaliacao|orcamento|visita|consulta|brinde) )?(gratis|gratuit[oa]s?)\b|\bfree\b|\bsem custo\b|\bde graca\b/, ['grat', 'sem custo', 'de graca', 'free']],
   ['desconto', /\bdesconto\b|\b\d{1,2} ?% ?(off|de desconto)?\b|\boff\b/, ['desconto', '%', 'off']],
-  ['prazo', /\bno prazo( certo)?\b|\bem (ate )?\d+ ?(h|hs|horas|dias|minutos|min)\b|\bpontualidade\b|\bpontua(l|is)\b|\bentrega (rapida|no mesmo dia|expressa|imediata)\b|\bno mesmo dia\b|\bna hora\b|\bimediatamente\b/, ['prazo', 'pontual', 'mesmo dia', 'rapid', 'express', 'imediat', 'na hora']],
+  ['prazo', /\bno prazo( certo)?\b|\bem (ate )?(\d+|uma?) ?(h|hs|hora|horas|dia|dias|minutos|min)\b|\bpontualidade\b|\bpontua(l|is)\b|\bentrega (rapida|no mesmo dia|expressa|imediata)\b|\bno mesmo dia\b|\bna hora\b|\bimediatamente\b/, ['prazo', 'pontual', 'mesmo dia', 'rapid', 'express', 'imediat', 'na hora']],
   ['melhor/menor preco', /\b(melhor|menor) (preco|custo|valor)\b|\bmais barat[oa]\b|\bpreco imbativel\b|\bmelhor custo[- ]beneficio\b/, ['melhor preco', 'menor preco', 'barat', 'imbativel', 'custo-beneficio', 'custo beneficio']],
   ['lider / numero 1', /\b(o|a) unic[oa]\b|\bunic[oa] (da|na|do|no|em) (regiao|cidade|bairro|mercado)\b|\bexclusividade\b|\blider(es)?\b|\bnumero 1\b|\bn[ºo°]\.? ?1\b|\bo melhor da (regiao|cidade|bairro)\b|\bmelhor(es)? \w+( \w+)? d[aoe] (regiao|cidade|bairro|estado|brasil|mundo)\b|\breferencia (na|em)\b/, ['lider', 'numero 1', 'n 1', 'melhor da', 'referencia', 'unic', 'exclusiv']],
   ['experiencia', /\b\d+ anos (de|no) (experiencia|mercado)\b|\bmais de \d+ (anos|clientes|mil)\b|\b\d+ mil clientes\b/, ['anos', 'clientes', 'mil']],
   ['certificado', /\bcertificad[oa]s?\b|\bcertificacao\b|\bnbr\b|\biso ?\d+\b|\baprovad[oa] pel[oa]\b/, ['certific', 'nbr', 'iso', 'aprovad']],
   ['economia', /\b(economi\w*|reduz\w*|diminu\w*|poup\w*) (de |na |a |sua |seu |o |com )?(energia|conta de luz|conta|luz)\b|\bmenor conta\b/, ['econom', 'conta de luz', 'energia']],
   ['detalhe inventado', /\bprodutos? (importad\w*|de primeira( linha)?|profissionais|de luxo)\b|\bpremium\b|\baditivos?( especia\w*)?\b|\bequipe (qualificada|especializada|experiente|altamente \w+)\b|\bespecialistas?\b|\bprofissionais (qualificad\w*|experientes|certificad\w*|especializad\w*)\b|\b(de )?alta qualidade\b|\bqualidade (superior|premium|garantida)\b|\btecnologia de ponta\b|\bresultado duradouro\b|\bsem danos?\b|\bsabor inigualavel\b|\bequipamentos? (modernos?|de ultima geracao)\b/, ['premium', 'importad', 'de primeira', 'aditiv', 'qualificad', 'especializ', 'especialist', 'experient', 'certificad', 'alta qualidade', 'superior', 'de ponta', 'ultima geracao', 'moderno', 'luxo']],
+  ['link inexistente', /\bclique no link\b|\blink (na|da) bio\b|\bacesse (o|nosso) site\b|\bvisite (o|nosso) site\b/, ['link', 'bio', 'site', 'www', '.com']],
   ['avaliacao/orcamento gratis', /\b(avaliacao|orcamento|visita|diagnostico) (tecnic[oa] )?(gratis|gratuit[oa]|sem compromisso)\b/, ['grat', 'sem compromisso']],
 ];
 
@@ -81,7 +82,19 @@ function cleanPlan(v, source, key = '') {
 // tudo que o CLIENTE disse (pedido, fatos do projeto, texto das imagens dele)
 function sourceOf({ request = '', project = {}, refCaptions = [] } = {}) {
   const p = project || {};
-  return [request, p.brand, (p.facts || []).map((f) => `${f.key} ${f.value}`).join(' '), (refCaptions || []).join(' ')].filter(Boolean).join(' ');
+  // o NOME da empresa não libera promessa ("Lavanderia Limpa Rápido" não prometeu rapidez)
+  if (p.brand) request = String(request).split(p.brand).join(' ');
+  return [request, (p.facts || []).map((f) => `${f.key} ${f.value}`).join(' '), (refCaptions || []).join(' ')].filter(Boolean).join(' ');
 }
 
-module.exports = { sourceOf, disallowed, cleanVoice, cleanText, cleanPlan, CLAIMS };
+// hashtags que prometem o que o cliente não disse (#Descontos, #Delivery, #FreteGrátis)
+function cleanHashtags(line, source) {
+  const src = norm(source);
+  const BAD = [[/desconto|promo|oferta|liquida|blackfriday|queima/, ['desconto', 'promo', 'oferta', 'liquida', 'black friday', 'queima']], [/gratis|gratuito|frete/, ['grat', 'frete']], [/delivery|entrega/, ['delivery', 'entreg']]];
+  return String(line || '').replace(/#[\p{L}\p{N}_]+/gu, (tag) => {
+    const t = norm(tag);
+    return BAD.some(([re, allow]) => re.test(t) && !allow.some((a) => src.includes(a))) ? '' : tag;
+  }).replace(/\s{2,}/g, ' ').trimEnd();
+}
+
+module.exports = { cleanHashtags, sourceOf, disallowed, cleanVoice, cleanText, cleanPlan, CLAIMS };

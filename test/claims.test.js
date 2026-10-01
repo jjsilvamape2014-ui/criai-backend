@@ -87,3 +87,13 @@ test('preço e telefone do cliente sempre falados no vídeo', () => {
   const C = require('../src/claims');
   assert.strictEqual(C.cleanVoice('Quer a melhor pizza da cidade? Peça já!', 'pizzaria'), 'Peça já!');
 });
+
+test('nome da empresa não libera promessa; link e hashtags inventados saem', () => {
+  const C = require('../src/claims');
+  const src = C.sourceOf({ request: 'vídeo para a Lavanderia Limpa Rápido, lavagem', project: { brand: 'Lavanderia Limpa Rápido' } });
+  assert.strictEqual(C.cleanVoice('Roupa limpa em 1 hora! Agende já.', src), 'Agende já.');
+  assert.strictEqual(C.cleanVoice('Clique no link e fale com a gente. Agende já.', 'salão'), 'Agende já.');
+  assert.strictEqual(C.cleanHashtags('#BomDia #Descontos #Delivery', 'post de bom dia'), '#BomDia');
+  const S = require('../src/motion/styles');
+  assert.strictEqual(S.pickStyle('vídeo do salão [[estilo:tecnologico]]', {}).key, 'tecnologico');
+});

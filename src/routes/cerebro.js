@@ -793,7 +793,10 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // troca de estilo visual do último vídeo ("estilo elegante") → refaz direto, sem depender da IA
     if (session.memory.lastAdRequest && require('../motion/styles').isStyleChange(message) &&
         !/(imagem|foto|logo|banner|post|arte)\b/i.test(message)) {
-      const request = `${session.memory.lastAdRequest}. Ajuste pedido pelo cliente no vídeo anterior: ${message}`;
+      // só o VISUAL muda: o estilo vai como marcador (o roteirista não vê, senão "estilo
+      // tecnológico" virava "tecnologia avançada" no texto do salão)
+      const look = require('../motion/styles').pickStyle(message, {}).key;
+      const request = `${String(session.memory.lastAdRequest).replace(/\s*\[\[estilo:\w+\]\]/g, '')} [[estilo:${look}]]`;
       return startAdVideoJob({ user, session, request, displayMessage: message, res, adjusting: true });
     }
 
@@ -1696,7 +1699,8 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       try {
         const C = require('../claims');
         const capsRaw = await generateCaptions(finalPrompt, session.memory.project);
-        const caps = capsRaw && capsRaw.split('\n').map((l) => C.cleanVoice(l, C.sourceOf({ request: message, project: session.memory.project }))).join('\n');
+        const capSrc = C.sourceOf({ request: message, project: session.memory.project });
+        const caps = capsRaw && capsRaw.split('\n').map((l) => (/#/.test(l) ? C.cleanHashtags(l, capSrc) : C.cleanVoice(l, capSrc))).join('\n');
         if (caps && caps.trim()) {
           cmd.reply = `${cmd.reply || 'Pronto!'}\n\n${caps}`;
         }

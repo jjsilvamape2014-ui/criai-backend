@@ -157,6 +157,7 @@ function phoneFrom(text) {
 }
 
 async function planStudio(request, project, refCaptions, hasProduct) {
+  request = String(request || '').replace(/\s*\[\[estilo:\w+\]\]/g, ''); // marcador de estilo é só visual
   const p = project || {};
   const facts = (p.facts || []).map((f) => `${f.key}: ${f.value}`).join('; ');
   const user = [
