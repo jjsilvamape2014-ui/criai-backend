@@ -64,3 +64,16 @@ test('correção só do texto: detecta e troca o título/preço/telefone certo',
   assert.deepStrictEqual(TC.mergePieceTexts(['Pizza grande R$ 49,90', '(11) 97777-1234'], ['R$ 39,90']), ['Pizza grande R$ 39,90', '(11) 97777-1234']);
   assert.deepStrictEqual(TC.mergePieceTexts(['Pizza grande R$ 49,90', '(11) 97777-1234'], ['Pizza gigante']), ['Pizza gigante R$ 49,90', '(11) 97777-1234']);
 });
+
+test('"Corte masculino" entre aspas é correção só de texto', () => {
+  const TC = require('../src/textCheck');
+  assert.ok(TC.isTextOnlyFix('o texto é "Corte masculino"'));
+  assert.ok(TC.isTextOnlyFix('o texto é "Cores do Brasil"'));
+  assert.ok(!TC.isTextOnlyFix('muda a cor para azul'));
+});
+
+test('promoção relâmpago, "até o fim da semana" e premium inventados saem', () => {
+  const C = require('../src/claims');
+  assert.strictEqual(C.cleanVoice('Bom dia! Aproveite 15 % de desconto até o fim da semana!', 'post de bom dia'), 'Bom dia!');
+  assert.strictEqual(C.cleanVoice('Sabor premium por preço popular. Peça já.', 'pizzaria'), 'Peça já.');
+});

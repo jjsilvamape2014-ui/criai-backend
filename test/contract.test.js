@@ -83,3 +83,8 @@ test('personagem falando detectado no contrato', () => {
   assert.strictEqual(C.detectSpeech('vídeo falando sobre a empresa', true), null);
   assert.strictEqual(C.detectSpeech('faz ele falar oi', false), null);
 });
+
+test('"post de ..." sem verbo é pedido de imagem, não resposta', () => {
+  const c = require('../src/contract');
+  assert.strictEqual(c.enforce('answer', 'post de bom dia para a Ótica Visão Clara').action, 'image');
+});
