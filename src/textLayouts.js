@@ -38,12 +38,29 @@ const txt = (x, y, s, { size, weight = 800, fill = '#fff', anchor = 'middle', fo
   `<text x="${x.toFixed(0)}" y="${y.toFixed(0)}" font-family="${font}" font-weight="${weight}" font-size="${size}" fill="${fill}" text-anchor="${anchor}" letter-spacing="${spacing}">${E.esc(s)}</text>`;
 
 // Monta o SVG da composição. texts: [título, ...extras] (extras = telefone/preço/linhas curtas)
-function layoutSvg({ W, H, texts, hex = '#1d4ed8', look = 'moderno', layout = 'band' }) {
+// t (segundos) = versão ANIMADA (post animado): cada elemento entra em sequência.
+// Sem t = imagem parada (o mesmo desenho, para a correção de texto não mudar a peça).
+function layoutSvg({ W, H, texts, hex = '#1d4ed8', look = 'moderno', layout = 'band', t = null }) {
   const st = ST.get(look);
   const font = ST.fontStack(st);
   const heavy = st.flatWeight ? 400 : 800;
   const mid = st.flatWeight ? 400 : 700;
   const pal = E.palette(hex);
+  // k = ordem de entrada; kind: fade | rise (sobe) | left (vem da esquerda) | up (painel sobe) | pop (selo)
+  const A = (k, kind, content, cx = W / 2, cy = H / 2) => {
+    if (t == null || !content) return content;
+    const p = E.prog(t, 0.3 + k * 0.32, kind === 'pop' ? 0.55 : 0.6, kind === 'pop' ? E.ease.outBack : E.ease.outCubic);
+    if (p <= 0) return '';
+    const o = Math.min(1, p * 1.4).toFixed(3);
+    if (kind === 'pop') {
+      const pulse = p >= 1 ? 1 + 0.035 * Math.sin((t - 0.3 - k * 0.32 - 0.55) * 4) : p;
+      return `<g opacity="${o}" transform="translate(${cx} ${cy}) scale(${Math.max(0.001, pulse).toFixed(4)}) translate(${-cx} ${-cy})">${content}</g>`;
+    }
+    if (kind === 'left') return `<g opacity="${o}" transform="translate(${(-(1 - p) * W * 0.18).toFixed(1)} 0)">${content}</g>`;
+    if (kind === 'up') return `<g transform="translate(0 ${((1 - p) * H * 0.4).toFixed(1)})">${content}</g>`;
+    if (kind === 'fade') return `<g opacity="${o}">${content}</g>`;
+    return `<g opacity="${o}" transform="translate(0 ${((1 - p) * W * 0.05).toFixed(1)})">${content}</g>`;
+  };
   return E.withWidth(st.widthK, () => {
     let [head, ...rest] = texts;
     head = String(head || '');
@@ -66,10 +83,10 @@ function layoutSvg({ W, H, texts, hex = '#1d4ed8', look = 'moderno', layout = 'b
       const bandH = (title ? tf.lines.length * tf.size * 1.12 : 0) + (extras.length ? subSize * 2.4 : 0) + W * 0.1;
       const y0 = H - bandH;
       return `<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.4" stop-color="#000" stop-opacity="0.6"/><stop offset="1" stop-color="#000" stop-opacity="0.85"/></linearGradient></defs>
-        ${title || extras.length ? `<rect x="0" y="${y0 - bandH * 0.35}" width="${W}" height="${bandH * 1.35}" fill="url(#g)"/>` : ''}
-        ${priceTxt ? `<g transform="rotate(-8 ${cx} ${cy})"><circle cx="${cx}" cy="${cy}" r="${r}" fill="${pal.primary}" stroke="#fff" stroke-width="${W * 0.008}"/>${txt(cx, cy + pf.size * 0.36, pf.lines[0] || '', { size: pf.size, weight: heavy, font })}</g>` : ''}
-        ${tf.lines.map((l, i) => txt(W * 0.07, y0 + W * 0.05 + tf.size * (0.9 + i * 1.1), l, { size: tf.size, weight: heavy, anchor: 'start', font })).join('')}
-        ${extras.length ? `<rect x="${W * 0.07}" y="${H - W * 0.05 - subSize * 1.9}" width="${Math.min(W * 0.86, E.textWidth(extras.join('  ·  '), subSize, 700) + subSize * 1.6)}" height="${subSize * 1.9}" rx="${subSize * 0.95}" fill="${pal.primary}"/>${txt(W * 0.07 + subSize * 0.8, H - W * 0.05 - subSize * 0.6, extras.join('  ·  '), { size: subSize, weight: mid, anchor: 'start', font })}` : ''}`;
+        ${A(0, 'fade', title || extras.length ? `<rect x="0" y="${y0 - bandH * 0.35}" width="${W}" height="${bandH * 1.35}" fill="url(#g)"/>` : '')}
+        ${A(tf.lines.length + 2, 'pop', priceTxt ? `<g transform="rotate(-8 ${cx} ${cy})"><circle cx="${cx}" cy="${cy}" r="${r}" fill="${pal.primary}" stroke="#fff" stroke-width="${W * 0.008}"/>${txt(cx, cy + pf.size * 0.36, pf.lines[0] || '', { size: pf.size, weight: heavy, font })}</g>` : '', cx, cy)}
+        ${tf.lines.map((l, i) => A(1 + i, 'left', txt(W * 0.07, y0 + W * 0.05 + tf.size * (0.9 + i * 1.1), l, { size: tf.size, weight: heavy, anchor: 'start', font }))).join('')}
+        ${A(tf.lines.length + 1, 'rise', extras.length ? `<rect x="${W * 0.07}" y="${H - W * 0.05 - subSize * 1.9}" width="${Math.min(W * 0.86, E.textWidth(extras.join('  ·  '), subSize, 700) + subSize * 1.6)}" height="${subSize * 1.9}" rx="${subSize * 0.95}" fill="${pal.primary}"/>${txt(W * 0.07 + subSize * 0.8, H - W * 0.05 - subSize * 0.6, extras.join('  ·  '), { size: subSize, weight: mid, anchor: 'start', font })}` : '')}`;
     }
 
     if (layout === 'top') {
@@ -77,10 +94,9 @@ function layoutSvg({ W, H, texts, hex = '#1d4ed8', look = 'moderno', layout = 'b
       const tf = E.fitText(head, { size: Math.round(W * 0.085), minSize: Math.round(W * 0.05), maxWidth: W * 0.82, maxLines: 3, weight: heavy });
       const h = tf.lines.length * tf.size * 1.12 + W * 0.12;
       return `<defs><linearGradient id="g" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.45" stop-color="#000" stop-opacity="0.55"/><stop offset="1" stop-color="#000" stop-opacity="0.8"/></linearGradient></defs>
-        <rect x="0" y="0" width="${W}" height="${h * 1.4}" fill="url(#g)"/>
-        <rect x="${W * 0.06}" y="${W * 0.06}" width="${W * 0.012}" height="${tf.lines.length * tf.size * 1.12}" fill="${pal.primary}"/>
-        ${tf.lines.map((l, i) => txt(W * 0.095, W * 0.06 + tf.size * (0.88 + i * 1.12), l, { size: tf.size, weight: heavy, anchor: 'start', font })).join('')}
-        ${sub ? `<rect x="${(W - Math.min(W * 0.9, E.textWidth(sub, subSize, 700) + subSize * 2)) / 2}" y="${H - W * 0.06 - subSize * 2}" width="${Math.min(W * 0.9, E.textWidth(sub, subSize, 700) + subSize * 2)}" height="${subSize * 2}" rx="${subSize}" fill="#000" opacity="0.72"/>${txt(W / 2, H - W * 0.06 - subSize * 0.62, sub, { size: subSize, weight: mid, font })}` : ''}`;
+        ${A(0, 'fade', `<rect x="0" y="0" width="${W}" height="${h * 1.4}" fill="url(#g)"/><rect x="${W * 0.06}" y="${W * 0.06}" width="${W * 0.012}" height="${tf.lines.length * tf.size * 1.12}" fill="${pal.primary}"/>`)}
+        ${tf.lines.map((l, i) => A(1 + i, 'left', txt(W * 0.095, W * 0.06 + tf.size * (0.88 + i * 1.12), l, { size: tf.size, weight: heavy, anchor: 'start', font }))).join('')}
+        ${A(tf.lines.length + 1, 'rise', sub ? `<rect x="${(W - Math.min(W * 0.9, E.textWidth(sub, subSize, 700) + subSize * 2)) / 2}" y="${H - W * 0.06 - subSize * 2}" width="${Math.min(W * 0.9, E.textWidth(sub, subSize, 700) + subSize * 2)}" height="${subSize * 2}" rx="${subSize}" fill="#000" opacity="0.72"/>${txt(W / 2, H - W * 0.06 - subSize * 0.62, sub, { size: subSize, weight: mid, font })}` : '')}`;
     }
 
     if (layout === 'panel') {
@@ -88,10 +104,9 @@ function layoutSvg({ W, H, texts, hex = '#1d4ed8', look = 'moderno', layout = 'b
       const tf = E.fitText(head, { size: Math.round(W * 0.08), minSize: Math.round(W * 0.048), maxWidth: W * 0.86, maxLines: 2, weight: heavy });
       const ph = tf.lines.length * tf.size * 1.12 + (sub ? subSize * 1.9 : 0) + W * 0.12;
       const y0 = H - ph;
-      return `<polygon points="0,${y0 - W * 0.06} ${W},${y0 + W * 0.02} ${W},${H} 0,${H}" fill="${pal.dark}" opacity="0.94"/>
-        <polygon points="0,${y0 - W * 0.06} ${W},${y0 + W * 0.02} ${W},${y0 + W * 0.035} 0,${y0 - W * 0.045}" fill="${pal.bright}"/>
-        ${tf.lines.map((l, i) => txt(W * 0.07, y0 + W * 0.06 + tf.size * (0.85 + i * 1.1), l, { size: tf.size, weight: heavy, anchor: 'start', font })).join('')}
-        ${sub ? txt(W * 0.07, H - W * 0.055, sub, { size: subSize, weight: mid, anchor: 'start', fill: pal.soft, font }) : ''}`;
+      return `${A(0, 'up', `<polygon points="0,${y0 - W * 0.06} ${W},${y0 + W * 0.02} ${W},${H} 0,${H}" fill="${pal.dark}" opacity="0.94"/><polygon points="0,${y0 - W * 0.06} ${W},${y0 + W * 0.02} ${W},${y0 + W * 0.035} 0,${y0 - W * 0.045}" fill="${pal.bright}"/>`)}
+        ${tf.lines.map((l, i) => A(1 + i, 'left', txt(W * 0.07, y0 + W * 0.06 + tf.size * (0.85 + i * 1.1), l, { size: tf.size, weight: heavy, anchor: 'start', font }))).join('')}
+        ${A(tf.lines.length + 1, 'rise', sub ? txt(W * 0.07, H - W * 0.055, sub, { size: subSize, weight: mid, anchor: 'start', fill: pal.soft, font }) : '')}`;
     }
 
     if (layout === 'frame') {
@@ -100,11 +115,10 @@ function layoutSvg({ W, H, texts, hex = '#1d4ed8', look = 'moderno', layout = 'b
       const bh = tf.lines.length * tf.size * 1.15 + (sub ? subSize * 2 : 0) + W * 0.08;
       const by = H * 0.62 - bh / 2;
       const m = W * 0.035;
-      return `<rect x="${m}" y="${m}" width="${W - 2 * m}" height="${H - 2 * m}" fill="none" stroke="#fff" stroke-width="${Math.max(2, W * 0.003)}" opacity="0.85"/>
-        <rect x="${W * 0.11}" y="${by}" width="${W * 0.78}" height="${bh}" fill="#000" opacity="0.66"/>
-        <rect x="${W / 2 - W * 0.05}" y="${by + W * 0.03}" width="${W * 0.1}" height="${Math.max(2, W * 0.003)}" fill="${pal.soft}"/>
-        ${tf.lines.map((l, i) => txt(W / 2, by + W * 0.045 + tf.size * (0.95 + i * 1.15), l, { size: tf.size, weight: mid, font })).join('')}
-        ${sub ? txt(W / 2, by + bh - W * 0.035, sub, { size: Math.round(subSize * 0.9), weight: 500, font, spacing: 1 }) : ''}`;
+      return `${A(0, 'fade', `<rect x="${m}" y="${m}" width="${W - 2 * m}" height="${H - 2 * m}" fill="none" stroke="#fff" stroke-width="${Math.max(2, W * 0.003)}" opacity="0.85"/>`)}
+        ${A(1, 'fade', `<rect x="${W * 0.11}" y="${by}" width="${W * 0.78}" height="${bh}" fill="#000" opacity="0.66"/><rect x="${W / 2 - W * 0.05}" y="${by + W * 0.03}" width="${W * 0.1}" height="${Math.max(2, W * 0.003)}" fill="${pal.soft}"/>`)}
+        ${tf.lines.map((l, i) => A(2 + i, 'rise', txt(W / 2, by + W * 0.045 + tf.size * (0.95 + i * 1.15), l, { size: tf.size, weight: mid, font }))).join('')}
+        ${A(tf.lines.length + 2, 'rise', sub ? txt(W / 2, by + bh - W * 0.035, sub, { size: Math.round(subSize * 0.9), weight: 500, font, spacing: 1 }) : '')}`;
     }
 
     // band (padrão): faixa escura embaixo, centralizada
@@ -113,10 +127,10 @@ function layoutSvg({ W, H, texts, hex = '#1d4ed8', look = 'moderno', layout = 'b
     const y0 = H - bandH;
     const subY = y0 + W * 0.045 + fit.size * (0.95 + (fit.lines.length - 1) * 1.12) + subSize * 1.6;
     return `<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.35" stop-color="#000" stop-opacity="0.55"/><stop offset="1" stop-color="#000" stop-opacity="0.8"/></linearGradient></defs>
-      <rect x="0" y="${y0 - bandH * 0.4}" width="${W}" height="${bandH * 1.4}" fill="url(#g)"/>
-      <rect x="${W / 2 - W * 0.08}" y="${y0 + W * 0.02}" width="${W * 0.16}" height="${Math.max(4, W * 0.008)}" rx="3" fill="${pal.primary}"/>
-      ${fit.lines.map((l, i) => txt(W / 2, y0 + W * 0.045 + fit.size * (0.95 + i * 1.12), l, { size: fit.size, weight: heavy, font })).join('')}
-      ${sub ? txt(W / 2, subY, sub, { size: subSize, weight: mid, font }) : ''}`;
+      ${A(0, 'fade', `<rect x="0" y="${y0 - bandH * 0.4}" width="${W}" height="${bandH * 1.4}" fill="url(#g)"/>`)}
+      ${A(1, 'pop', `<rect x="${W / 2 - W * 0.08}" y="${y0 + W * 0.02}" width="${W * 0.16}" height="${Math.max(4, W * 0.008)}" rx="3" fill="${pal.primary}"/>`, W / 2, y0 + W * 0.024)}
+      ${fit.lines.map((l, i) => A(1 + i, 'rise', txt(W / 2, y0 + W * 0.045 + fit.size * (0.95 + i * 1.12), l, { size: fit.size, weight: heavy, font }))).join('')}
+      ${A(fit.lines.length + 1, 'rise', sub ? txt(W / 2, subY, sub, { size: subSize, weight: mid, font }) : '')}`;
   });
 }
 
