@@ -71,7 +71,14 @@ function palette(primary) {
 // ---------------------------------------------------------------------------
 const esc = (s) => String(s == null ? '' : s).replace(/[\u2010\u2011\u2012\u2212]/g, '-').replace(/[\u00A0\u202F\u2007]/g, ' ').replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
 
-// largura aproximada (em "em") por caractere para Poppins
+// largura aproximada (em "em") por caractere para Poppins.
+// Outras fontes (estilos) ajustam pelo fator WK, ligado só enquanto um quadro é montado.
+let WK = 1;
+function withWidth(k, fn) {
+  const old = WK;
+  WK = k || 1;
+  try { return fn(); } finally { WK = old; }
+}
 function textWidth(text, size, weight = 700) {
   let w = 0;
   for (const ch of String(text)) {
@@ -81,7 +88,7 @@ function textWidth(text, size, weight = 700) {
     else if (/[a-záàâãéêíóôõúç]/.test(ch)) w += /[mw]/.test(ch) ? 0.86 : /[iljtf]/.test(ch) ? 0.3 : 0.58;
     else w += 0.4;
   }
-  return w * size * (weight >= 700 ? 1.04 : 1);
+  return w * size * (weight >= 700 ? 1.04 : 1) * WK;
 }
 
 function wrapLines(text, size, maxWidth, weight) {
@@ -181,4 +188,4 @@ async function renderVideo({ frameSvg, duration, outPath, W = 1080, H = 1920, fp
   return outPath;
 }
 
-module.exports = { clamp, lerp, ease, prog, palette, mix, luminance, esc, textWidth, wrapLines, fitText, textBlock, rng, renderVideo, FONT };
+module.exports = { clamp, lerp, ease, prog, palette, mix, luminance, esc, textWidth, wrapLines, fitText, textBlock, rng, renderVideo, withWidth, FONT };

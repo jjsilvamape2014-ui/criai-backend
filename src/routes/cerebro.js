@@ -212,7 +212,9 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
       });
       const scenesTxt = out.scenes.map((s, i) => `${i + 1}. ${s.caption}`).join('\n');
       const styleName = { motion: 'animado', photo: 'com fotos', presenter: 'com apresentador' }[out.style] || '';
+      const lookName = out.look ? require('../motion/styles').get(out.look).name : '';
       const done = `Pronto! Seu anúncio ${styleName} (${out.format}) está aqui.` +
+        (lookName ? `\n\n🎨 Estilo visual: ${lookName}. Para trocar, peça "estilo moderno", "estilo impacto", "estilo elegante" ou "estilo tecnológico".` : '') +
         (out.notes && out.notes.length ? `\n\nAntes de publicar:\n${out.notes.map((n) => `• ${n}`).join('\n')}` : '') +
         (out.narration ? `\n\n🎙️ Narração:\n“${out.narration}”` : '') +
         `\n\n🎞️ Cenas:\n${scenesTxt}` +
@@ -763,6 +765,13 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // 🔤 CRIAR LOGO: nome e cor do pedido, símbolo pela IA (sem texto), nome escrito por código
     if (require('../logoMaker').isLogoRequest(message) && !hasImgNow) {
       return makeLogo({ user, session, message, display: message, res });
+    }
+
+    // troca de estilo visual do último vídeo ("estilo elegante") → refaz direto, sem depender da IA
+    if (session.memory.lastAdRequest && require('../motion/styles').isStyleChange(message) &&
+        !/(imagem|foto|logo|banner|post|arte)\b/i.test(message)) {
+      const request = `${session.memory.lastAdRequest}. Ajuste pedido pelo cliente no vídeo anterior: ${message}`;
+      return startAdVideoJob({ user, session, request, displayMessage: message, res, adjusting: true });
     }
 
     const route = await aiRouter.routeMessage({ message, session });
