@@ -45,7 +45,7 @@ async function renderMotionPost({ image, texts, hex = '#1d4ed8', message = '', p
     const y = (H - ih) / 2 + E.lerp(mv.y0, mv.y1, p) * H;
     const fadeIn = Math.min(1, t / 0.35);
     const fadeOut = Math.min(1, Math.max(0, (seconds - t) / 0.4));
-    const overlay = L.layoutSvg({ W, H, texts, hex, look: pick.look, layout: pick.layout, t });
+    const overlay = texts && texts.length ? L.layoutSvg({ W, H, texts, hex, look: pick.look, layout: pick.layout, t }) : '';
     return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
       <rect width="${W}" height="${H}" fill="#000"/>
       <g opacity="${(fadeIn * fadeOut).toFixed(3)}">
