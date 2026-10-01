@@ -67,28 +67,16 @@ async function toDataUrl(src, max = 1024) {
   return `data:image/jpeg;base64,${b.toString('base64')}`;
 }
 
-// Escreve os textos por código numa faixa embaixo da imagem (sempre certo, com acentos).
-// Retorna PNG (buffer).
-async function overlayText(imageUrl, texts, { hex = '#1d4ed8' } = {}) {
-  const E = require('./motion/engine');
+// Escreve os textos por código sobre a imagem (sempre certo, com acentos), numa das
+// composições de textLayouts (a fonte e o layout variam com o pedido). Retorna PNG.
+async function overlayText(imageUrl, texts, { hex = '#1d4ed8', message = '', project = null, look = null, layout = null } = {}) {
+  const L = require('./textLayouts');
   const img = sharp(await toBuffer(imageUrl));
   const { width: W, height: H } = await img.metadata();
-  const [head, ...rest] = requiredTexts(texts).length ? requiredTexts(texts) : texts;
-  const hs = Math.round(W * 0.085);
-  const fit = E.fitText(String(head || ''), { size: hs, minSize: Math.round(hs * 0.55), maxWidth: W * 0.88, maxLines: 2, weight: 800 });
-  const sub = rest.join('  ·  ');
-  const subSize = Math.round(W * 0.045);
-  const bandH = Math.round(fit.lines.length * fit.size * 1.15 + (sub ? subSize * 1.8 : 0) + W * 0.09);
-  const y0 = H - bandH;
-  const lines = fit.lines.map((l, i) => `<text x="${W / 2}" y="${(y0 + W * 0.045 + fit.size * (0.95 + i * 1.12)).toFixed(0)}" font-family="${E.FONT}" font-weight="800" font-size="${fit.size}" fill="#ffffff" text-anchor="middle">${E.esc(l)}</text>`).join('');
-  const subY = y0 + W * 0.045 + fit.size * (0.95 + (fit.lines.length - 1) * 1.12) + subSize * 1.6;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
-    <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.35" stop-color="#000" stop-opacity="0.55"/><stop offset="1" stop-color="#000" stop-opacity="0.8"/></linearGradient></defs>
-    <rect x="0" y="${y0 - bandH * 0.4}" width="${W}" height="${bandH * 1.4}" fill="url(#g)"/>
-    <rect x="${W / 2 - W * 0.08}" y="${y0 + W * 0.02}" width="${W * 0.16}" height="${Math.max(4, W * 0.008)}" rx="3" fill="${hex}"/>
-    ${lines}
-    ${sub ? `<text x="${W / 2}" y="${subY.toFixed(0)}" font-family="${E.FONT}" font-weight="700" font-size="${subSize}" fill="#ffffff" text-anchor="middle">${E.esc(sub)}</text>` : ''}
-  </svg>`;
+  const list = requiredTexts(texts).length ? requiredTexts(texts) : texts;
+  const pick = L.chooseLayout({ texts: list, message, project, look, layout });
+  const body = L.layoutSvg({ W, H, texts: list, hex, look: pick.look, layout: pick.layout });
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${body}</svg>`;
   return img.composite([{ input: Buffer.from(svg), left: 0, top: 0 }]).png().toBuffer();
 }
 
@@ -145,4 +133,4 @@ function isTextOnlyFix(message) {
   return !/(^|[^\p{L}])(fundo|cor|cores|foto|fotos|layout|fonte|estilo|tamanho|formato|logo|pessoa|produto|v[íi]deo|anima\p{L}*)(?![\p{L}])/iu.test(outside);
 }
 
-module.exports = { isTextOnlyFix, mergePieceTexts, fitAspect, exactTexts, pieceTexts, textFreePrompt, requiredTexts, transcribe, verify, overlayText };
+module.exports = { toBuffer, isTextOnlyFix, mergePieceTexts, fitAspect, exactTexts, pieceTexts, textFreePrompt, requiredTexts, transcribe, verify, overlayText };
