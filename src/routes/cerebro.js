@@ -819,7 +819,11 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         cerebro.pushHistory(session, 'assistant', text, null);
         return res.json({ success: true, sessionId: session.id, reply: text, imageUrl: null, videoUrl: null, type: 'chat', memory: session.memory, history: session.history.slice(-20), ...extra });
       };
-      if (route.action === 'answer' && route.reply) return reply(route.reply);
+      // resposta livre da IA também passa pelo filtro de promessas ("15% de desconto até o fim da semana")
+      if (route.action === 'answer' && route.reply) {
+        const C = require('../claims');
+        return reply(C.cleanVoice(route.reply, C.sourceOf({ request: message, project: session.memory.project })) || route.reply);
+      }
       // apresentador custa mais: só quando o CLIENTE pediu pessoa/apresentador (a IA não decide sozinha)
       const askedPerson = /(apresentador|apresentadora|pessoa|avatar|influencer|garot[oa][- ]propaganda|algu[ée]m falando|\bugc\b)/i.test(message);
       if (route.style === 'presenter' && !askedPerson) route.style = '';

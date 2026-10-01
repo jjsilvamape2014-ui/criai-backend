@@ -10,7 +10,7 @@ const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toL
 
 // [nome, regex da promessa (sem acento), palavras que, se o cliente usou, liberam a promessa]
 const CLAIMS = [
-  ['tempo limitado', /\b(por )?tempo limitado\b|\bso (hoje|ate hoje|essa semana|este mes)\b|\bsomente hoje\b|\bultimas? (unidades|vagas|horas|dias)\b|\bcorra\b|\bnao perca\b|\bimperdivel\b|\bvagas limitadas\b/, ['limitad', 'ultima', 'so hoje', 'somente hoje', 'corra', 'imperdivel']],
+  ['tempo limitado', /\b(por )?tempo limitado\b|\bso (hoje|ate hoje|essa semana|este mes)\b|\bsomente hoje\b|\bultimas? (unidades|vagas|horas|dias)\b|\bcorra\b|\bnao perca\b|\bimperdivel\b|\bvagas limitadas\b|\b(promocao|oferta) relampago\b|\bate o fim (da|do|desta|deste) (semana|mes)\b/, ['limitad', 'ultima', 'so hoje', 'somente hoje', 'corra', 'imperdivel']],
   ['garantia', /\b(com )?garantia( de \d+ \w+| total)?\b|\bgarantid[oa]s?\b|\bgarant(e|em|imos|ir|indo)\b|\bsatisfacao garantida\b|\bdinheiro de volta\b/, ['garant']],
   ['24 horas', /\b((suporte|atendimento|plantao) )?24 ?h(oras)?\b|\b24\/7\b|\bplantao\b/, ['24']],
   ['gratis', /\b((com )?(frete|entrega|instalacao|avaliacao|orcamento|visita|consulta|brinde) )?(gratis|gratuit[oa]s?)\b|\bfree\b|\bsem custo\b|\bde graca\b/, ['grat', 'sem custo', 'de graca', 'free']],
@@ -21,7 +21,7 @@ const CLAIMS = [
   ['experiencia', /\b\d+ anos (de|no) (experiencia|mercado)\b|\bmais de \d+ (anos|clientes|mil)\b|\b\d+ mil clientes\b/, ['anos', 'clientes', 'mil']],
   ['certificado', /\bcertificad[oa]s?\b|\bcertificacao\b|\bnbr\b|\biso ?\d+\b|\baprovad[oa] pel[oa]\b/, ['certific', 'nbr', 'iso', 'aprovad']],
   ['economia', /\b(economi\w*|reduz\w*|diminu\w*|poup\w*) (de |na |a |sua |seu |o |com )?(energia|conta de luz|conta|luz)\b|\bmenor conta\b/, ['econom', 'conta de luz', 'energia']],
-  ['detalhe inventado', /\bprodutos? (premium|importad\w*|de primeira( linha)?|profissionais|de luxo)\b|\baditivos?( especia\w*)?\b|\bequipe (qualificada|especializada|experiente|altamente \w+)\b|\bespecialistas?\b|\bprofissionais (qualificad\w*|experientes|certificad\w*|especializad\w*)\b|\b(de )?alta qualidade\b|\bqualidade (superior|premium|garantida)\b|\btecnologia de ponta\b|\bequipamentos? (modernos?|de ultima geracao)\b/, ['premium', 'importad', 'de primeira', 'aditiv', 'qualificad', 'especializ', 'especialist', 'experient', 'certificad', 'alta qualidade', 'superior', 'de ponta', 'ultima geracao', 'moderno', 'luxo']],
+  ['detalhe inventado', /\bprodutos? (importad\w*|de primeira( linha)?|profissionais|de luxo)\b|\bpremium\b|\baditivos?( especia\w*)?\b|\bequipe (qualificada|especializada|experiente|altamente \w+)\b|\bespecialistas?\b|\bprofissionais (qualificad\w*|experientes|certificad\w*|especializad\w*)\b|\b(de )?alta qualidade\b|\bqualidade (superior|premium|garantida)\b|\btecnologia de ponta\b|\bequipamentos? (modernos?|de ultima geracao)\b/, ['premium', 'importad', 'de primeira', 'aditiv', 'qualificad', 'especializ', 'especialist', 'experient', 'certificad', 'alta qualidade', 'superior', 'de ponta', 'ultima geracao', 'moderno', 'luxo']],
   ['avaliacao/orcamento gratis', /\b(avaliacao|orcamento|visita|diagnostico) (tecnic[oa] )?(gratis|gratuit[oa]|sem compromisso)\b/, ['grat', 'sem compromisso']],
 ];
 

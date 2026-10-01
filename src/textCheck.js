@@ -140,7 +140,9 @@ function isTextOnlyFix(message) {
   const hasNewText = exactTexts(m).length > 0 || /["“”][^"“”]{2,40}["“”]/.test(m);
   if (!hasNewText) return false;
   if (/\b(faz|fa[çc]a|cria|crie|gera|gere|nov[oa]|outr[oa])\b/i.test(m)) return false;
-  return !/\b(fundo|cor|cores|foto|layout|fonte|estilo|tamanho|formato|logo|pessoa|produto|v[íi]deo|anima)/i.test(m);
+  // palavra inteira: "Corte masculino" não é pedido de troca de "cor"
+  const outside = m.replace(/["“”][^"“”]*["“”]/g, ' '); // o que está entre aspas é o texto novo, não pedido de mudança
+  return !/(^|[^\p{L}])(fundo|cor|cores|foto|fotos|layout|fonte|estilo|tamanho|formato|logo|pessoa|produto|v[íi]deo|anima\p{L}*)(?![\p{L}])/iu.test(outside);
 }
 
 module.exports = { isTextOnlyFix, mergePieceTexts, fitAspect, exactTexts, pieceTexts, textFreePrompt, requiredTexts, transcribe, verify, overlayText };

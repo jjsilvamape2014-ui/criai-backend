@@ -80,6 +80,8 @@ const FEEDBACK = /\b(ficou|gostei|amei|adorei|obrigad\w*|valeu|perfeito|show|top
 function isCreationRequest(message) {
   const m = norm(message);
   if (FEEDBACK.test(m) && !ASK_VERB.test(m)) return false;
+  // começa pela peça ("post de bom dia para a Ótica…", "arte para promoção…") também é pedido
+  if (/^(um |uma )?(post|arte|banner|flyer|panfleto|imagem|story|stories|reels|video|anuncio|logo\w*|card)\b/.test(m)) return true;
   return ASK_VERB.test(m) || m.split(/\s+/).length <= 8; // pedido curto sem verbo ("reels da minha loja")
 }
 
@@ -91,6 +93,7 @@ function enforce(action, message) {
   if (req === 'imagem' && got === 'video') return { action: 'image', corrigido: true, motivo: 'pediu imagem; a IA escolheu vídeo' };
   if (req === 'video' && got === 'imagem') return { action: 'video', corrigido: true, motivo: 'pediu vídeo; a IA escolheu imagem' };
   if (req === 'video' && got === 'texto') return { action: 'video', corrigido: true, motivo: 'pediu vídeo; a IA só respondeu' };
+  if (req === 'imagem' && got === 'texto') return { action: 'image', corrigido: true, motivo: 'pediu imagem/post; a IA só respondeu' };
   if ((req === 'roteiro_video' || req === 'copy') && (got === 'video' || got === 'imagem')) {
     return { action: 'write', corrigido: true, motivo: `pediu ${req === 'copy' ? 'texto' : 'roteiro'}; a IA ia renderizar` };
   }
