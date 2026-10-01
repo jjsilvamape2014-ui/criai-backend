@@ -31,20 +31,27 @@ function exactTexts(message) {
 // Textos da peça: os pedidos (aspas, nomes) + preço e telefone, sem repetir o que já
 // está dentro de outro ("Pizza grande R$ 49,90" já contém "R$ 49,90")
 function pieceTexts(tokens, message, brand = '') {
-  let base = requiredTexts(tokens);
-  let extra = exactTexts(message).filter((e) => !base.some((b) => squash(b).includes(squash(e))));
+  const base = requiredTexts(tokens);
+  const extra = exactTexts(message).filter((e) => !base.some((b) => squash(b).includes(squash(e))));
   // preço solto ganha o produto que vem antes dele ("pão francês R$ 12,90")
-  extra = extra.map((e) => {
+  const withProduct = (e) => {
     if (!/^R\$/.test(e)) return e;
     const before = String(message).split(/R\$/)[0].split(/[:,.;!\n]/).pop().trim().split(/\s+/).slice(-4).join(' ');
     const prod = before.replace(/^(por|a|o|de|com|só|apenas|custa|custando|valor|preço)\s+/i, '').replace(/\s+(por|a|de|é|custa|só)$/i, '').trim();
-    return prod && prod.length >= 3 && !/\d/.test(prod) ? `${prod.charAt(0).toUpperCase()}${prod.slice(1)} ${e}` : e;
-  });
+    return prod && prod.length >= 3 && !/\d/.test(prod) ? `${prod.charAt(0).toUpperCase()}${prod.slice(1)} ${e.replace(/R\$\s*/, 'R$ ')}` : e;
+  };
+  let items = [...base, ...extra].map(withProduct);
   // o nome da empresa citado no pedido também precisa sair certo ("Ática Visão Clara")
   const b = String(brand || '').trim();
-  if (b && squash(message).includes(squash(b)) && ![...base, ...extra].some((t) => squash(t).includes(squash(b)))) base = [b, ...base];
-  // ordem da peça: nome/título → produto e preço → telefone por último
-  const all = [...new Set([...base, ...extra])];
+  if (b && squash(message).includes(squash(b)) && !items.some((t) => squash(t).includes(squash(b)))) items = [b, ...items];
+  // data/tema do post ("Bom dia!", "Feliz dia das mães!") vira o título, antes do nome
+  const occ = String(message).match(/\b(bom dia|boa tarde|boa noite|feliz natal|feliz ano novo|feliz p[áa]scoa|feliz dia d[aoe]s? [\p{L}]+|dia das (m[ãa]es|crian[çc]as|pais|mulheres|namorados)|black friday)\b/iu);
+  if (occ && !items.some((t) => squash(t).includes(squash(occ[1])))) {
+    const o = occ[1].toLowerCase();
+    items = [`${o.charAt(0).toUpperCase()}${o.slice(1)}${/^(bom|boa|feliz)/.test(o) ? '!' : ''}`, ...items];
+  }
+  // ordem: título → produto e preço → telefone por último
+  const all = [...new Set(items)];
   return [...all.filter((t) => !PHONE.test(t)), ...all.filter((t) => PHONE.test(t))].slice(0, 4);
 }
 

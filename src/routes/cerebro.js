@@ -786,7 +786,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     {
       const TC = require('../textCheck');
       const attached = (Array.isArray(req.body.images) && req.body.images.length) || req.body.image;
-      if (session.memory.pieceBase && (session.memory.pieceTexts || []).length && !attached && TC.isTextOnlyFix(message)) {
+      if (session.memory.pieceBase && (session.memory.pieceTexts || []).length && !attached && TC.isTextOnlyFix(message) && !require('../contract').isNewPiece(message)) {
         try {
           const texts = TC.mergePieceTexts(session.memory.pieceTexts, TC.pieceTexts(extractTextTokens(message), message));
           const png = await TC.overlayText(session.memory.pieceBase, texts, { ...(session.memory.pieceHex ? { hex: session.memory.pieceHex } : {}), ...(session.memory.pieceLayout || {}) });
@@ -1784,7 +1784,8 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     res.json({
       success: true,
       sessionId: session.id,
-      reply: String(cmd.reply || '').replace(/\*\*/g, ''), // negrito de markdown aparecia como ** no app
+      // negrito de markdown aparecia como ** no app; "Prompt gerado…" é jargão interno
+      reply: String(cmd.reply || '').replace(/\*\*/g, '').replace(/^\s*(Geramos um |Gerado um |)prompt[^.!]*[.!]\s*/i, 'Pronto! Sua peça está aqui. '),
       imageUrl,
       prompt: finalPrompt,
       fromLLM: !!cmd.fromLLM,

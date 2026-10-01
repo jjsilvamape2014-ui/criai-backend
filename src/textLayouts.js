@@ -48,7 +48,9 @@ function layoutSvg({ W, H, texts, hex = '#1d4ed8', look = 'moderno', layout = 'b
     let [head, ...rest] = texts;
     head = String(head || '');
     const sub = rest.join('  ·  ');
-    const subSize = Math.round(W * 0.042);
+    // linha de baixo nunca passa da borda: diminui a fonte até caber
+    let subSize = Math.round(W * 0.042);
+    while (sub && subSize > W * 0.024 && E.textWidth(sub, subSize, 700) > W * 0.84) subSize -= 2;
 
     if (layout === 'tag') {
       // selo de preço no canto + título alinhado à esquerda embaixo
