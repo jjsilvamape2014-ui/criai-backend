@@ -1689,7 +1689,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     res.json({
       success: true,
       sessionId: session.id,
-      reply: cmd.reply,
+      reply: String(cmd.reply || '').replace(/\*\*/g, ''), // negrito de markdown aparecia como ** no app
       imageUrl,
       prompt: finalPrompt,
       fromLLM: !!cmd.fromLLM,
