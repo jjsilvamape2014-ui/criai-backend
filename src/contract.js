@@ -93,7 +93,8 @@ function enforce(action, message) {
   if (req === 'imagem' && got === 'video') return { action: 'image', corrigido: true, motivo: 'pediu imagem; a IA escolheu vídeo' };
   if (req === 'video' && got === 'imagem') return { action: 'video', corrigido: true, motivo: 'pediu vídeo; a IA escolheu imagem' };
   if (req === 'video' && got === 'texto') return { action: 'video', corrigido: true, motivo: 'pediu vídeo; a IA só respondeu' };
-  if (req === 'imagem' && got === 'texto') return { action: 'image', corrigido: true, motivo: 'pediu imagem/post; a IA só respondeu' };
+  const question = /\?\s*$/.test(String(message)) || /^(qual|quais|como|quando|onde|por ?que|o que|quanto|quantos|tem como|da pra|d[aá] para)\b/.test(norm(message));
+  if (req === 'imagem' && got === 'texto' && !question) return { action: 'image', corrigido: true, motivo: 'pediu imagem/post; a IA só respondeu' };
   if ((req === 'roteiro_video' || req === 'copy') && (got === 'video' || got === 'imagem')) {
     return { action: 'write', corrigido: true, motivo: `pediu ${req === 'copy' ? 'texto' : 'roteiro'}; a IA ia renderizar` };
   }

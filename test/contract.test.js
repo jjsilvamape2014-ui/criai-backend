@@ -88,3 +88,8 @@ test('"post de ..." sem verbo é pedido de imagem, não resposta', () => {
   const c = require('../src/contract');
   assert.strictEqual(c.enforce('answer', 'post de bom dia para a Ótica Visão Clara').action, 'image');
 });
+
+test('pergunta sobre Instagram continua sendo resposta, não imagem', () => {
+  const c = require('../src/contract');
+  assert.strictEqual(c.enforce('answer', 'quais horários são melhores para postar no Instagram?').action, 'answer');
+});

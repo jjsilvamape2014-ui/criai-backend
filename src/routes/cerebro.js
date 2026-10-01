@@ -972,9 +972,13 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         history: session.history.slice(-20)
       });
     }
-    if (intent === 'conversation') {
+    // "post de bom dia para a Ótica…" é pedido de PEÇA, não conversa (o "bom dia" enganava)
+    const askedPiece = contract.isCreationRequest(message) && contract.detectRequested(message).tipo === 'imagem' && !/\?\s*$/.test(message);
+    if (intent === 'conversation' && !askedPiece) {
       cerebro.pushHistory(session, 'user', message, null);
-      const answer = await replyConversation(message, session.memory) || 'Não entendi ainda — pode me falar o que você quer criar? Posso gerar e editar imagens e vídeos.';
+      const C = require('../claims');
+      const raw = await replyConversation(message, session.memory);
+      const answer = (raw && (C.cleanVoice(raw, C.sourceOf({ request: message, project: session.memory.project })) || raw)) || 'Não entendi ainda — pode me falar o que você quer criar? Posso gerar e editar imagens e vídeos.';
       cerebro.pushHistory(session, 'assistant', answer, null);
       return res.json({
         success: true,
