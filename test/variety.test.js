@@ -32,3 +32,14 @@ test('logo: composição pedida pelo cliente e variação pelo nome', () => {
   const set = new Set(['Doce Sabor Confeitaria', 'Auto Center Silva', 'Linha Fácil', 'Pizzaria Bella Napoli'].map((n) => LM.pickLogoLayout('logo', n)));
   assert.ok(set.size >= 3);
 });
+
+test('textos da peça: tema, nome, produto com preço, telefone', () => {
+  const TC = require('../src/textCheck');
+  const { extractTextTokens } = require('../src/llm');
+  const m = 'faz um post para a padaria Pão Quente: pão francês R$ 12,90 o kg. WhatsApp (11) 95555-1212';
+  assert.deepStrictEqual(TC.pieceTexts(extractTextTokens(m), m, 'Pão Quente'), ['Pão Quente', 'Pão francês R$ 12,90', '(11) 95555-1212']);
+  const g = 'faz um post de bom dia para a Ótica Visão Clara';
+  assert.deepStrictEqual(TC.pieceTexts(extractTextTokens(g), g, 'Ótica Visão Clara'), ['Bom dia!', 'Ótica Visão Clara']);
+  const c = require('../src/contract');
+  assert.ok(c.isNewPiece('post para o salão Studio Bela: escova progressiva R$ 120,00. WhatsApp (21) 98888-1111'));
+});
