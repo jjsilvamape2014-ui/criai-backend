@@ -55,7 +55,7 @@ const EXPLICIT = [
 ];
 const PROMO = W('promo|oferta|liquida|queima|desconto|black friday|imperdivel|saldao|\\d+ ?% ?off|precos? baix|so hoje|mes do cliente');
 const BUSINESS = [
-  ['elegante', W('salao de beleza|cabeleire|barbearia|estetica|spa|manicure|sobrancelha|cilios|maquiagem|joia|joalheria|perfum|boutique|moda feminina|advoca|advogad|clinica|odonto|dentist|psicolog|nutricion|noiva|casamento|buffet|decoracao|arquitet|cafeteria|vinho|confeitaria|doceria|bolos|floricultura|imobiliaria|hotel|pousada')],
+  ['elegante', W('salao|cabeleire|escova|progressiva|unhas|barbearia|estetica|spa|manicure|sobrancelha|cilios|maquiagem|joia|joalheria|perfum|boutique|moda feminina|advoca|advogad|clinica|odonto|dentist|psicolog|nutricion|noiva|casamento|buffet|decoracao|arquitet|cafeteria|vinho|confeitaria|doceria|bolos|floricultura|imobiliaria|hotel|pousada')],
   ['impacto', W('supermercado|mercado|mercadinho|atacad|loja|pizzaria|pizza|lanchonete|hamburgu|lanche|acai|acougue|hortifruti|feira|pastel|delivery|autopecas|auto pecas|material de construcao|depositos?|calcados|roupas|bar |churrasc|sorveteria|padaria')],
   ['tecnologico', W('tecnolog|informatica|software|aplicativo|sistema|internet|provedor|energia solar|solar|seguranca eletronica|cameras?|cftv|alarme|automacao|engenharia|concreto|industria|ar[- ]?condicionado|refrigeracao|climatiza|eletric|eletronic|celular|assistencia tecnica|computador|games?|robotic|drone|startup|saas')]
 ];
