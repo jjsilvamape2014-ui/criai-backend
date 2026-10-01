@@ -767,6 +767,29 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       return makeLogo({ user, session, message, display: message, res });
     }
 
+    // correção SÓ do texto da última peça (preço, telefone, frase entre aspas):
+    // mesma imagem, texto reescrito por código — sem gerar outra imagem nem cobrar
+    {
+      const TC = require('../textCheck');
+      const attached = (Array.isArray(req.body.images) && req.body.images.length) || req.body.image;
+      if (session.memory.pieceBase && (session.memory.pieceTexts || []).length && !attached && TC.isTextOnlyFix(message)) {
+        try {
+          const texts = TC.mergePieceTexts(session.memory.pieceTexts, TC.pieceTexts(extractTextTokens(message), message));
+          const png = await TC.overlayText(session.memory.pieceBase, texts, session.memory.pieceHex ? { hex: session.memory.pieceHex } : {});
+          const url = await adVideo._internals.uploadToFal(png, 'image/png', `peca-${Date.now()}.png`).catch(() => `data:image/png;base64,${png.toString('base64')}`);
+          session.memory.pieceTexts = texts;
+          session.memory.baseImage = url;
+          if (session.memory.refImages && session.memory.refImages[0]) session.memory.refImages[0] = url;
+          const reply = `Pronto! Mantive a mesma imagem e troquei só o texto: ${texts.map((t) => `"${t}"`).join(', ')}. Essa correção não gastou crédito.`;
+          cerebro.pushHistory(session, 'user', message, null);
+          cerebro.pushHistory(session, 'assistant', reply, url);
+          return res.json({ success: true, sessionId: session.id, reply, imageUrl: url, textCheck: { required: texts, exact: true, ok: true, reused: true }, memory: session.memory, history: session.history.slice(-20) });
+        } catch (e) {
+          console.error('Cérebro: correção só do texto falhou (seguindo o fluxo normal):', e.message);
+        }
+      }
+    }
+
     // troca de estilo visual do último vídeo ("estilo elegante") → refaz direto, sem depender da IA
     if (session.memory.lastAdRequest && require('../motion/styles').isStyleChange(message) &&
         !/(imagem|foto|logo|banner|post|arte)\b/i.test(message)) {
@@ -1576,6 +1599,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     //      que o cliente pediu. Errado → refaz 1x reforçando o texto; ainda errado → gera
     //      SEM texto e escreve o texto por código (sempre certo). Sem cobrar a mais.
     let textCheckInfo = null;
+    session.memory.pieceBase = null; // imagem limpa da peça (só existe quando o texto foi escrito por código)
     try {
       const TC = require('../textCheck');
       let mustText = TC.pieceTexts(extractTextTokens(message), message);
@@ -1612,6 +1636,13 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
             const hex = (require('../logoMaker').extractColor(`${message} ${colors.join(' ')}`) || {}).hex;
             const base = await TC.fitAspect(clean || retry || imageUrl, width, height).catch(() => clean || retry || imageUrl);
             const png = await TC.overlayText(base, mustText, hex ? { hex } : {});
+            // guarda a imagem limpa: corrigir só o texto depois não gera outra imagem
+            try {
+              const baseBuf = Buffer.from(String(base).split(',')[1] || '', 'base64');
+              if (String(base).startsWith('data:')) session.memory.pieceBase = await adVideo._internals.uploadToFal(baseBuf, 'image/png', `base-${Date.now()}.png`);
+              else session.memory.pieceBase = base;
+              session.memory.pieceHex = hex || null;
+            } catch (e) { session.memory.pieceBase = null; }
             imageUrl = await adVideo._internals.uploadToFal(png, 'image/png', `peca-${Date.now()}.png`).catch(() => `data:image/png;base64,${png.toString('base64')}`);
             textCheckInfo.overlay = true;
             cmd.reply = exact

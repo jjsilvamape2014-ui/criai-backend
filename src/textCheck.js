@@ -115,8 +115,16 @@ function mergePieceTexts(prev, cur) {
   if (!p.length) return c;
   const newPrice = c.find((t) => PRICE.test(t));
   const newPhone = c.find((t) => PHONE.test(t));
+  // texto novo entre aspas (sem preço/telefone) substitui o título antigo
+  const newHead = c.find((t) => !PRICE.test(t) && !PHONE.test(t));
+  let headDone = false;
   let out = p.map((t) => {
     if (newPhone && PHONE.test(t)) return newPhone;
+    if (newHead && !headDone && !PHONE.test(t)) {
+      headDone = true;
+      const oldPrice = t.match(PRICE);
+      return oldPrice && !PRICE.test(newHead) ? `${newHead} ${newPrice ? newPrice.match(PRICE)[0] : oldPrice[0]}` : newHead;
+    }
     if (newPrice && PRICE.test(t)) return t.replace(PRICE, newPrice.match(PRICE)[0]);
     return t;
   });
@@ -124,4 +132,15 @@ function mergePieceTexts(prev, cur) {
   return [...new Set(out)].slice(0, 4);
 }
 
-module.exports = { mergePieceTexts, fitAspect, exactTexts, pieceTexts, textFreePrompt, requiredTexts, transcribe, verify, overlayText };
+// "o preço está errado, é R$ 39,90", "troca o telefone para (11) 95555-0000",
+// "o texto é \"Pizza gigante\"": só texto muda → a mesma imagem, texto reescrito
+function isTextOnlyFix(message) {
+  const m = String(message || '');
+  if (m.length > 160) return false;
+  const hasNewText = exactTexts(m).length > 0 || /["“”][^"“”]{2,40}["“”]/.test(m);
+  if (!hasNewText) return false;
+  if (/\b(faz|fa[çc]a|cria|crie|gera|gere|nov[oa]|outr[oa])\b/i.test(m)) return false;
+  return !/\b(fundo|cor|cores|foto|layout|fonte|estilo|tamanho|formato|logo|pessoa|produto|v[íi]deo|anima)/i.test(m);
+}
+
+module.exports = { isTextOnlyFix, mergePieceTexts, fitAspect, exactTexts, pieceTexts, textFreePrompt, requiredTexts, transcribe, verify, overlayText };

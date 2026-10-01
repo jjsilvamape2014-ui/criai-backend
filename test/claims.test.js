@@ -54,3 +54,13 @@ test('qualidades inventadas saem (premium, aditivos, equipe qualificada)', () =>
   assert.strictEqual(C.cleanText('Profissionais qualificados e ambiente acolhedor', 'salão'), 'ambiente acolhedor');
   assert.ok(C.cleanVoice('Nossos especialistas cuidam de você.', 'temos especialistas').includes('especialistas'));
 });
+
+test('correção só do texto: detecta e troca o título/preço/telefone certo', () => {
+  const TC = require('../src/textCheck');
+  assert.ok(TC.isTextOnlyFix('o preço está errado, é R$ 39,90'));
+  assert.ok(TC.isTextOnlyFix('o texto é "Pizza gigante"'));
+  assert.ok(!TC.isTextOnlyFix('muda o fundo para azul e o preço R$ 30,00'));
+  assert.ok(!TC.isTextOnlyFix('faz um novo post R$ 10,00'));
+  assert.deepStrictEqual(TC.mergePieceTexts(['Pizza grande R$ 49,90', '(11) 97777-1234'], ['R$ 39,90']), ['Pizza grande R$ 39,90', '(11) 97777-1234']);
+  assert.deepStrictEqual(TC.mergePieceTexts(['Pizza grande R$ 49,90', '(11) 97777-1234'], ['Pizza gigante']), ['Pizza gigante R$ 49,90', '(11) 97777-1234']);
+});
