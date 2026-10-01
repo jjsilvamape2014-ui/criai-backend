@@ -51,3 +51,9 @@ test('nome da logo com artigo antes e cor solta depois', () => {
   assert.strictEqual(L.extractName('faz um logo com o nome Linha Fácil azul'), 'Linha Fácil');
   assert.strictEqual(L.extractName('logo com o nome "Azul Turismo"'), 'Azul Turismo');
 });
+
+test('"logo da Auto Center Silva em vermelho" (sem verbo) é pedido de logo', () => {
+  const L = require('../src/logoMaker');
+  assert.ok(L.isLogoRequest('logo da Auto Center Silva em vermelho'));
+  assert.ok(!L.isLogoRequest('logo da empresa no vídeo'));
+});
