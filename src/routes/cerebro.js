@@ -1649,7 +1649,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     session.memory.pieceBase = null; // imagem limpa da peça (só existe quando o texto foi escrito por código)
     try {
       const TC = require('../textCheck');
-      let mustText = TC.pieceTexts(extractTextTokens(message), message);
+      let mustText = TC.pieceTexts(extractTextTokens(message), message, session.memory.project && session.memory.project.brand);
       // correção da peça anterior (sem texto novo entre aspas, sem pedir peça nova): mantém os textos dela
       const newPiece = /["“”]|(\b(faz|fa[çc]a|cria|crie|gera|gere)\w*\s+(um|uma|outr[oa]|nov[oa]))/i.test(message);
       if (!newPiece && session.memory.pieceTexts && session.memory.pieceTexts.length) mustText = TC.mergePieceTexts(session.memory.pieceTexts, mustText);
@@ -1704,6 +1704,17 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       }
     } catch (e) {
       console.error('Cérebro Visual: conferência de texto falhou (seguindo):', e.message);
+    }
+    // formato: o gerador às vezes devolve 4:3 num post quadrado → recorta no formato pedido
+    if (imageUrl && !(textCheckInfo && textCheckInfo.overlay) && !isPortrait) {
+      try {
+        const TC = require('../textCheck');
+        const meta = await sharp(await TC.toBuffer(imageUrl)).metadata();
+        if (meta.width && Math.abs(meta.width / meta.height - width / height) > 0.08) {
+          const fixed = await TC.fitAspect(imageUrl, width, height);
+          imageUrl = await adVideo._internals.uploadToFal(Buffer.from(fixed.split(',')[1], 'base64'), 'image/png', `peca-${Date.now()}.png`).catch(() => fixed);
+        }
+      } catch (e) { console.error('Cérebro Visual: ajuste de formato falhou (seguindo):', e.message); }
     }
 
     // 5b) REALCE DE QUALIDADE (Magnific Mystic — opcional, pago). Só quando o usuário
