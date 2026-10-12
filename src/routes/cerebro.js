@@ -639,6 +639,13 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     await cerebro.hydrate(user.id, sid).catch(() => null); // conversa salva no banco (sobrevive a deploys)
     const session = cerebro.getOrCreateSession(user.id, sid);
 
+    // "Gerar" / "pode" depois do aviso de foto ruim: retoma o pedido que foi avisado
+    const qaPending = session.memory.qaPending;
+    session.memory.qaPending = null;
+    if (qaPending && /^\s*(gera(r)?|gere|pode( gerar| fazer)?|sim|ok|faz( assim)?|fa[çc]a( assim)?|mesmo assim|gera mesmo assim|continua(r)?|segue|vai)\s*[!.]*\s*$/i.test(message)) {
+      message = qaPending.message;
+    }
+
     // 🗂️ MEMÓRIA DE LONGO PRAZO: hidrata o projeto com o que o usuário já decidiu
     // em conversas anteriores (marca, cores, fatos). Tudo que ele repete nunca mais
     // precisa ser reexplicado — vale para qualquer sessão.
@@ -994,7 +1001,10 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       const firstRef = session.memory.refImages[0];
       // Só avaliamos fotos ENVIADAS pelo usuário (dataURL) — outputs/URLs (Freepik,
       // resultados gerados) são pulados para não travar a edição de uma peça.
-      if (firstRef && firstRef.startsWith('data:')) {
+      // Avisa UMA vez por foto: se o cliente insistir, gera mesmo assim (antes o aviso
+      // voltava a cada mensagem e nada era gerado, mesmo prometendo "vou gerar").
+      const refKey = firstRef ? `${firstRef.length}:${firstRef.slice(-48)}` : '';
+      if (firstRef && firstRef.startsWith('data:') && session.memory.qaWarnedRef !== refKey) {
       try {
         let dims = null;
         if (firstRef) {
@@ -1013,7 +1023,9 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         const tooSmall = dims && (dims.w < 400 || dims.h < 400);
         const qa = tooSmall ? { ok: false, reason: `a imagem é pequena (${dims.w}×${dims.h}px)` } : await vision.checkImageQuality(firstRef);
         if (qa && qa.ok === false) {
-          const advise = `⚠️ A imagem que você enviou está com problema: ${qa.reason || 'qualidade insuficiente'}. Vou gerar mesmo assim, mas o resultado pode sair ruim. Se puder, envie uma foto melhor (mais nítida e com mais de 400×400 px). Se quiser, toque em "Gerar" com uma nova imagem.`;
+          session.memory.qaWarnedRef = refKey;
+          session.memory.qaPending = { message };
+          const advise = `⚠️ A imagem que você enviou pode estar com problema: ${qa.reason || 'qualidade insuficiente'}. O resultado pode sair pior. Se puder, envie uma foto melhor (nítida e com mais de 400×400 px). Para usar esta mesma, responda "gerar" que eu faço o seu pedido com ela.`;
           cerebro.pushHistory(session, 'user', message, null);
           cerebro.pushHistory(session, 'assistant', advise, null);
           return res.json({
