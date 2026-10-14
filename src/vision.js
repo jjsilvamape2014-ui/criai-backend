@@ -59,16 +59,37 @@ function llmVisionKey() {
   return (k.startsWith('gsk_') || process.env.LLM_PROVIDER === 'groq') && process.env.VISION_LLM !== 'false' ? k : '';
 }
 
+// Quanto esperar num 429 da Groq: cabeçalho retry-after ou "try again in 1.5s" na mensagem.
+// Até 8 s; acima disso não compensa segurar o cliente (cai na visão de reserva).
+function retryWaitMs(r) {
+  const h = r && r.headers && parseFloat(r.headers['retry-after']);
+  if (Number.isFinite(h)) return h * 1000 + 300;
+  const m = JSON.stringify((r && r.data) || {}).match(/try again in ([\d.]+)\s*(ms|s)/i);
+  if (m) return Number(m[1]) * (m[2].toLowerCase() === 'ms' ? 1 : 1000) + 300;
+  return 3000;
+}
+
 async function llmVision(imageDataUrl, prompt, maxTokens = 400) {
   const key = llmVisionKey();
   if (!key || !imageDataUrl) return null;
   try {
-    const r = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+    const call = () => axios.post('https://api.groq.com/openai/v1/chat/completions', {
       model: process.env.VISION_LLM_MODEL || 'qwen/qwen3.8-27b',
       messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: imageDataUrl } }] }],
       temperature: 0.1,
       max_tokens: Math.max(maxTokens, 400)
     }, { headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: (st) => st < 500 });
+    let r = await call();
+    // Limite por minuto (429): a conferência de texto e o QA rodam em sequência e estouram
+    // o limite da Groq. Antes caía direto na visão de reserva (moondream2, que lê texto
+    // mal) — o QA "aprovava" sem enxergar. Espera o que a Groq pede (até 8 s) e tenta 1x.
+    if (r.status === 429) {
+      const wait = retryWaitMs(r);
+      if (wait <= 8000) {
+        await sleep(wait);
+        r = await call();
+      }
+    }
     if (r.status >= 400) {
       console.error('visão (groq) recusou', r.status, JSON.stringify(r.data || {}).slice(0, 200));
       return null;
@@ -474,4 +495,4 @@ async function diagnoseVision(src, { falEndpoints = [], groqModels = [] } = {}) 
   return out;
 }
 
-module.exports = { askVision, describeReference, checkImageQuality, checkImageText, checkImageElements, checkImageStrict, evaluateAsClient, diagnoseVision };
+module.exports = { askVision, describeReference, checkImageQuality, checkImageText, checkImageElements, checkImageStrict, evaluateAsClient, diagnoseVision, _internals: { retryWaitMs } };

@@ -1006,12 +1006,21 @@ async function generateImageFromProviders(prompt, opts = {}) {
     }
   }
 
-  // 1) Sem referência: modelos premium via fal.ai (Flux Pro v1.1 / Ideogram 4.0)
+  // 1) Sem referência: modelos premium via fal.ai (Ideogram 3 para texto, FLUX 2 Pro,
+  //    Flux Pro v1.1). Se o modelo escolhido falhar, tenta o Flux Pro v1.1 antes de cair
+  //    na Stability/Pollinations (que são bem piores).
   if (!imageUrl && FAL_KEY) {
     try {
       imageUrl = await generateImageFal(prompt, { model, width, height, aspectRatio, negativePrompt });
     } catch (e) {
-      console.error('fal.ai falhou:', e.message);
+      console.error(`fal.ai (${model || 'fluxpro'}) falhou:`, e.message);
+    }
+    if (!imageUrl && require('../imageModels').hasFalFallback(model)) {
+      try {
+        imageUrl = await generateImageFal(prompt, { width, height, aspectRatio, negativePrompt });
+      } catch (e) {
+        console.error('fal.ai (reserva fluxpro) falhou:', e.message);
+      }
     }
   }
 
