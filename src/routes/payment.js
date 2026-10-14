@@ -53,6 +53,7 @@ router.post('/create-checkout-session', authMiddleware, async (req, res) => {
     }
 
     const session = await stripe.checkout.sessions.create(sessionConfig);
+    require('../limitLog').record(user.id, 'checkout'); // painel: abriu o pagamento
     res.json({ url: session.url });
   } catch (err) {
     console.error(err);

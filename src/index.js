@@ -56,6 +56,8 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Rotas
+// registra quem recebeu "créditos acabaram" (painel do dono)
+app.use(require('./limitLog').middleware);
 app.use('/api/auth', authRoutes);
 app.use('/api/generate', generateRoutes);
 app.use('/api/credits', creditsRoutes);
@@ -180,12 +182,17 @@ app.get('/api/admin/resumo', require('./middleware').authMiddleware, async (req,
     const since = new Date(Date.now() - days * 24 * 3600 * 1000);
     const mask = (e) => String(e || '').replace(/^(.{2}).*(@.*)$/, '$1***$2');
     const admins = String(process.env.ADMIN_EMAILS || process.env.VIDEO_UNLIMITED_EMAILS || '').toLowerCase().split(/[,;\s]+/).filter(Boolean);
-    const [users, gens, pays] = await Promise.all([
-      prisma.user.findMany({ select: { id: true, email: true, plan: true, createdAt: true, creditsPurchased: true } }),
+    const [users, gens, pays, limites] = await Promise.all([
+      prisma.user.findMany({ select: { id: true, email: true, plan: true, createdAt: true, creditsPurchased: true, creditsImages: true, creditsVideos: true } }),
       prisma.generation.findMany({ where: { createdAt: { gte: since } }, select: { userId: true, type: true, status: true, createdAt: true } }),
-      prisma.payment.findMany({ select: { userId: true, amount: true, currency: true, status: true, type: true, createdAt: true } })
+      prisma.payment.findMany({ select: { userId: true, amount: true, currency: true, status: true, type: true, createdAt: true } }),
+      require('./limitLog').byUserSince(since)
     ]);
-    const byUser = new Map(users.map((u) => [u.id, { email: u.email, plan: u.plan, createdAt: u.createdAt, imagens: 0, videos: 0, falhas: 0, ultimoUso: null, pagamentos: 0, pagoCentavos: 0 }]));
+    const byUser = new Map(users.map((u) => [u.id, { email: u.email, plan: u.plan, createdAt: u.createdAt, imagens: 0, videos: 0, falhas: 0, ultimoUso: null, pagamentos: 0, pagoCentavos: 0,
+      limite: (limites.get(u.id) || {}).vezes || 0,
+      // grátis sem crédito agora = na próxima tentativa já cai no "créditos acabaram"
+      semCredito: u.plan === 'FREE' && (u.creditsImages || 0) + (u.creditsPurchased || 0) <= 0,
+      tentouPagar: (limites.get(u.id) || {}).checkout || 0 }]));
     for (const g of gens) {
       const u = byUser.get(g.userId); if (!u) continue;
       if (g.status === 'FAILED') u.falhas++; else if (g.type === 'VIDEO') u.videos++; else u.imagens++;
@@ -204,6 +211,14 @@ app.get('/api/admin/resumo', require('./middleware').authMiddleware, async (req,
       contasDeTesteIgnoradas: contasTeste,
       cadastros: { total: clientes.length, noPeriodo: clientes.filter((u) => u.createdAt >= since).length },
       usaram: { pessoas: ativos.length, imagens: ativos.reduce((a, u) => a + u.imagens, 0), videos: ativos.reduce((a, u) => a + u.videos, 0), falhas: ativos.reduce((a, u) => a + u.falhas, 0) },
+      // funil: chegou na hora de pagar? (o registro de "limite" começou a contar com este deploy)
+      limite: {
+        pessoasQueBateram: clientes.filter((u) => u.limite > 0).length,
+        vezes: clientes.reduce((a, u) => a + u.limite, 0),
+        semCreditoAgora: clientes.filter((u) => u.semCredito).length,
+        abriramPagamento: clientes.filter((u) => u.tentouPagar > 0).length,
+        abriramPagamentoSemConcluir: clientes.filter((u) => u.tentouPagar > 0 && u.pagamentos === 0).length
+      },
       compras: {
         pessoas: clientes.filter((u) => u.pagamentos > 0).length,
         pagamentos: paid.length,
@@ -214,7 +229,7 @@ app.get('/api/admin/resumo', require('./middleware').authMiddleware, async (req,
       pessoas: clientes
         .sort((a, b) => (b.ultimoUso || b.createdAt) - (a.ultimoUso || a.createdAt))
         .slice(0, 100)
-        .map((u) => ({ cliente: mask(u.email), plano: u.plan, cadastro: u.createdAt, ultimoUso: u.ultimoUso, imagens: u.imagens, videos: u.videos, falhas: u.falhas, pagamentos: u.pagamentos, pagoReais: u.pagoCentavos / 100 }))
+        .map((u) => ({ cliente: mask(u.email), plano: u.plan, cadastro: u.createdAt, ultimoUso: u.ultimoUso, imagens: u.imagens, videos: u.videos, falhas: u.falhas, limite: u.limite, semCredito: u.semCredito, abriuPagamento: u.tentouPagar, pagamentos: u.pagamentos, pagoReais: u.pagoCentavos / 100 }))
     });
   } catch (err) {
     res.status(500).json({ error: 'Erro ao montar o resumo: ' + err.message });
