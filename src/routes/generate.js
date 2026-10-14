@@ -458,7 +458,7 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
     }
 
     // Verificar créditos (plano PREMIUM é ilimitado)
-    const isUnlimitedImage = user.plan === 'PREMIUM';
+    const isUnlimitedImage = require('../videoQuota').isUnlimitedAccount(user); // PREMIUM agora tem imagens do mês (plans.js)
     const totalImageCredits = user.creditsImages + user.creditsPurchased;
     if (!isUnlimitedImage && totalImageCredits <= 0) {
       return res.status(403).json({ 
@@ -665,7 +665,7 @@ router.post('/live-image', authMiddleware, generateLimiter, async (req, res) => 
       return res.end();
     }
 
-    const isUnlimitedImage = user.plan === 'PREMIUM';
+    const isUnlimitedImage = require('../videoQuota').isUnlimitedAccount(user); // PREMIUM agora tem imagens do mês (plans.js)
     const totalImageCredits = user.creditsImages + user.creditsPurchased;
     if (!isUnlimitedImage && totalImageCredits <= 0) {
       require('../limitLog').record(user.id, req.originalUrl);
@@ -1350,7 +1350,7 @@ router.get('/video/estimate', authMiddleware, async (req, res) => {
     if (user.plan === 'PREMIUM') {
       const u = await Q.premiumUsage(prisma, user.id);
       out.premium = { limit: u.limit || null, used: u.used, left: u.limit ? u.left : null };
-      out.cost = u.left > 0 ? 0 : cost;
+      out.cost = u.left >= cost ? 0 : cost;
     }
     out.text = Q.costLine({ user, cost, usage: user.plan === 'PREMIUM' ? await Q.premiumUsage(prisma, user.id) : null }).trim();
     res.json(out);
@@ -1401,26 +1401,27 @@ router.post('/talking-ad', authMiddleware, async (req, res) => {
       send('error', { error: 'Envie a imagem do produto' });
       return res.end();
     }
-    const talkGate = await require('../videoQuota').gate(prisma, user, 1);
+    const talkCost = Math.max(1, Math.round(Number(process.env.AD_PRESENTER_CREDITS) || 40));
+    const talkGate = await require('../videoQuota').gate(prisma, user, talkCost);
     if (!talkGate.ok) {
       require('../limitLog').record(user.id, req.originalUrl);
       send('error', { error: talkGate.error || 'Créditos de vídeo esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
       return res.end();
     }
     // PREMIUM dentro do limite do mês não paga; acima do limite paga com crédito comprado
-    const isUnlimited = talkGate.free;
-
     const source = imageData || imageUrl;
     const generation = await prisma.generation.create({
-      data: { userId: user.id, type: 'VIDEO', prompt: '[anuncio-falado]', status: 'PROCESSING', cost: 1 }
+      data: { userId: user.id, type: 'VIDEO', prompt: '[anuncio-falado]', status: 'PROCESSING', cost: Math.max(1, talkGate.cost) }
     });
-
-    // Consome 1 crédito de vídeo (PREMIUM dentro do limite não consome)
-    const talkRefund = isUnlimited ? {} : (user.creditsPurchased > 0 ? { creditsPurchased: { increment: 1 } } : { creditsVideos: { increment: 1 } });
-    if (!isUnlimited && user.creditsPurchased > 0) {
-      await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
-    } else if (!isUnlimited) {
-      await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { decrement: 1 } } });
+    let talkRefund = {};
+    if (talkGate.chargePurchased) {
+      await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: talkGate.cost } } });
+      talkRefund = { creditsPurchased: { increment: talkGate.cost } };
+    } else if (!talkGate.free) {
+      const p = Math.min(user.creditsPurchased || 0, talkGate.cost);
+      const v = talkGate.cost - p;
+      await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: p }, creditsVideos: { decrement: v } } });
+      talkRefund = { creditsPurchased: { increment: p }, creditsVideos: { increment: v } };
     }
 
     let videoUrl = null;
@@ -1565,7 +1566,7 @@ function debitCredits(user, n) {
   // Desconta em blocos: primeiro comprados, depois mensais (PREMIUM não desconta).
   const steps = [];
   let rest = n;
-  if (!(user.plan === 'PREMIUM')) {
+  if (!require('../videoQuota').isUnlimitedAccount(user)) {
     if (user.creditsPurchased > 0) {
       const take = Math.min(rest, user.creditsPurchased);
       steps.push({ where: { id: user.id }, data: { creditsPurchased: { decrement: take } } });
@@ -1579,7 +1580,7 @@ function debitCredits(user, n) {
 }
 
 async function refundCredits(user, n) {
-  if (user.plan === 'PREMIUM') return;
+  if (require('../videoQuota').isUnlimitedAccount(user)) return;
   await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { increment: n } } });
 }
 
@@ -1598,7 +1599,7 @@ router.post('/campaign', authMiddleware, async (req, res) => {
     const intent = (understanding && understanding.intent) || { businessType: '', product: '', audience: '', objective: '', emotion: '', platform: '' };
 
     // 2) CRÉDITOS: a campanha gera 2 imagens (Post + Story) → 2 créditos (PREMIUM ilimitado).
-    const isUnlimited = user.plan === 'PREMIUM';
+    const isUnlimited = require('../videoQuota').isUnlimitedAccount(user);
     const total = user.creditsImages + user.creditsPurchased;
     if (!isUnlimited && total < 2) {
       return res.status(403).json({ error: 'Créditos insuficientes para a campanha (2 imagens)', code: 'NO_CREDITS', upgradeUrl: '/plans' });

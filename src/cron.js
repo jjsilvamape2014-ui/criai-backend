@@ -2,26 +2,26 @@ const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-// Reset mensal de créditos dos usuários FREE
+// Reset mensal de créditos (valores em plans.js)
 // Roda todo dia às 03:00, mas só atualiza quem está com monthlyResetDate vencido.
+//   FREE:    imagens do mês + créditos de vídeo do mês
+//   PREMIUM: imagens do mês (os vídeos são contados pelo limite mensal em videoQuota)
+// Créditos comprados (creditsPurchased) nunca são zerados.
 async function resetMonthlyCredits() {
+  const plans = require('./plans');
   const now = new Date();
-  const updated = await prisma.user.updateMany({
-    where: {
-      plan: 'FREE',
-      OR: [
-        { monthlyResetDate: { lt: now } },
-        { monthlyResetDate: null }
-      ]
-    },
-    data: {
-      creditsImages: 10,
-      creditsVideos: 2,
-      monthlyResetDate: new Date(now.getFullYear(), now.getMonth() + 1, 1)
-    }
+  const due = { OR: [{ monthlyResetDate: { lt: now } }, { monthlyResetDate: null }] };
+  const next = plans.nextMonthStart(now);
+  const free = await prisma.user.updateMany({
+    where: { plan: 'FREE', ...due },
+    data: { creditsImages: plans.FREE.images(), creditsVideos: plans.FREE.videoCredits(), monthlyResetDate: next }
   });
-  console.log(`[cron] Créditos mensais resetados para ${updated.count} usuários FREE`);
-  return updated.count;
+  const premium = await prisma.user.updateMany({
+    where: { plan: 'PREMIUM', ...due },
+    data: { creditsImages: plans.PREMIUM.images(), creditsVideos: 0, monthlyResetDate: next }
+  });
+  console.log(`[cron] Créditos mensais renovados: ${free.count} FREE, ${premium.count} PREMIUM`);
+  return free.count + premium.count;
 }
 
 function startCron() {

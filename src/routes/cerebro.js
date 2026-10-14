@@ -32,7 +32,8 @@ function setStep(id, patch) {
 // Custo por estilo, em créditos de vídeo (o comercial com apresentador usa bem mais
 // IA: ~4 imagens, 4 vozes, 2 lipsync e 2 animações). Plano PREMIUM não é cobrado.
 function adCost(style) {
-  const raw = style === 'presenter' ? process.env.AD_PRESENTER_CREDITS || 3 : process.env.AD_VIDEO_CREDITS || 1;
+  // unidade nova (1 crédito ≈ 1 imagem): anúncio animado ~15 s = 30; com apresentador (imagens + voz + boca) = 40
+  const raw = style === 'presenter' ? process.env.AD_PRESENTER_CREDITS || 40 : process.env.AD_VIDEO_CREDITS || 30;
   const n = Math.round(Number(raw));
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
@@ -350,7 +351,7 @@ async function makeLogo({ user, session, message, display, res }) {
     session.memory.pendingLogo = { message, at: Date.now() };
     return quick('Qual nome vai escrito na logo? (exatamente como deve aparecer, com acentos)', { ask: ['Qual nome vai escrito na logo?'], needInfo: true });
   }
-  if (user.plan !== 'PREMIUM' && (user.creditsImages || 0) + (user.creditsPurchased || 0) <= 0) {
+  if (!videoQuota.isUnlimitedAccount(user) && (user.creditsImages || 0) + (user.creditsPurchased || 0) <= 0) {
     return res.status(403).json({ error: 'Seus créditos de imagem acabaram. Assine o plano para criar mais.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
   }
   const color = LM.extractColor(message) || { name: 'azul', hex: '#1d4ed8' };
@@ -599,8 +600,8 @@ const chatLimiter = rateLimit({
 });
 
 async function consumeCredit(user) {
-  // Plano PREMIUM é ilimitado — não consome crédito.
-  if (user.plan === 'PREMIUM') return false;
+  // Só a conta do dono é ilimitada; o PREMIUM gasta as imagens do mês (plans.js).
+  if (videoQuota.isUnlimitedAccount(user)) return false;
   if (user.creditsPurchased > 0) {
     await prisma.user.update({
       where: { id: user.id },
@@ -616,8 +617,7 @@ async function consumeCredit(user) {
 }
 
 async function refundCredits(user) {
-  // Plano PREMIUM é ilimitado — nunca consumiu, então não reembolsa.
-  if (user.plan === 'PREMIUM') return;
+  if (videoQuota.isUnlimitedAccount(user)) return;
   await prisma.user.update({
     where: { id: user.id },
     data: { creditsPurchased: { increment: 1 } }
@@ -1488,7 +1488,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     // Checagem de crédito de IMAGEM: deve ocorrer SÓ aqui (antes de gerar/debitar),
     // e NUNCA no início, para que conversa/perguntas/coleta funcionem sem crédito.
     const totalImageCredits = user.creditsImages + user.creditsPurchased;
-    if (user.plan !== 'PREMIUM' && totalImageCredits <= 0) {
+    if (!videoQuota.isUnlimitedAccount(user) && totalImageCredits <= 0) {
       return res.status(403).json({ error: 'Créditos esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
     }
 

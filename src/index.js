@@ -45,6 +45,9 @@ app.use(
     },
   })
 );
+// O webhook do Stripe precisa do corpo CRU para conferir a assinatura. Sem isto o
+// express.json lia o corpo antes e toda confirmação via webhook falhava.
+app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 
 // Rate limiting global

@@ -49,12 +49,15 @@ test('cenas: durações inteiras, mínimo 2 s cada, soma exata, até 6 cenas', (
     assert.ok(d.reduce((a, b) => a + b, 0) <= 15);
   }
 });
-test('créditos pela duração: 5 s = 1 (igual a antes), 10 s = 2, 15 s = 3', () => {
+test('créditos pela duração: 10 a cada 5 s (1 crédito ≈ 1 imagem em custo)', () => {
   delete process.env.VIDEO_CREDITS_PER_5S;
-  assert.strictEqual(V.creditsFor(5), 1);
-  assert.strictEqual(V.creditsFor(3), 1);
-  assert.strictEqual(V.creditsFor(10), 2);
-  assert.strictEqual(V.creditsFor(15), 3);
+  assert.strictEqual(V.creditsFor(5), 10);
+  assert.strictEqual(V.creditsFor(3), 10);
+  assert.strictEqual(V.creditsFor(10), 20);
+  assert.strictEqual(V.creditsFor(15), 30);
+  process.env.VIDEO_CREDITS_PER_5S = '1';
+  assert.strictEqual(V.creditsFor(15), 3); // dá para voltar ao antigo
+  delete process.env.VIDEO_CREDITS_PER_5S;
 });
 test('corpo imagem→vídeo do Kling 3: uma cena usa prompt+duração; várias usam multi_prompt', () => {
   const m = V.DEFAULTS.i2v;
@@ -79,39 +82,39 @@ test('URL do vídeo na resposta da fal', () => {
   assert.strictEqual(V.videoUrlFrom({}), null);
 });
 
-// --- limite do PREMIUM -------------------------------------------------------
-const fakePrisma = (used) => ({ generation: { count: async () => used } });
-test('PREMIUM dentro do limite: não paga e mostra "vídeo X de Y"', async () => {
+// --- limite do PREMIUM (em créditos de vídeo) --------------------------------
+const fakePrisma = (used) => ({ generation: { aggregate: async () => ({ _sum: { cost: used } }) } });
+test('PREMIUM dentro do limite: não desconta, mas registra o custo real', async () => {
   delete process.env.PREMIUM_VIDEO_LIMIT;
-  const g = await Q.gate(fakePrisma(3), { id: 'u', plan: 'PREMIUM', creditsPurchased: 0 }, 2);
+  const g = await Q.gate(fakePrisma(0), { id: 'u', plan: 'PREMIUM', creditsPurchased: 0 }, 20);
   assert.strictEqual(g.ok, true);
   assert.strictEqual(g.free, true);
-  assert.strictEqual(g.cost, 0);
-  assert.match(g.line, /vídeo 4 de 20/);
+  assert.strictEqual(g.cost, 20); // vai para generation.cost e conta no limite
+  assert.match(g.line, /usa 20 dos 30 créditos de vídeo/);
 });
-test('PREMIUM no limite sem crédito comprado: bloqueia com mensagem', async () => {
-  const g = await Q.gate(fakePrisma(20), { id: 'u', plan: 'PREMIUM', creditsPurchased: 0 }, 1);
+test('PREMIUM sem saldo do mês e sem comprado: bloqueia com mensagem', async () => {
+  const g = await Q.gate(fakePrisma(20), { id: 'u', plan: 'PREMIUM', creditsPurchased: 0 }, 30);
   assert.strictEqual(g.ok, false);
-  assert.match(g.error, /20 vídeos do plano/);
+  assert.match(g.error, /usa 30 créditos e restam 10/);
 });
-test('PREMIUM no limite com crédito comprado: paga com o comprado', async () => {
-  const g = await Q.gate(fakePrisma(25), { id: 'u', plan: 'PREMIUM', creditsPurchased: 5 }, 2);
+test('PREMIUM sem saldo do mês com crédito comprado: paga com o comprado', async () => {
+  const g = await Q.gate(fakePrisma(30), { id: 'u', plan: 'PREMIUM', creditsPurchased: 40 }, 10);
   assert.strictEqual(g.ok, true);
   assert.strictEqual(g.chargePurchased, true);
-  assert.strictEqual(g.cost, 2);
+  assert.strictEqual(g.cost, 10);
 });
 test('PREMIUM_VIDEO_LIMIT=0 volta a ser ilimitado', async () => {
   process.env.PREMIUM_VIDEO_LIMIT = '0';
-  const g = await Q.gate(fakePrisma(999), { id: 'u', plan: 'PREMIUM' }, 3);
+  const g = await Q.gate(fakePrisma(999), { id: 'u', plan: 'PREMIUM' }, 30);
   assert.strictEqual(g.ok, true);
   assert.strictEqual(g.free, true);
   delete process.env.PREMIUM_VIDEO_LIMIT;
 });
 test('FREE: custo mostrado antes; sem crédito suficiente bloqueia', async () => {
-  const ok = await Q.gate(fakePrisma(0), { id: 'u', plan: 'FREE', creditsVideos: 2, creditsPurchased: 1 }, 2);
+  const ok = await Q.gate(fakePrisma(0), { id: 'u', plan: 'FREE', creditsVideos: 10, creditsPurchased: 5 }, 10);
   assert.strictEqual(ok.ok, true);
-  assert.match(ok.line, /usa 2 créditos de vídeo \(você tem 3\)/);
-  const no = await Q.gate(fakePrisma(0), { id: 'u', plan: 'FREE', creditsVideos: 1, creditsPurchased: 0 }, 2);
+  assert.match(ok.line, /usa 10 créditos \(você tem 15\)/);
+  const no = await Q.gate(fakePrisma(0), { id: 'u', plan: 'FREE', creditsVideos: 10, creditsPurchased: 0 }, 30);
   assert.strictEqual(no.ok, false);
 });
 
