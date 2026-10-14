@@ -8,7 +8,7 @@ const prisma = new PrismaClient();
 // Registro
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name, convite } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email e senha são obrigatórios' });
@@ -34,6 +34,16 @@ router.post('/register', async (req, res) => {
       }
     });
 
+    // Convite de cliente (ex.: LINHAFACIL): créditos de bônus que não vencem
+    let bonus = null;
+    if (convite) {
+      const r = await require('../invite').redeem(user.id, convite);
+      if (r.ok) {
+        bonus = r.credits;
+        user.creditsPurchased = (user.creditsPurchased || 0) + r.credits;
+      }
+    }
+
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       process.env.JWT_SECRET,
@@ -50,7 +60,8 @@ router.post('/register', async (req, res) => {
         creditsImages: user.creditsImages,
         creditsVideos: user.creditsVideos,
         creditsPurchased: user.creditsPurchased
-      }
+      },
+      bonus
     });
   } catch (err) {
     console.error(err);
