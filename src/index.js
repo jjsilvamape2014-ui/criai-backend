@@ -100,9 +100,12 @@ app.get('/api/diagnostics', (req, res) => {
   });
 });
 
-// Reset mensal de créditos (também agendado automaticamente pelo cron interno)
+// Reset mensal de créditos (também agendado automaticamente pelo cron interno).
+// Estava SEM proteção: qualquer pessoa podia chamar. Agora exige a ADMIN_KEY.
 app.post('/api/admin/reset-credits', async (req, res) => {
   try {
+    const adminKey = (req.body && req.body.adminKey) || req.headers['x-admin-key'];
+    if (!adminKey || adminKey !== process.env.ADMIN_KEY) return res.status(403).json({ error: 'Não autorizado' });
     const usersUpdated = await resetMonthlyCredits();
     res.json({ message: 'Créditos resetados', usersUpdated });
   } catch (err) {
@@ -128,6 +131,39 @@ app.post('/api/admin/premium', async (req, res) => {
     res.json({ message: 'Usuário promovido para PREMIUM', email });
   } catch (err) {
     res.status(500).json({ error: 'Erro ao promover usuário: ' + err.message });
+  }
+});
+
+// Admin: as conversas mais recentes do Cérebro (o que cada cliente pediu e o que o app
+// respondeu), para achar onde "pediu uma coisa e fez outra". Só para quem está logado com
+// um e-mail de ADMIN_EMAILS (ou VIDEO_UNLIMITED_EMAILS). Sem imagens/vídeos (só se havia).
+// GET /api/admin/conversas?limit=30&hours=72
+app.get('/api/admin/conversas', require('./middleware').authMiddleware, async (req, res) => {
+  try {
+    const list = String(process.env.ADMIN_EMAILS || process.env.VIDEO_UNLIMITED_EMAILS || '').toLowerCase().split(/[,;\s]+/).filter(Boolean);
+    if (!req.user || !list.includes(String(req.user.email || '').toLowerCase())) return res.status(403).json({ error: 'Não autorizado' });
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
+    const hours = Math.min(24 * 30, Math.max(1, Number(req.query.hours) || 72));
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT s.key, s.user_id, s.updated_at, s.data, u.email
+         FROM cerebro_sessions s LEFT JOIN users u ON u.id = s.user_id
+        WHERE s.updated_at > NOW() - ($1 || ' hours')::interval
+        ORDER BY s.updated_at DESC LIMIT $2`, String(hours), limit);
+    const clip = (t, n) => String(t || '').replace(/data:[^\s"']{40,}/g, '[arquivo]').slice(0, n);
+    res.json(rows.map((r) => ({
+      quando: r.updated_at,
+      // e-mail mascarado: dá para saber quem é sem expor o endereço inteiro
+      cliente: String(r.email || r.user_id).replace(/^(.{2}).*(@.*)$/, '$1***$2'),
+      marca: (r.data && r.data.memory && r.data.memory.project && r.data.memory.project.brand) || null,
+      conversa: ((r.data && r.data.history) || []).slice(-24).map((h) => ({
+        quem: h.role === 'user' ? 'cliente' : 'app',
+        texto: clip(h.message, 700),
+        imagem: !!h.imageUrl,
+        video: !!h.videoUrl
+      }))
+    })));
+  } catch (err) {
+    res.status(500).json({ error: 'Erro ao ler conversas: ' + err.message });
   }
 });
 
