@@ -599,6 +599,12 @@ const chatLimiter = rateLimit({
   message: { error: 'Aguarde um momento antes do próximo comando.' }
 });
 
+// Créditos de uma arte com muito texto (Nano Banana Pro custa ~2,5x uma imagem comum)
+function denseCost() {
+  const n = Math.round(Number(process.env.DENSE_IMAGE_CREDITS));
+  return Number.isFinite(n) && n >= 1 ? n : 2;
+}
+
 async function consumeCredit(user) {
   // Só a conta do dono é ilimitada; o PREMIUM gasta as imagens do mês (plans.js).
   if (videoQuota.isUnlimitedAccount(user)) return false;
@@ -1503,7 +1509,9 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         const c = await L.condenseAnnouncement(message, session.memory.project && session.memory.project.brand);
         if (c) {
           fullText = message;
-          session.memory.densePiece = true;
+          // arte com muito texto usa um modelo mais caro (~US$ 0,15): custa DENSE_IMAGE_CREDITS (padrão 2).
+          // Quem só tem 1 crédito ainda recebe a peça, no modelo de texto mais barato.
+          session.memory.densePiece = videoQuota.isUnlimitedAccount(user) || totalImageCredits >= denseCost();
           // formato vem SÓ deste pedido (não do anterior da conversa); sem dizer nada = post de feed 4:5
           const own = /16\s*[:/x]\s*9|horizontal|banner/i.test(fullText) ? '16:9' : /9\s*[:/x]\s*16|vertical|story|stories|reels/i.test(fullText) ? '9:16' : /quadrad|1\s*[:/x]\s*1/i.test(fullText) ? '1:1' : '4:5';
           cmd.aspect_ratio = own;
@@ -1598,17 +1606,23 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       cmd.replace_prompt = true;
     }
 
-    // 4) Registrar geração + consumir crédito
+    // 4) Registrar geração + consumir crédito (arte com muito texto: denseCost())
+    const pieceCost = session.memory.densePiece ? denseCost() : 1;
     const generation = await prisma.generation.create({
       data: {
         userId: user.id,
         type: 'IMAGE',
         prompt: finalPrompt,
         status: 'PROCESSING',
-        cost: 1
+        cost: pieceCost
       }
     });
-    await consumeCredit(user);
+    if (pieceCost === 1) await consumeCredit(user);
+    else if (!videoQuota.isUnlimitedAccount(user)) {
+      // comprados primeiro, depois os do mês (sem deixar nenhum negativo)
+      const p = Math.min(Math.max(0, user.creditsPurchased || 0), pieceCost);
+      await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: p }, creditsImages: { decrement: pieceCost - p } } });
+    }
 
     // 5) MODO AUTOMÁTICO DE LOGO — comando simples, a IA faz tudo sozinha:
     // quando há 2+ imagens e uma delas parece ser a logo (ou o usuário falou "logo"),
@@ -1807,7 +1821,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
 
     if (!imageUrl) {
       await prisma.generation.update({ where: { id: generation.id }, data: { status: 'FAILED' } });
-      await refundCredits(user);
+      for (let k = 0; k < pieceCost; k++) await refundCredits(user);
       return res.status(502).json({
         error: 'Não foi possível gerar a nova imagem agora. Tente novamente.',
         code: 'GEN_FAILED'
