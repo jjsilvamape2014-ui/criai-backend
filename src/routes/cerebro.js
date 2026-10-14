@@ -1239,6 +1239,9 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       session.memory.currentPrompt = '';
       session.memory.pieceTexts = null;
       session.memory.pieceBase = null;
+      // o ESTILO visual da peça anterior não vai para a nova (era um dos motivos de toda
+      // peça sair com a mesma cara); marca, cores e fatos continuam
+      if (session.memory.project) session.memory.project.style = null;
     }
 
     // 1) Entender o que o usuário quer (LLM se houver saldo, senão heurística)
@@ -1256,8 +1259,10 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       const up = cmd.projectUpdate;
       const proj = session.memory.project;
       if (up.brand && !require('../brandInfo').isGenericBrand(up.brand)) proj.brand = up.brand;
+      // cores novas pedidas SUBSTITUEM as antigas (antes acumulavam: a 5ª peça
+      // carregava as cores de todas as anteriores)
       if (Array.isArray(up.colors) && up.colors.length) {
-        proj.colors = [...new Set([...(proj.colors || []), ...up.colors])];
+        proj.colors = [...new Set(up.colors)].slice(0, 4);
       }
       if (up.style) proj.style = up.style;
       if (up.objective) proj.objective = up.objective;
