@@ -30,7 +30,7 @@ router.post('/create-checkout-session', authMiddleware, async (req, res) => {
         // Cria o preço recorrente automaticamente (sem depender de price manual no painel)
         lineItem.price_data = {
           currency: 'brl',
-          product_data: { name: 'Premium Mensal', description: `${plans.PREMIUM.images()} imagens + ${plans.summary().premium.videoSeconds} s de vídeo por mês` },
+          product_data: { name: 'Linha Fácil IA — Premium mensal', description: `${plans.PREMIUM.images()} imagens + ${plans.summary().premium.videoSeconds} s de vídeo por mês` },
           unit_amount: plans.PREMIUM.priceCents(),
           recurring: { interval: 'month' }
         };
@@ -45,7 +45,7 @@ router.post('/create-checkout-session', authMiddleware, async (req, res) => {
       sessionConfig.line_items = [{
         price_data: {
           currency: 'brl',
-          product_data: { name: pkg.name, description: `${pkg.credits} créditos (1 imagem = 1 crédito; vídeo = ${plans.summary().videoCreditsPer5s} a cada 5 s). Não vencem.` },
+          product_data: { name: `Linha Fácil IA — ${pkg.name}`, description: `${pkg.credits} créditos (1 imagem = 1 crédito; vídeo = ${plans.summary().videoCreditsPer5s} a cada 5 s). Não vencem.` },
           unit_amount: pkg.price
         },
         quantity: 1
