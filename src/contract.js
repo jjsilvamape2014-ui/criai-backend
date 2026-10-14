@@ -73,7 +73,7 @@ function precheck({ message, knowsBusiness, hasImage }) {
 
 // Depois do roteador: a ação da IA tem que bater com o que foi pedido.
 // Retorna { action, corrigido, motivo }.
-const ROUTER_TIPO = { video: 'video', adjust_video: 'video', animate: 'video', speak: 'video', image: 'imagem', answer: 'texto', ask: 'pergunta' };
+const ROUTER_TIPO = { video: 'video', adjust_video: 'video', animate: 'video', speak: 'video', clip: 'video', image: 'imagem', answer: 'texto', ask: 'pergunta' };
 // É um pedido de criação? ("faz", "cria", "quero"…) — comentário ("ficou bom", "obrigado") não é
 const ASK_VERB = /\b(faz|faca|fazer|fas|cria|crie|criar|gera|gere|gerar|quero|queria|preciso|precisa|manda|mande|monta|monte|produz\w*|desenvolv\w*|elabor\w*|me\s+(da|de|ve|arruma)|pode\s+(fazer|criar)|consegue\s+(fazer|criar))\b/;
 const FEEDBACK = /\b(ficou|gostei|amei|adorei|obrigad\w*|valeu|perfeito|show|top|legal demais|nao gostei|ruim|horrivel|errado|errou)\b/;

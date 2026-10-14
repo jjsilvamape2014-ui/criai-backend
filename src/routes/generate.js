@@ -1191,88 +1191,121 @@ async function generateVideoFromProviders(source, prompt, mode, opts = {}) {
   return generateVideoFal(source, prompt, mode, opts);
 }
 
-// Gera vídeo a partir de uma imagem usando fal.ai (image-to-video)
-// ATENÇÃO: a Stability AI descontinuou a API de vídeo (jul/2025); por isso usamos fal.ai.
-// Requer saldo/créditos na conta fal.ai. Modelo padrão: Kling v2.1 Standard (image-to-video) — 
-// ~US$ 0,25 por vídeo de 5s, ótimo custo-benefício para anúncios de produto.
-async function generateVideoFal(imageDataOrUrl, prompt, mode, opts) {
-  const FAL_KEY = process.env.FAL_KEY;
-  if (!FAL_KEY) throw new Error('fal.ai não configurada (necessário saldo)');
+// Gera vídeo a partir de uma imagem usando fal.ai (image-to-video).
+// Modelo padrão: Kling 3 Turbo Standard (3 a 15 s; aceita várias cenas num vídeo só —
+// opts.shots = [{ prompt, duration }]). Se o modelo novo falhar, tenta o Kling 2.1
+// antigo (descontinuado na fal, mas ainda serve de reserva enquanto responder).
+// Usa a FILA da fal (queue.fal.run): vídeos de 10–15 s passam dos 4 min do fal.run direto.
+// Modelos e esquema: src/videoModels.js.
+async function generateVideoFal(imageDataOrUrl, prompt, mode, opts = {}) {
+  if (!process.env.FAL_KEY) throw new Error('fal.ai não configurada (necessário saldo)');
+  const V = require('../videoModels');
+  const { falQueue } = require('../adVideo')._internals;
+  const finalPrompt = opts.shots ? '' : buildVideoPrompt(mode, { ...(opts || {}), prompt });
+  const duration = V.clampDuration(opts.duration || 5);
+  // cada segundo a mais é mais tempo de fila: 5 s ~ 1–3 min; 15 s com várias cenas ~ 3–8 min
+  const deadline = Math.max(300000, duration * 40000);
 
-  const finalPrompt = buildVideoPrompt(mode, { ...(opts || {}), prompt });
-
-  const res = await axios.post(
-    'https://fal.run/fal-ai/kling-video/v2.1/standard/image-to-video',
-    {
-      prompt: finalPrompt,
-      image_url: imageDataOrUrl,
-      duration: '5',
-      cfg_scale: 0.5
-    },
-    {
-      headers: {
-        Authorization: `Key ${FAL_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 240000
+  const models = [V.i2vModel(), V.legacyModel()].filter((m, i, a) => m && a.indexOf(m) === i);
+  let lastErr = null;
+  for (const model of models) {
+    // a reserva (Kling 2.1) não faz várias cenas: junta os prompts num só
+    const shots = V.isKling3(model) ? opts.shots : null;
+    const flatPrompt = finalPrompt || (opts.shots || []).map((s) => s.prompt).join(' Then: ');
+    try {
+      const out = await falQueue(model, V.i2vBody(model, { imageUrl: imageDataOrUrl, prompt: flatPrompt, duration, shots }), deadline);
+      const url = V.videoUrlFrom(out);
+      if (url) return url;
+      lastErr = new Error('Sem vídeo no retorno da fal.ai: ' + JSON.stringify(out).slice(0, 200));
+    } catch (e) {
+      lastErr = e;
+      // sem saldo / chave inválida: a reserva também vai falhar — não gasta tempo tentando
+      if (/HTTP 40[13]|exhausted balance|user is locked|top up/i.test(String(e.message))) break;
+      console.error(`vídeo ${model} falhou${model !== models[models.length - 1] ? ', tentando a reserva' : ''}:`, e.message);
     }
-  );
-
-  const video = res.data.video || res.data.data;
-  if (typeof video === 'string') return video;
-  if (video && video.url) return video.url;
-  throw new Error('Sem vídeo no retorno da fal.ai: ' + JSON.stringify(res.data).slice(0, 200));
+  }
+  throw lastErr || new Error('fal.ai não gerou o vídeo');
 }
 
-// Gerar vídeo (image-to-video via fal.ai - requer saldo)
-// A Stability descontinuou a API de vídeo em jul/2025; usamos fal.ai como provedor.
+// Texto → vídeo (sem imagem): Kling 3 Turbo Standard, 9:16 / 1:1 / 16:9, 3 a 15 s.
+async function generateTextToVideoFal(prompt, opts = {}) {
+  if (!process.env.FAL_KEY) throw new Error('fal.ai não configurada (necessário saldo)');
+  const V = require('../videoModels');
+  const { falQueue } = require('../adVideo')._internals;
+  const duration = V.clampDuration(opts.duration || 5);
+  const body = V.t2vBody({ prompt, duration, aspectRatio: opts.aspectRatio, shots: opts.shots });
+  const out = await falQueue(V.t2vModel(), body, Math.max(300000, duration * 40000));
+  const url = V.videoUrlFrom(out);
+  if (!url) throw new Error('Sem vídeo no retorno da fal.ai: ' + JSON.stringify(out).slice(0, 200));
+  return url;
+}
+
+// Gerar vídeo: imagem → vídeo, ou só texto → vídeo (sem imagem), via fal.ai.
+// Body: { imageUrl | imageData (opcional), prompt, mode, preset, duration (3–15 s),
+//         aspectRatio ("9:16" | "1:1" | "16:9", só para texto → vídeo) }
+// Custo: ceil(duração / 5) créditos de vídeo (5 s = 1). PREMIUM: limite mensal (videoQuota).
 router.post('/video', authMiddleware, async (req, res) => {
   // Não aplicar generateLimiter para vídeo (é assíncrono e lento);
-  // cada requisição bloqueia a resposta por até ~3min.
+  // cada requisição bloqueia a resposta por alguns minutos.
+  const V = require('../videoModels');
+  const Q = require('../videoQuota');
+  let generation = null;
+  let charge = null;
   try {
-    const { imageUrl, duration = 5, mode, prompt, preset } = req.body;
+    const { imageUrl, mode, prompt, preset } = req.body;
     const user = req.user;
     const imageData = req.body.imageData;
+    const source = imageData || imageUrl;
+    const duration = V.clampDuration(req.body.duration || V.parseDuration(prompt) || 5);
+    const aspectRatio = ['9:16', '1:1', '16:9'].includes(req.body.aspectRatio) ? req.body.aspectRatio : (V.parseAspect(prompt) || '9:16');
 
-    if (!imageUrl && !imageData) {
-      return res.status(400).json({ error: 'Envie uma imagem de origem (imageUrl ou imageData)' });
+    if (!source && !String(prompt || '').trim()) {
+      return res.status(400).json({ error: 'Envie uma imagem de origem ou descreva o vídeo que você quer.' });
     }
 
-    // Verificar créditos de vídeo (plano PREMIUM é ilimitado)
-    const isUnlimitedVideo = user.plan === 'PREMIUM';
-    if (!isUnlimitedVideo && user.creditsVideos <= 0 && user.creditsPurchased <= 0) {
-      return res.status(403).json({ error: 'Créditos de vídeo esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+    const gate = await Q.gate(prisma, user, V.creditsFor(duration));
+    if (!gate.ok) {
+      return res.status(403).json({ error: gate.error || 'Créditos de vídeo esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
     }
 
-    const generation = await prisma.generation.create({
+    generation = await prisma.generation.create({
       data: {
         userId: user.id,
         type: 'VIDEO',
-        prompt: `[video${preset ? `:${preset}` : ''}]`,
+        prompt: `[video${preset ? `:${preset}` : ''}${source ? '' : ':texto'} ${duration}s]`,
         status: 'PROCESSING',
-        cost: 1
+        cost: Math.max(1, gate.cost)
       }
     });
 
-    // Consumir crédito de vídeo (plano PREMIUM não consome)
-    if (!isUnlimitedVideo && user.creditsPurchased > 0) {
-      await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
-    } else if (!isUnlimitedVideo) {
-      await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { decrement: 1 } } });
+    // Consumir créditos: comprados primeiro, depois os do mês (PREMIUM dentro do limite não paga)
+    if (gate.chargePurchased) {
+      await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: gate.cost } } });
+      charge = { p: gate.cost, v: 0 };
+    } else if (!gate.free) {
+      const p = Math.min(user.creditsPurchased || 0, gate.cost);
+      const v = gate.cost - p;
+      await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: p }, creditsVideos: { decrement: v } } });
+      charge = { p, v };
     }
 
-    const source = imageData || imageUrl;
-    // O movimento do vídeo vem do preset de anúncio (ou do prompt/campo livre do usuário)
-    const motionPrompt = buildVideoPrompt(mode, req.body);
-    const videoDataUrl = await generateVideoFromProviders(source, motionPrompt, mode, {
-      productName: req.body.productName,
-      productDesc: req.body.productDesc,
-      preset
-    });
+    let videoUrl;
+    if (source) {
+      // O movimento do vídeo vem do preset de anúncio (ou do prompt/campo livre do usuário)
+      const motionPrompt = buildVideoPrompt(mode, req.body);
+      videoUrl = await generateVideoFromProviders(source, motionPrompt, mode, {
+        productName: req.body.productName,
+        productDesc: req.body.productDesc,
+        preset,
+        duration
+      });
+    } else {
+      videoUrl = await generateTextToVideoFal(String(prompt).trim(), { duration, aspectRatio });
+    }
 
     await prisma.generation.update({
       where: { id: generation.id },
-      data: { status: 'COMPLETED', imageUrl: videoDataUrl }
+      data: { status: 'COMPLETED', imageUrl: videoUrl }
     });
 
     const updatedUser = await prisma.user.findUnique({
@@ -1280,16 +1313,39 @@ router.post('/video', authMiddleware, async (req, res) => {
       select: { creditsImages: true, creditsVideos: true, creditsPurchased: true }
     });
 
-    res.json({ success: true, generationId: generation.id, videoUrl: videoDataUrl, credits: updatedUser });
+    res.json({ success: true, generationId: generation.id, videoUrl, duration, aspectRatio: source ? null : aspectRatio, credits: updatedUser });
   } catch (err) {
     console.error('Erro na geração de vídeo:', err.message);
-    // Devolver crédito em caso de falha
-    if (req.user && (req.user.creditsVideos > 0 || req.user.creditsPurchased > 0)) {
-      try {
-        await prisma.user.update({ where: { id: req.user.id }, data: { creditsVideos: { increment: 1 } } });
-      } catch (e) {}
+    // Devolve exatamente o que foi descontado e marca como falho (não conta no limite do mês)
+    try {
+      if (charge && (charge.p || charge.v)) {
+        await prisma.user.update({ where: { id: req.user.id }, data: { creditsPurchased: { increment: charge.p }, creditsVideos: { increment: charge.v } } });
+      }
+      if (generation) await prisma.generation.update({ where: { id: generation.id }, data: { status: 'FAILED' } });
+    } catch (e) {}
+    res.status(500).json({ error: 'Erro ao gerar vídeo. Seu crédito foi devolvido — tente novamente.', details: err.message });
+  }
+});
+
+// Custo ANTES de gerar: quantos créditos o vídeo vai usar e quanto o cliente tem.
+// GET /api/generate/video/estimate?duration=10  →  { cost, duration, have, premium: {limit,used,left} }
+router.get('/video/estimate', authMiddleware, async (req, res) => {
+  try {
+    const V = require('../videoModels');
+    const Q = require('../videoQuota');
+    const user = req.user;
+    const duration = V.clampDuration(req.query.duration || 5);
+    const cost = V.creditsFor(duration);
+    const out = { duration, cost, have: (user.creditsVideos || 0) + (user.creditsPurchased || 0), premium: null };
+    if (user.plan === 'PREMIUM') {
+      const u = await Q.premiumUsage(prisma, user.id);
+      out.premium = { limit: u.limit || null, used: u.used, left: u.limit ? u.left : null };
+      out.cost = u.left > 0 ? 0 : cost;
     }
-    res.status(500).json({ error: 'Erro ao gerar vídeo. Tente novamente.', details: err.message });
+    out.text = Q.costLine({ user, cost, usage: user.plan === 'PREMIUM' ? await Q.premiumUsage(prisma, user.id) : null }).trim();
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: 'Não consegui calcular o custo agora.' });
   }
 });
 
@@ -1335,19 +1391,21 @@ router.post('/talking-ad', authMiddleware, async (req, res) => {
       send('error', { error: 'Envie a imagem do produto' });
       return res.end();
     }
-    const isUnlimited = user.plan === 'PREMIUM';
-    const total = user.creditsVideos + user.creditsPurchased;
-    if (!isUnlimited && total <= 0) {
-      send('error', { error: 'Créditos de vídeo esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+    const talkGate = await require('../videoQuota').gate(prisma, user, 1);
+    if (!talkGate.ok) {
+      send('error', { error: talkGate.error || 'Créditos de vídeo esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
       return res.end();
     }
+    // PREMIUM dentro do limite do mês não paga; acima do limite paga com crédito comprado
+    const isUnlimited = talkGate.free;
 
     const source = imageData || imageUrl;
     const generation = await prisma.generation.create({
       data: { userId: user.id, type: 'VIDEO', prompt: '[anuncio-falado]', status: 'PROCESSING', cost: 1 }
     });
 
-    // Consome 1 crédito de vídeo (PREMIUM não consome)
+    // Consome 1 crédito de vídeo (PREMIUM dentro do limite não consome)
+    const talkRefund = isUnlimited ? {} : (user.creditsPurchased > 0 ? { creditsPurchased: { increment: 1 } } : { creditsVideos: { increment: 1 } });
     if (!isUnlimited && user.creditsPurchased > 0) {
       await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
     } else if (!isUnlimited) {
@@ -1394,9 +1452,9 @@ router.post('/talking-ad', authMiddleware, async (req, res) => {
       await prisma.generation.update({ where: { id: generation.id }, data: { status: 'COMPLETED', imageUrl: videoUrl } });
     } catch (innerErr) {
       console.error('anúncio falado — etapa falhou:', innerErr.message);
-      // Devolve o crédito (a geração não foi concluída)
+      // Devolve o crédito que foi descontado (PREMIUM dentro do limite não tinha pago nada)
       try {
-        await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { increment: 1 } } });
+        if (Object.keys(talkRefund).length) await prisma.user.update({ where: { id: user.id }, data: talkRefund });
         await prisma.generation.update({ where: { id: generation.id }, data: { status: 'FAILED' } });
       } catch (e2) {}
       throw innerErr;
@@ -1575,6 +1633,7 @@ router.post('/campaign', authMiddleware, async (req, res) => {
 router.optimizePrompt = optimizePrompt;
 router.generateImageFromProviders = generateImageFromProviders;
 router.generateVideoFal = generateVideoFal;
+router.generateTextToVideoFal = generateTextToVideoFal;
 router.generateVideoFromProviders = generateVideoFromProviders;
 router.compressReferenceImage = compressReferenceImage;
 router.generateImageMystic = generateImageMystic;
