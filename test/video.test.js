@@ -189,3 +189,24 @@ test('apresentador: fala ausente, igual ao letreiro ou em maiúsculas → fala p
   const ok = 'Instalamos no mesmo dia, sem bagunça na sua casa.';
   assert.strictEqual(pickVoiceLine({ voice: ok, caption: 'INSTALAÇÃO RÁPIDA' }, fb), ok);
 });
+
+// --- anúncio segue o pedido (casos reais das conversas) -------------------------
+test('estilo do anúncio: cenas/roteiro → filmado; vinheta/logo → motion', () => {
+  delete process.env.AD_DEFAULT_STYLE;
+  const A = require('../src/adVideo');
+  assert.strictEqual(A.pickStyle('VERSÃO 15 SEGUNDOS\nCena 1 (0–3s) – Cliente saindo satisfeito do estabelecimento.'), 'photo');
+  assert.strictEqual(A.pickStyle('Faz um anuncio de promoção de vendas de lanche'), 'photo');
+  assert.strictEqual(A.pickStyle('faz uma vinheta animada da minha logo'), 'motion');
+  assert.strictEqual(A.pickStyle('anima a minha marca para abertura do canal'), 'motion');
+  assert.strictEqual(A.pickStyle('faz com apresentadora mostrando o produto'), 'presenter');
+  process.env.AD_DEFAULT_STYLE = 'motion';
+  assert.strictEqual(A.pickStyle('faz um anúncio da JN'), 'motion');
+  delete process.env.AD_DEFAULT_STYLE;
+});
+test('texto de anúncio colado não vira "personagem falando"', () => {
+  const C = require('../src/contract');
+  const colado = '“Sua loja merece ser bem avaliada! Transforme cada cliente satisfeito em uma nova avaliação no Google. Com a plaquinha NFC + QR Code, seus clientes deixam opiniões em segundos — é rápido, prático e seguro! Apenas aproxime o celular e diga adeus à falta de avaliações.”';
+  assert.strictEqual(C.detectSpeech(colado, true), null);
+  assert.ok(C.detectSpeech('faz o mascote falando: bom dia, eu sou o Delta', true));
+  assert.ok(C.detectSpeech('cria um video de apresentação, falando bom dia eu sou o delta', true));
+});
