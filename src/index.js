@@ -193,10 +193,15 @@ app.get('/api/admin/resumo', require('./middleware').authMiddleware, async (req,
     }
     const paid = pays.filter((p) => p.status === 'COMPLETED');
     for (const p of paid) { const u = byUser.get(p.userId); if (u) { u.pagamentos++; u.pagoCentavos += p.amount || 0; } }
-    const clientes = [...byUser.values()].filter((u) => !admins.includes(String(u.email).toLowerCase()));
+    // contas criadas pelos scripts de teste (…@example.com) não são clientes
+    const isTest = (e) => /@(example\.(com|org|net)|test\.com|teste\.com)$/i.test(String(e || ''));
+    const todos = [...byUser.values()];
+    const contasTeste = todos.filter((u) => isTest(u.email)).length;
+    const clientes = todos.filter((u) => !admins.includes(String(u.email).toLowerCase()) && !isTest(u.email));
     const ativos = clientes.filter((u) => u.ultimoUso);
     res.json({
       periodoDias: days,
+      contasDeTesteIgnoradas: contasTeste,
       cadastros: { total: clientes.length, noPeriodo: clientes.filter((u) => u.createdAt >= since).length },
       usaram: { pessoas: ativos.length, imagens: ativos.reduce((a, u) => a + u.imagens, 0), videos: ativos.reduce((a, u) => a + u.videos, 0), falhas: ativos.reduce((a, u) => a + u.falhas, 0) },
       compras: {
