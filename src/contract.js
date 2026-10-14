@@ -193,8 +193,13 @@ function formatText(w) {
 }
 
 // "…falando bom dia, eu sou o Delta" com imagem → { fala, feminina } ou null
+// Só vale para pedido CURTO que diz QUEM fala (ele, ela, o mascote, o personagem...).
+// Um texto de anúncio colado tinha "diz"/"fala" no meio e virava "personagem falando"
+// o texto inteiro por 28 segundos.
+const SPEAKER = /\b(ele|ela|mascote|personagem|boneco|boneca|bichinho|gato|gata|cachorro|cachorra|menino|menina|pessoa|mo[çc]a|mo[çc]o|homem|mulher|crian[çc]a|avatar|eu sou)\b/i;
 function detectSpeech(message, hasImage) {
   if (!hasImage || /(an[úu]ncio|promo[çc][ãa]o|vender|venda|pre[çc]o|r\$)/i.test(message)) return null;
+  if (String(message || '').length > 220 || !SPEAKER.test(message)) return null;
   const m = String(message || '').match(/\b(falando|dizendo|fala|falar|diga|dizer|diz)\b\s*[:,"“']?\s*(.{3,})$/i);
   if (!m || /^(sobre|do|da|de|com|que)\b/i.test(m[2])) return null;
   let fala = m[2].replace(/["”']+$/, '').trim();

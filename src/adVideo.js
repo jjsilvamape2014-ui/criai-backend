@@ -105,11 +105,12 @@ async function planAd(request, project, refCaptions) {
   const sys = [
     'Você é diretor de criação de anúncios em vídeo curtos (Reels/Status) no Brasil.',
     'Crie um anúncio de ~15 segundos a partir do pedido do cliente.',
+    'SE O CLIENTE MANDOU UM ROTEIRO OU UM TEXTO PRÓPRIO (cenas, falas, "Tela:", frases entre aspas): siga o roteiro dele. Use as falas dele na narração (pode encurtar para caber em 15 s, sem mudar o sentido) e as cenas dele, na mesma ordem. Não invente outro roteiro nem outra marca.',
     'Responda SOMENTE um JSON válido neste formato:',
     '{"narration":"...","scenes":[{"visual":"...","caption":"..."}]}',
     'Regras:',
     '- narration: texto falado em português do Brasil, 30 a 42 palavras, tom animado e natural, gancho na 1ª frase, termina com chamada para ação. Sem emojis. Escreva números e preços por extenso quando ajudar a leitura (ex: "vinte e nove e noventa").',
-    '- scenes: exatamente 3 cenas, na ordem da narração.',
+    '- scenes: de 3 a 5 cenas (as do roteiro do cliente, se houver), na ordem da narração. Cada cena mostra o que a narração diz naquele momento.',
     '- visual: descrição em INGLÊS de uma FOTO publicitária (assunto, enquadramento, luz, cenário). PROIBIDO pedir texto, letras, palavras, placas, logos escritos ou legendas na imagem.',
     '- caption: legenda curta em português que aparece na tela (máx. 6 palavras). A última cena traz a chamada para ação (ex: telefone, "Peça já").',
     '- Use SOMENTE fatos dados pelo cliente (preço, telefone, endereço). Não invente preço nem telefone.'
@@ -131,7 +132,7 @@ async function planAd(request, project, refCaptions) {
     if (s >= 0 && e > s) {
       const plan = JSON.parse(cleaned.slice(s, e + 1));
       if (plan && plan.narration && Array.isArray(plan.scenes) && plan.scenes.length) {
-        plan.scenes = plan.scenes.slice(0, 4).map((sc) => ({
+        plan.scenes = plan.scenes.slice(0, 5).map((sc) => ({
           visual: String(sc.visual || '').slice(0, 600),
           caption: String(sc.caption || '').slice(0, 60)
         }));
@@ -546,14 +547,28 @@ async function buildAdVideo({ request, project, productImage, refCaptions, deps,
 // ---------------------------------------------------------------------------
 // Padrão: MOTION GRAPHICS (texto sempre certo, logo fiel, barato).
 // "com fotos", "realista", "cenas reais" → pipeline de fotos por IA (acima).
-// AD_DEFAULT_STYLE=photo faz o anúncio "filmado" (Kling 3, tomada única) ser o padrão;
-// sem a variável, o padrão continua o motion graphics (mais barato).
+// Qual anúncio fazer. Nas conversas reais, quase todo pedido virava "motion graphics"
+// (cards e ícones, sempre com a mesma cara), até quando o cliente descrevia as cenas
+// ("Cena 1 – cliente saindo satisfeito da loja"). Agora:
+//   • apresentador pedido          → presenter
+//   • pede vinheta/logo/motion     → motion (cards animados)
+//   • descreve cenas/pessoas/lugares, mandou roteiro, ou é produto/comida/serviço → photo
+//     (filmado com o Kling 3 numa tomada só)
+// AD_DEFAULT_STYLE=motion volta o padrão antigo para pedidos sem pista nenhuma.
+const MOTION_ASK = /(motion|anima[çc][ãa]o gr[áa]fica|desenho|cartoon|vinheta|abertura|estilo (moderno|impacto|elegante|tecnol[óo]gico)|apresenta[çc][ãa]o da (marca|logo)|(anima|apresent)\w* (a |minha )?(logo|marca))/i;
+const PHOTO_ASK = /(com fotos?|fotos? reais|realista|cenas? reais|cinematogr|filmad|imagens reais)/i;
+function describesScenes(message) {
+  const m = String(message || '');
+  if (/\bcena\s*\d|\bcenas?\s*[:(–-]|\btela\s*:|\bnarra[çc][ãa]o\s*:|\broteiro\b/i.test(m)) return true;
+  return /\b(cliente|pessoa|mulher|homem|crian[çc]a|fam[íi]lia|casal|atendente|t[ée]cnico|loja|estabelecimento|restaurante|cozinha|rua|praia|escrit[óo]rio|casa|c[âa]mera|close|mostrando|segurando|entrando|saindo|comendo|usando)\b/i.test(m);
+}
 function pickStyle(message) {
   if (require('./presenterAd').isPresenterRequest(message)) return 'presenter';
   const m = String(message || '');
-  if (/(com fotos?|fotos? reais|realista|cenas? reais|cinematogr|filmad|imagens reais)/i.test(m)) return 'photo';
-  if (/(motion|anima[çc][ãa]o gr[áa]fica|desenho|cartoon|vinheta|estilo (moderno|impacto|elegante|tecnol[óo]gico))/i.test(m)) return 'motion';
-  return process.env.AD_DEFAULT_STYLE === 'photo' ? 'photo' : 'motion';
+  if (PHOTO_ASK.test(m)) return 'photo';
+  if (MOTION_ASK.test(m)) return 'motion';
+  if (describesScenes(m)) return 'photo';
+  return process.env.AD_DEFAULT_STYLE === 'motion' ? 'motion' : 'photo';
 }
 
 // Das imagens anexadas, descobre qual é a LOGO e qual é o PRODUTO.
@@ -685,6 +700,7 @@ module.exports = {
   buildAd,
   captionIsLogo,
   pickStyle,
+  describesScenes,
   chooseAssets,
   isAdVideoRequest,
   needsAdBriefing,

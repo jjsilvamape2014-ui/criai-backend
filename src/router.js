@@ -27,6 +27,8 @@ const SYSTEM = [
   '- speak: quer que o PERSONAGEM/MASCOTE da imagem FALE uma frase (ex.: "cria um vídeo dele falando bom dia, eu sou o Delta", "faz o mascote dizer: aproveite a promoção"). Não é anúncio: a fala é a do cliente.',
   'speech (só para speak): a fala EXATA pedida, só com pontuação e maiúsculas corrigidas (ex.: "Bom dia! Eu sou o Delta."). gender: male ou female, pelo personagem ("o Delta" → male).',
   '- Imagem de MASCOTE/personagem com o nome da empresa é o mascote DA EMPRESA, não um brinquedo à venda. Nunca invente que é produto infantil.',
+  '- MENSAGEM QUE É SÓ UM DADO (endereço, telefone, preço, horário, Instagram), sem pedido: NUNCA é animate nem speak. Se já existe um vídeo recente, é adjust_video (colocar o dado no vídeo); senão é answer, confirmando que anotou e perguntando onde usar.',
+  '- speak SÓ quando o cliente pede explicitamente que o personagem/pessoa DA IMAGEM fale ("faz ele falar", "ela dizendo", "o mascote fala"). Um texto de anúncio colado (mesmo longo) é video (anúncio), não speak.',
   '- adjust_video: já existe um vídeo recente e a mensagem pede mudar algo NELE (falar o nome, trocar cor, voz, telefone, texto, duração, formato).',
   '- image: quer criar ou editar uma IMAGEM (post, banner, flyer, arte, logo nova, trocar fundo, remover algo da foto).',
   '- answer: é pergunta, dúvida, comentário ou reclamação ("você não consegue ler a imagem?", "ficou bom", "como baixo?"). NUNCA transforme pergunta em edição.',
