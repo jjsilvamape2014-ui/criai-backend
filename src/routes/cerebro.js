@@ -1504,6 +1504,9 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         if (c) {
           fullText = message;
           session.memory.densePiece = true;
+          // formato vem SÓ deste pedido (não do anterior da conversa); sem dizer nada = post de feed 4:5
+          const own = /16\s*[:/x]\s*9|horizontal|banner/i.test(fullText) ? '16:9' : /9\s*[:/x]\s*16|vertical|story|stories|reels/i.test(fullText) ? '9:16' : /quadrad|1\s*[:/x]\s*1/i.test(fullText) ? '1:1' : '4:5';
+          cmd.aspect_ratio = own;
           message = c.request;
           cmd.new_prompt = c.request;
         }
