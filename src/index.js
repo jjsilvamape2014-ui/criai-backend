@@ -167,6 +167,55 @@ app.get('/api/admin/conversas', require('./middleware').authMiddleware, async (r
   }
 });
 
+// Admin: quem usou e quem comprou. Mesma regra de acesso de /api/admin/conversas.
+// GET /api/admin/resumo?days=30
+function isAdminUser(user) {
+  const list = String(process.env.ADMIN_EMAILS || process.env.VIDEO_UNLIMITED_EMAILS || '').toLowerCase().split(/[,;\s]+/).filter(Boolean);
+  return !!(user && list.includes(String(user.email || '').toLowerCase()));
+}
+app.get('/api/admin/resumo', require('./middleware').authMiddleware, async (req, res) => {
+  try {
+    if (!isAdminUser(req.user)) return res.status(403).json({ error: 'Não autorizado' });
+    const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+    const mask = (e) => String(e || '').replace(/^(.{2}).*(@.*)$/, '$1***$2');
+    const admins = String(process.env.ADMIN_EMAILS || process.env.VIDEO_UNLIMITED_EMAILS || '').toLowerCase().split(/[,;\s]+/).filter(Boolean);
+    const [users, gens, pays] = await Promise.all([
+      prisma.user.findMany({ select: { id: true, email: true, plan: true, createdAt: true, creditsPurchased: true } }),
+      prisma.generation.findMany({ where: { createdAt: { gte: since } }, select: { userId: true, type: true, status: true, createdAt: true } }),
+      prisma.payment.findMany({ select: { userId: true, amount: true, currency: true, status: true, type: true, createdAt: true } })
+    ]);
+    const byUser = new Map(users.map((u) => [u.id, { email: u.email, plan: u.plan, createdAt: u.createdAt, imagens: 0, videos: 0, falhas: 0, ultimoUso: null, pagamentos: 0, pagoCentavos: 0 }]));
+    for (const g of gens) {
+      const u = byUser.get(g.userId); if (!u) continue;
+      if (g.status === 'FAILED') u.falhas++; else if (g.type === 'VIDEO') u.videos++; else u.imagens++;
+      if (!u.ultimoUso || g.createdAt > u.ultimoUso) u.ultimoUso = g.createdAt;
+    }
+    const paid = pays.filter((p) => p.status === 'COMPLETED');
+    for (const p of paid) { const u = byUser.get(p.userId); if (u) { u.pagamentos++; u.pagoCentavos += p.amount || 0; } }
+    const clientes = [...byUser.values()].filter((u) => !admins.includes(String(u.email).toLowerCase()));
+    const ativos = clientes.filter((u) => u.ultimoUso);
+    res.json({
+      periodoDias: days,
+      cadastros: { total: clientes.length, noPeriodo: clientes.filter((u) => u.createdAt >= since).length },
+      usaram: { pessoas: ativos.length, imagens: ativos.reduce((a, u) => a + u.imagens, 0), videos: ativos.reduce((a, u) => a + u.videos, 0), falhas: ativos.reduce((a, u) => a + u.falhas, 0) },
+      compras: {
+        pessoas: clientes.filter((u) => u.pagamentos > 0).length,
+        pagamentos: paid.length,
+        totalReais: paid.reduce((a, p) => a + (p.amount || 0), 0) / 100,
+        assinantesPremium: clientes.filter((u) => u.plan === 'PREMIUM').length,
+        pendentesOuFalhos: pays.filter((p) => p.status !== 'COMPLETED').length
+      },
+      pessoas: clientes
+        .sort((a, b) => (b.ultimoUso || b.createdAt) - (a.ultimoUso || a.createdAt))
+        .slice(0, 100)
+        .map((u) => ({ cliente: mask(u.email), plano: u.plan, cadastro: u.createdAt, ultimoUso: u.ultimoUso, imagens: u.imagens, videos: u.videos, falhas: u.falhas, pagamentos: u.pagamentos, pagoReais: u.pagoCentavos / 100 }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Erro ao montar o resumo: ' + err.message });
+  }
+});
+
 app.listen(PORT, () => {
   require('./sessionStore').warmup().catch(() => {});
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
