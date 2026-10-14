@@ -1742,11 +1742,18 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
             strength: 0.5
           });
         } else {
+          // Peça do zero: texto impresso → Ideogram 3; sem texto → FLUX 2 Pro (tamanho exato,
+          // sem recorte). Com imagem anexada, segue a edição de sempre (model undefined).
+          let needsText = false;
+          try {
+            needsText = require('../textCheck').pieceTexts(extractTextTokens(message), message, session.memory.project && session.memory.project.brand).length > 0;
+          } catch (e) {}
           imageUrl = await generateRoutes.generateImageFromProviders(editPrompt, {
             width,
             height,
             referenceImage: safeRef,
-            strength: genStrength
+            strength: genStrength,
+            model: require('../imageModels').pickImageModel({ hasReference: !!safeRef, needsText })
           });
         }
 
@@ -1827,7 +1834,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
           const list = mustText.map((t) => `"${t}"`).join(', ');
           const retry = exact ? null : await generateRoutes.generateImageFromProviders(
             `${finalPrompt}\nThe image MUST contain exactly these printed texts, spelled letter by letter with correct accents: ${list}. No other words.`,
-            { width, height }).catch(() => null);
+            { width, height, model: require('../imageModels').pickImageModel({ needsText: true }) }).catch(() => null);
           const r2 = retry && !exact ? await TC.verify(retry, mustText) : null;
           if (retry && r2 && r2.ok) {
             imageUrl = retry;
@@ -1835,7 +1842,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
             // imagem SEM texto (até 2 tentativas, conferidas pela visão)
             let clean = null;
             for (let k = 0; k < 2 && !clean; k++) {
-              const c = await generateRoutes.generateImageFromProviders(TC.textFreePrompt(finalPrompt), { width, height }).catch(() => null);
+              const c = await generateRoutes.generateImageFromProviders(TC.textFreePrompt(finalPrompt), { width, height, model: require('../imageModels').pickImageModel({ needsText: false }) }).catch(() => null);
               if (!c) continue;
               const seen = await TC.transcribe(c).catch(() => null);
               if (seen === null || !seen.replace(/[^\p{L}\d]/gu, '').length) clean = c;
