@@ -90,8 +90,11 @@ app.get('/api/diagnostics', (req, res) => {
     llm: {
       configured: has('LLM_API_KEY'),
       provider: llmKey.startsWith('gsk_') ? 'groq' : llmKey.startsWith('sk-') ? 'openai' : llmKey ? 'gemini' : null,
-      model: process.env.LLM_MODEL || '(padrão do provider)'
+      model: process.env.LLM_MODEL || '(padrão do provider)',
+      // quantas vezes o roteador entendeu / falhou desde que o servidor subiu
+      router: require('./router').stats
     },
+    video: require('./videoModels').describe(),
     vision: { enabled: process.env.VISION_ENABLED !== 'false' && has('FAL_KEY') },
     region: process.env.RENDER_REGION || process.env.RAILWAY_REGION || null
   });

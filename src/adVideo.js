@@ -224,6 +224,11 @@ async function uploadToFal(buffer, mime, fileName) {
 // Arquivos / ffmpeg
 // ---------------------------------------------------------------------------
 async function saveMedia(src, dest) {
+  // arquivo já baixado/cortado aqui (pedaços da tomada única)
+  if (typeof src === 'string' && path.isAbsolute(src) && fs.existsSync(src)) {
+    if (src !== dest) fs.copyFileSync(src, dest);
+    return dest;
+  }
   if (typeof src === 'string' && src.startsWith('data:')) {
     fs.writeFileSync(dest, Buffer.from(src.split(',')[1] || '', 'base64'));
     return dest;
@@ -291,6 +296,13 @@ function accentFromProject(project) {
     if (hit) return map[hit];
   }
   return '#3B1E8C';
+}
+
+// Recorta [start, start+duration) de um vídeo (reencoda: corte preciso no quadro, sem áudio)
+async function cutSegment(input, start, duration, outPath) {
+  await run(FFMPEG, ['-y', '-ss', Number(start).toFixed(3), '-i', input, '-t', Number(duration).toFixed(3),
+    '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', outPath], { maxBuffer: 1024 * 1024 * 64 });
+  return outPath;
 }
 
 // Clipe de uma cena, com a duração exata que a narração pede.
@@ -385,7 +397,12 @@ async function buildAdVideo({ request, project, productImage, refCaptions, deps,
       project && project.style ? `style: ${project.style}` : ''
     ].filter(Boolean).join(', ');
     const NO_TEXT = 'Absolutely no text, no letters, no words, no captions, no signs, no watermark, no logo text.';
-    const imagesP = scenes.map((sc, i) => {
+    const V = require('./videoModels');
+    // Kling 3: o anúncio inteiro é filmado numa geração só (várias cenas, mesmo produto do
+    // começo ao fim). Só a 1ª cena precisa de imagem; as outras só são desenhadas se a
+    // tomada única falhar e for preciso voltar ao modo antigo (uma animação por cena).
+    const multiShot = sceneMode === 'kling' && process.env.AD_MULTISHOT !== 'false' && scenes.length > 1 && V.isKling3(V.i2vModel());
+    const genScene = (sc, i) => {
       const prompt = [
         ref ? 'Professional advertising photo featuring the EXACT product from the attached image (same shape, colors, label and details).' : 'Professional advertising photo.',
         sc.visual,
@@ -399,17 +416,56 @@ async function buildAdVideo({ request, project, productImage, refCaptions, deps,
         height: fmt.gh,
         ...(ref ? { referenceImage: ref, strength: 0.55 } : {})
       }).catch((e) => { console.error(`adVideo: imagem da cena ${i + 1} falhou:`, e.message); return null; });
-    });
-    const images = await Promise.all(imagesP);
-    if (images.every((u) => !u)) throw new Error('nenhuma cena foi gerada');
-    // se uma cena falhou, reaproveita a anterior/seguinte em vez de derrubar tudo
-    for (let i = 0; i < images.length; i++) {
-      if (!images[i]) images[i] = images[i - 1] || images.find(Boolean);
-    }
+    };
+    const fillImages = async (images) => {
+      const missing = await Promise.all(images.map((u, i) => (u ? u : genScene(scenes[i], i))));
+      if (missing.every((u) => !u)) throw new Error('nenhuma cena foi gerada');
+      // se uma cena falhou, reaproveita a anterior/seguinte em vez de derrubar tudo
+      for (let i = 0; i < missing.length; i++) {
+        if (!missing[i]) missing[i] = missing[i - 1] || missing.find(Boolean);
+      }
+      return missing;
+    };
+    let images = multiShot
+      ? [await genScene(scenes[0], 0), ...scenes.slice(1).map(() => null)]
+      : await fillImages(scenes.map(() => null));
+    if (multiShot && !images[0]) images = await fillImages(images);
 
-    // 4) Movimento (Kling) — em paralelo; cena que falhar vira Ken Burns
+    // 4) Movimento (Kling)
     let motion = images.map(() => null);
-    if (sceneMode === 'kling') {
+    let shotLengths = null;
+    if (multiShot && images[0]) {
+      try {
+        // a narração define a duração do vídeo (até 15 s); sem voz, o cliente pode pedir ("de 10 segundos")
+        const voiceEarly = await narrationP;
+        const audioDur = voiceEarly ? await mediaDuration(voiceEarly) : 0;
+        const target = V.parseDuration(request) || Math.ceil(audioDur ? audioDur + 0.8 : scenes.length * 4);
+        shotLengths = V.splitDurations(target, scenes.length);
+        status(`Filmando o anúncio em uma tomada com ${scenes.length} cenas (2 a 6 minutos)…`);
+        const shots = scenes.map((sc, i) => ({
+          prompt: `${i === 0 ? 'Opening shot' : `Shot ${i + 1}`}: ${sc.visual}. ${ref ? 'The exact same product as in the first frame (same shape, colors and label). ' : ''}Smooth cinematic commercial camera movement, premium lighting, consistent look across all shots. No text, no captions, no logos.`,
+          duration: shotLengths[i]
+        }));
+        const url = await deps.generateVideoFromProviders(images[0], '', 'custom', { shots, duration: shotLengths.reduce((a, b) => a + b, 0) });
+        const full = path.join(tmp, 'tomada.mp4');
+        await saveMedia(url, full);
+        // corta a tomada única nas cenas: cada pedaço recebe a legenda da sua cena
+        let t = 0;
+        for (let i = 0; i < scenes.length; i++) {
+          const seg = path.join(tmp, `tomada${i}.mp4`);
+          await cutSegment(full, t, shotLengths[i], seg);
+          motion[i] = seg;
+          t += shotLengths[i];
+        }
+      } catch (e) {
+        console.error('adVideo: tomada única falhou, animando cena por cena:', e.message);
+        motion = images.map(() => null);
+        shotLengths = null;
+        images = await fillImages(images);
+      }
+    }
+    if (sceneMode === 'kling' && motion.every((m) => !m)) {
+      // modo antigo: cada cena animada separadamente, em paralelo; cena que falhar vira Ken Burns
       status('Dando movimento às cenas (pode levar 2–3 minutos)…');
       motion = await Promise.all(images.map((img, i) =>
         deps.generateVideoFromProviders(
@@ -463,6 +519,7 @@ async function buildAdVideo({ request, project, productImage, refCaptions, deps,
       scenes,
       format: fmt.label,
       animated: motion.filter(Boolean).length,
+      oneTake: !!shotLengths,
       voice: withVoice ? voice : null
     };
   } finally {
@@ -475,9 +532,14 @@ async function buildAdVideo({ request, project, productImage, refCaptions, deps,
 // ---------------------------------------------------------------------------
 // Padrão: MOTION GRAPHICS (texto sempre certo, logo fiel, barato).
 // "com fotos", "realista", "cenas reais" → pipeline de fotos por IA (acima).
+// AD_DEFAULT_STYLE=photo faz o anúncio "filmado" (Kling 3, tomada única) ser o padrão;
+// sem a variável, o padrão continua o motion graphics (mais barato).
 function pickStyle(message) {
   if (require('./presenterAd').isPresenterRequest(message)) return 'presenter';
-  return /(com fotos?|fotos? reais|realista|cenas? reais|cinematogr|filmad|imagens reais)/i.test(String(message || '')) ? 'photo' : 'motion';
+  const m = String(message || '');
+  if (/(com fotos?|fotos? reais|realista|cenas? reais|cinematogr|filmad|imagens reais)/i.test(m)) return 'photo';
+  if (/(motion|anima[çc][ãa]o gr[áa]fica|desenho|cartoon|vinheta|estilo (moderno|impacto|elegante|tecnol[óo]gico))/i.test(m)) return 'motion';
+  return process.env.AD_DEFAULT_STYLE === 'photo' ? 'photo' : 'motion';
 }
 
 // Das imagens anexadas, descobre qual é a LOGO e qual é o PRODUTO.
@@ -617,5 +679,5 @@ module.exports = {
   planAd,
   buildAdVideo,
   // expostos para teste da montagem sem gastar API
-  _internals: { captionOverlay, sceneClip, assemble, accentFromProject, mediaDuration, falQueue, generateNarration, uploadToFal, saveMedia, pickVoice }
+  _internals: { captionOverlay, sceneClip, cutSegment, assemble, accentFromProject, mediaDuration, falQueue, generateNarration, uploadToFal, saveMedia, pickVoice }
 };

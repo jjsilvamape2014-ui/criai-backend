@@ -12,6 +12,8 @@ const axios = require('axios');
 const sharp = require('sharp');
 const adVideo = require('../adVideo');
 const aiRouter = require('../router');
+const videoModels = require('../videoModels');
+const videoQuota = require('../videoQuota');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -36,7 +38,12 @@ function adCost(style) {
 }
 
 // Tira do comprado primeiro, depois do mensal. Devolve { p, v } para o estorno.
-async function chargeVideoCredits(user, cost) {
+// gate (videoQuota.gate): PREMIUM acima do limite do mês paga com créditos comprados.
+async function chargeVideoCredits(user, cost, gate = null) {
+  if (gate && gate.chargePurchased) {
+    await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: cost } } });
+    return { p: cost, v: 0 };
+  }
   if (user.plan === 'PREMIUM') return { p: 0, v: 0 };
   const p = Math.min(user.creditsPurchased || 0, cost);
   const v = cost - p;
@@ -181,8 +188,10 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
     return res.json({ success: true, sessionId: session.id, reply: q, ask: [q], needInfo: true, imageUrl: null, videoUrl: null, type: 'video', memory: session.memory, history: session.history.slice(-20) });
   }
   const style = adVideo.pickStyle(request);
-  const cost = user.plan === 'PREMIUM' ? 0 : adCost(style);
-  if (user.plan !== 'PREMIUM' && (user.creditsVideos || 0) + (user.creditsPurchased || 0) < cost) {
+  const gate = await videoQuota.gate(prisma, user, adCost(style));
+  if (!gate.ok && gate.error) return res.status(403).json({ error: gate.error, code: 'NO_CREDITS', upgradeUrl: '/plans' });
+  const cost = gate.ok ? gate.cost : adCost(style);
+  if (!gate.ok) {
     return res.status(403).json({
       error: cost > 1
         ? `O vídeo com apresentador usa ${cost} créditos de vídeo e você tem ${(user.creditsVideos || 0) + (user.creditsPurchased || 0)}.` +
@@ -202,7 +211,7 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
   }
   session.memory.lastAdRequest = request;
 
-  const charge = await chargeVideoCredits(user, cost);
+  const charge = await chargeVideoCredits(user, cost, gate);
   let generation;
   try {
     generation = await prisma.generation.create({
@@ -220,7 +229,8 @@ async function startAdVideoJob({ user, session, request, displayMessage, res, ad
   const refCaptions = (session.memory.refDescriptions || []).filter((d) => current.has(d.src)).map((d) => d.caption).filter(Boolean).slice(-2);
 
   const presenter = style === 'presenter';
-  const costNote = cost > 1 ? ` Este vídeo usa ${cost} créditos de vídeo.` : '';
+  // custo mostrado ANTES de gerar (créditos ou "vídeo X de Y do mês" no PREMIUM)
+  const costNote = gate.line || '';
   const reply = adjusting
     ? `Certo! Vou refazer o vídeo com esse ajuste. Leva de ${presenter ? '3 a 6' : '1 a 4'} minutos — pode acompanhar aqui.${costNote}`
     : presenter
@@ -396,16 +406,19 @@ async function deliverText({ user, session, message, tipo, res }) {
 // girando como uma betoneira"). Não é anúncio: é image-to-video (Kling) da própria imagem,
 // com um prompt de movimento preciso escrito pela IA. Custa 1 crédito de vídeo.
 async function startAnimateJob({ user, session, message, motion, res }) {
-  const cost = user.plan === 'PREMIUM' ? 0 : adCost('motion');
-  if (user.plan !== 'PREMIUM' && (user.creditsVideos || 0) + (user.creditsPurchased || 0) < cost) {
-    return res.status(403).json({ error: 'Créditos de vídeo esgotados. Assine o plano para animar imagens.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+  // duração pedida ("anima por 10 segundos"); sem dizer, 5 s como antes
+  const duration = videoModels.parseDuration(message) || 5;
+  const gate = await videoQuota.gate(prisma, user, videoModels.creditsFor(duration));
+  if (!gate.ok) {
+    return res.status(403).json({ error: gate.error || 'Créditos de vídeo esgotados. Assine o plano para animar imagens.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
   }
+  const cost = gate.cost;
   const image = (session.memory.refImages || [])[session.memory.refImages.length - 1];
   const prompt = [
     motion || `Animate exactly what the user asked: ${message}.`,
     'Keep the character/object identical to the image: same design, colors, text and proportions. Only the described part moves. Static camera. No new objects, no text added.'
   ].join(' ');
-  const charge = await chargeVideoCredits(user, cost);
+  const charge = await chargeVideoCredits(user, cost, gate);
   let generation;
   try {
     generation = await prisma.generation.create({
@@ -416,7 +429,7 @@ async function startAnimateJob({ user, session, message, motion, res }) {
     throw e;
   }
   const jobId = generation.id;
-  const reply = '🌀 Entendi: vou animar a sua imagem com esse movimento, sem mudar o resto. Leva de 1 a 3 minutos — pode acompanhar aqui.';
+  const reply = `🌀 Entendi: vou animar a sua imagem com esse movimento, sem mudar o resto (${duration} segundos). Leva de 1 a 4 minutos — pode acompanhar aqui.${gate.line || ''}`;
   setStep(jobId, { step: 'Animando a sua imagem…' });
   cerebro.pushHistory(session, 'user', message, null);
   cerebro.pushHistory(session, 'assistant', reply, null);
@@ -429,8 +442,8 @@ async function startAnimateJob({ user, session, message, motion, res }) {
       const src = await A.uploadToFal(buf, 'image/jpeg', `animar-${Date.now()}.jpg`)
         .catch(() => `data:image/jpeg;base64,${buf.toString('base64')}`);
       setStep(jobId, { step: 'Animando a sua imagem (1 a 3 minutos)…' });
-      const videoUrl = await generateRoutes.generateVideoFromProviders(src, prompt, 'custom', {});
-      const done = 'Pronto! Sua imagem animada está aqui (5 segundos).\n\nSe o movimento não saiu como você imaginou, me diga o que mudar (ex.: "gira mais devagar", "só a barriga, os braços parados").';
+      const videoUrl = await generateRoutes.generateVideoFromProviders(src, prompt, 'custom', { duration });
+      const done = `Pronto! Sua imagem animada está aqui (${duration} segundos).\n\nSe o movimento não saiu como você imaginou, me diga o que mudar (ex.: "gira mais devagar", "só a barriga, os braços parados").`;
       cerebro.pushHistory(session, 'assistant', done, null);
       session.history[session.history.length - 1].videoUrl = videoUrl;
       await prisma.generation.update({ where: { id: jobId }, data: { status: 'COMPLETED', imageUrl: videoUrl } });
@@ -452,16 +465,81 @@ async function startAnimateJob({ user, session, message, motion, res }) {
   return res.json({ success: true, sessionId: session.id, reply, jobId, type: 'video_job', imageUrl: null, videoUrl: null, memory: session.memory, history: session.history.slice(-20) });
 }
 
+// 🎬 VÍDEO CRIATIVO (não é anúncio): "um astronauta surfando", "essa foto em câmera lenta".
+// Com imagem anexada → imagem→vídeo; sem imagem → texto→vídeo (Kling 3). O cliente pode
+// pedir a duração ("de 10 segundos", até 15) e o formato ("vertical", "quadrado", "horizontal").
+async function startClipJob({ user, session, message, motion, res }) {
+  const duration = videoModels.parseDuration(message) || 5;
+  const aspectRatio = videoModels.parseAspect(message) || '9:16';
+  const gate = await videoQuota.gate(prisma, user, videoModels.creditsFor(duration));
+  if (!gate.ok) {
+    return res.status(403).json({ error: gate.error || 'Créditos de vídeo esgotados. Assine o plano para gerar vídeos.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+  }
+  const image = (session.memory.refImages || []).filter((u) => typeof u === 'string' && !/^data:video|\.mp4(\?|$)/i.test(u)).slice(-1)[0] || null;
+  const prompt = String(motion || message).slice(0, 2400);
+  const charge = await chargeVideoCredits(user, gate.cost, gate);
+  let generation;
+  try {
+    generation = await prisma.generation.create({
+      data: { userId: user.id, type: 'VIDEO', prompt: `${AD_TAG} p=${charge.p} v=${charge.v}] [clip ${duration}s] ` + String(message).slice(0, 170), status: 'PROCESSING', cost: Math.max(1, gate.cost) }
+    });
+  } catch (e) {
+    await refundVideoCredits(user.id, charge).catch(() => {});
+    throw e;
+  }
+  const jobId = generation.id;
+  const reply = `🎬 Entendi: um vídeo de ${duration} segundos${image ? ' a partir da sua imagem' : ` (${aspectRatio})`}. Leva de 2 a 6 minutos — pode acompanhar aqui.${gate.line || ''}`;
+  setStep(jobId, { step: 'Preparando o vídeo…' });
+  cerebro.pushHistory(session, 'user', message, null);
+  cerebro.pushHistory(session, 'assistant', reply, null);
+
+  (async () => {
+    try {
+      let videoUrl;
+      if (image) {
+        const A = adVideo._internals;
+        const buf = await prepareForVideo(image);
+        const src = await A.uploadToFal(buf, 'image/jpeg', `clip-${Date.now()}.jpg`)
+          .catch(() => `data:image/jpeg;base64,${buf.toString('base64')}`);
+        setStep(jobId, { step: `Gerando o vídeo (${duration} s)…` });
+        videoUrl = await generateRoutes.generateVideoFromProviders(src, prompt, 'custom', { duration });
+      } else {
+        setStep(jobId, { step: `Gerando o vídeo (${duration} s, ${aspectRatio})…` });
+        videoUrl = await generateRoutes.generateTextToVideoFal(prompt, { duration, aspectRatio });
+      }
+      const done = `Pronto! Seu vídeo de ${duration} segundos está aqui.\n\nQuer mudar algo? Diga o que (ex.: "mais lento", "câmera mais perto", "versão de 10 segundos", "formato quadrado").`;
+      cerebro.pushHistory(session, 'assistant', done, null);
+      session.history[session.history.length - 1].videoUrl = videoUrl;
+      await prisma.generation.update({ where: { id: jobId }, data: { status: 'COMPLETED', imageUrl: videoUrl } });
+      const credits = await prisma.user.findUnique({ where: { id: user.id }, select: { creditsImages: true, creditsVideos: true, creditsPurchased: true } });
+      setStep(jobId, { reply: done, credits, debug: { prompt } });
+    } catch (e) {
+      console.error('Cérebro: vídeo criativo falhou:', e.message);
+      const outOfBalance = /exhausted balance|user is locked|top up your balance|HTTP 402|HTTP 403/i.test(String(e.message || ''));
+      setStep(jobId, { error: outOfBalance
+        ? 'Nosso estúdio de vídeo está em manutenção por alguns instantes. Seu crédito foi devolvido — tente de novo em alguns minutos.'
+        : `Não consegui gerar o vídeo agora. Seu crédito foi devolvido — tente novamente. (Detalhe técnico: ${String(e.message || '').replace(/https?:\/\/\S+/g, '[url]').replace(/Key\s+\S+/gi, 'Key ***').slice(0, 160)})` });
+      try {
+        const upd = await prisma.generation.updateMany({ where: { id: jobId, status: 'PROCESSING' }, data: { status: 'FAILED' } });
+        if (upd.count) await refundVideoCredits(user.id, charge);
+      } catch (e2) {}
+    }
+  })();
+
+  return res.json({ success: true, sessionId: session.id, reply, jobId, type: 'video_job', imageUrl: null, videoUrl: null, memory: session.memory, history: session.history.slice(-20) });
+}
+
 // 🗣️ PERSONAGEM FALANDO: a imagem anexada fala exatamente a frase do cliente.
 // Usa lipsync (se aceitar o personagem) ou animação + voz. Custa 1 crédito de vídeo.
 async function startSpeakJob({ user, session, message, speech, voice, res }) {
-  const cost = user.plan === 'PREMIUM' ? 0 : adCost('motion');
-  if (user.plan !== 'PREMIUM' && (user.creditsVideos || 0) + (user.creditsPurchased || 0) < cost) {
-    return res.status(403).json({ error: 'Créditos de vídeo esgotados. Assine o plano para fazer o personagem falar.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+  const gate = await videoQuota.gate(prisma, user, adCost('motion'));
+  if (!gate.ok) {
+    return res.status(403).json({ error: gate.error || 'Créditos de vídeo esgotados. Assine o plano para fazer o personagem falar.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
   }
+  const cost = gate.cost;
   const image = session.memory.refImages[session.memory.refImages.length - 1];
   const text = String(speech || '').replace(/^\s*(faz|faça|faca|deixa|coloca|cria)[^:]{0,80}:\s*/i, '').trim().slice(0, 400) || String(message).slice(0, 400);
-  const charge = await chargeVideoCredits(user, cost);
+  const charge = await chargeVideoCredits(user, cost, gate);
   let generation;
   try {
     generation = await prisma.generation.create({
@@ -472,7 +550,7 @@ async function startSpeakJob({ user, session, message, speech, voice, res }) {
     throw e;
   }
   const jobId = generation.id;
-  const reply = `🗣️ Entendi: o personagem da imagem vai falar “${text}”. Leva de 2 a 5 minutos — pode acompanhar aqui.`;
+  const reply = `🗣️ Entendi: o personagem da imagem vai falar “${text}”. Leva de 2 a 5 minutos — pode acompanhar aqui.${gate.line || ''}`;
   setStep(jobId, { step: 'Gravando a fala…' });
   cerebro.pushHistory(session, 'user', message, null);
   cerebro.pushHistory(session, 'assistant', reply, null);
@@ -644,6 +722,14 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     session.memory.qaPending = null;
     if (qaPending && /^\s*(gera(r)?|gere|pode( gerar| fazer)?|sim|ok|faz( assim)?|fa[çc]a( assim)?|mesmo assim|gera mesmo assim|continua(r)?|segue|vai)\s*[!.]*\s*$/i.test(message)) {
       message = qaPending.message;
+    }
+    // Resposta à pergunta "imagem nova, editar ou vídeo?" (feita quando o roteador falhou):
+    // junta a escolha ao pedido original em vez de tratar "2" como um pedido novo
+    const clarify = session.memory.pendingClarify;
+    session.memory.pendingClarify = null;
+    if (clarify && Date.now() - clarify.at < 15 * 60 * 1000) {
+      const choice = aiRouter.clarifyChoice(message, clarify.options || []);
+      if (choice) message = aiRouter.applyClarifyChoice(clarify.message, choice);
     }
 
     // 🗂️ MEMÓRIA DE LONGO PRAZO: hidrata o projeto com o que o usuário já decidiu
@@ -918,6 +1004,9 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         if (!(session.memory.refImages || []).length) return reply('Para o personagem falar, anexe a imagem dele e escreva a fala. Ex.: "faz ele falar: bom dia, eu sou o Delta".');
         return startSpeakJob({ user, session, message, speech: route.speech || message, voice: route.gender === 'female' ? 'pf_dora' : 'pm_alex', res });
       }
+      if (route.action === 'clip') {
+        return startClipJob({ user, session, message, motion: route.motion, res });
+      }
       if (route.action === 'animate') {
         if (!(session.memory.refImages || []).length) return reply('Para eu animar, anexe a imagem (o mascote, a logo ou o produto) e me diga o movimento. Ex.: "deixa a barriga do mascote girando como uma betoneira".');
         return startAnimateJob({ user, session, message, motion: route.motion, res });
@@ -940,6 +1029,19 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         return reply(route.question, { ask: [route.question], needInfo: true });
       }
       // action 'image' (ou algo incompleto): segue o fluxo de imagem, já sabendo a marca
+    } else if (aiRouter.isEnabled()) {
+      // O roteador falhou (IA lenta, limite de uso, resposta inválida). Antes, o Cérebro
+      // chutava pelas palavras e gastava crédito no tipo errado. Se o pedido é ambíguo,
+      // pergunta uma vez — sem gastar crédito — e segue com a resposta.
+      const hasImage = (session.memory.refImages || []).length > 0;
+      if (aiRouter.needsClarification(message, { hasImage })) {
+        const q = aiRouter.clarifyQuestion(hasImage);
+        session.memory.pendingClarify = { message, options: aiRouter.clarifyOptions(hasImage), at: Date.now() };
+        console.warn('Cérebro: roteador falhou, perguntando o tipo em vez de adivinhar:', String(message).slice(0, 80));
+        cerebro.pushHistory(session, 'user', message, null);
+        cerebro.pushHistory(session, 'assistant', q, null);
+        return res.json({ success: true, sessionId: session.id, reply: q, ask: [q], needInfo: true, imageUrl: null, videoUrl: null, type: 'chat', memory: session.memory, history: session.history.slice(-20) });
+      }
     }
 
     // Correção de pronúncia depois de um vídeo ("XYZ se pronuncia xis ípsilon zê") → refaz o último
@@ -1348,23 +1450,20 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         cerebro.pushHistory(session, 'assistant', 'Para criar um vídeo, envie antes a imagem (foto) que quer transformar em vídeo.', null);
         return res.json({ success: true, sessionId: session.id, reply: 'Para criar um vídeo, envie antes a imagem (foto) que quer transformar em vídeo.', imageUrl: null, videoUrl: null, memory: session.memory, history: session.history.slice(-20) });
       }
-      if (user.plan !== 'PREMIUM' && user.creditsVideos <= 0 && user.creditsPurchased <= 0) {
-        return res.status(403).json({ error: 'Créditos de vídeo esgotados. Assine o plano para gerar vídeos.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
+      const agentDuration = videoModels.parseDuration(message) || 5;
+      const gate = await videoQuota.gate(prisma, user, videoModels.creditsFor(agentDuration));
+      if (!gate.ok) {
+        return res.status(403).json({ error: gate.error || 'Créditos de vídeo esgotados. Assine o plano para gerar vídeos.', code: 'NO_CREDITS', upgradeUrl: '/plans' });
       }
 
       const generation = await prisma.generation.create({
-        data: { userId: user.id, type: 'VIDEO', prompt: '[agente-video] ' + message.slice(0, 200), status: 'PROCESSING', cost: 1 }
+        data: { userId: user.id, type: 'VIDEO', prompt: '[agente-video] ' + message.slice(0, 200), status: 'PROCESSING', cost: Math.max(1, gate.cost) }
       });
-      const usedPurchased = user.plan !== 'PREMIUM' && user.creditsPurchased > 0;
-      if (usedPurchased) {
-        await prisma.user.update({ where: { id: user.id }, data: { creditsPurchased: { decrement: 1 } } });
-      } else if (user.plan !== 'PREMIUM') {
-        await prisma.user.update({ where: { id: user.id }, data: { creditsVideos: { decrement: 1 } } });
-      }
+      const charge = await chargeVideoCredits(user, gate.cost, gate);
 
       const motion = /\btour\b|\b360\b|giro|rota|circular|panoram/i.test(message) ? 'orbit' : (/andar|caminhar|andar em dire|personagem se move|ele anda/i.test(message) ? 'walk' : 'subtle');
       try {
-        const videoUrl = await generateRoutes.generateVideoFromProviders(videoSource, `create a smooth cinematic ${motion === 'orbit' ? '360-degree rotating view' : motion === 'walk' ? 'walking movement' : 'subtle lifelike motion'} of this image`, motion, {});
+        const videoUrl = await generateRoutes.generateVideoFromProviders(videoSource, `create a smooth cinematic ${motion === 'orbit' ? '360-degree rotating view' : motion === 'walk' ? 'walking movement' : 'subtle lifelike motion'} of this image`, motion, { duration: agentDuration });
         if (videoUrl) {
           await prisma.generation.update({ where: { id: generation.id }, data: { status: 'COMPLETED', imageUrl: videoUrl } });
           // Não troca a foto de referência pelo vídeo: a próxima edição continua
@@ -1376,10 +1475,8 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       } catch (e) {
         console.error('Cérebro: geração de vídeo falhou:', e.message);
       }
-      await prisma.user.update({
-        where: { id: user.id },
-        data: usedPurchased ? { creditsPurchased: { increment: 1 } } : (user.plan === 'PREMIUM' ? {} : { creditsVideos: { increment: 1 } })
-      });
+      await refundVideoCredits(user.id, charge).catch(() => {});
+      await prisma.generation.update({ where: { id: generation.id }, data: { status: 'FAILED' } }).catch(() => {});
       return res.status(502).json({ error: 'Não foi possível gerar o vídeo agora. Tente novamente.', code: 'GEN_FAILED' });
     }
 

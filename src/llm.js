@@ -101,7 +101,10 @@ async function callLLM(systemPrompt, userText, opts = {}) {
       };
       if (JSON_MODE_OK[provider] && opts.json !== false) payload.response_format = { type: 'json_object' };
       // opcional: quanto o modelo pensa (confira os valores aceitos na documentação do provedor)
-      if (reasoning && process.env.LLM_REASONING_EFFORT) payload.reasoning_effort = process.env.LLM_REASONING_EFFORT;
+      // opts.reasoningEffort vale só para esta chamada (o roteador usa "low": decidir o tipo do
+      // pedido não precisa de raciocínio longo, e raciocínio longo era o que estourava o tempo)
+      const effort = opts.reasoningEffort || process.env.LLM_REASONING_EFFORT;
+      if (reasoning && effort) payload.reasoning_effort = effort;
 
       let res = await axios.post(`${base}/chat/completions`, payload, { timeout: opts.timeout || 60000, headers });
       let choice = res.data && res.data.choices && res.data.choices[0];
