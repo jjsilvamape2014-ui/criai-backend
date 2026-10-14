@@ -870,6 +870,25 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       const clean = original.replace(/,?\s*(mas\s+)?(me\s+)?(entregue\s+|mande\s+|quero\s+)?(s[óo]|apenas|somente)\s+(a\s+|o\s+)?(legenda|legendas|texto|copy|roteiro)[^.,]*/gi, '');
       return startAdVideoJob({ user, session, request: clean, displayMessage: message, res, briefed: true });
     }
+    // 🧩 Resposta a uma pergunta da IA sobre uma peça ("Qual o nome da pizzaria?" → "Pizzaria do
+    //    Joan"): soma ao pedido original. Antes cada resposta era tratada sozinha: a IA perguntava
+    //    de novo, e "De 50 por 10 reais" virava "corrigir o preço da peça antiga".
+    let answeredPending = false;
+    let shownMessage = message;
+    {
+      const pc = session.memory.pendingCreate;
+      const fresh = pc && Date.now() - (pc.at || 0) < 30 * 60 * 1000;
+      const attachedNow = (Array.isArray(req.body.images) && req.body.images.length) || req.body.image;
+      if (pc && fresh && !attachedNow && !require('../contract').isNewPiece(message) && String(message).length <= 300) {
+        message = `${pc.request}. ${message}`;
+        answeredPending = true;
+      }
+      if (pc && (!fresh || !answeredPending)) session.memory.pendingCreate = null;
+      if (answeredPending) session.memory.pendingCreate = null; // se faltar algo, a IA pergunta de novo e guarda o pedido somado
+    }
+    // "de 50 reais por 10 reais" → "de R$ 50,00 por R$ 10,00": preço vira texto exato (escrito por
+    // código, nunca "$10" desenhado pela IA)
+    message = message.replace(/\b(\d{1,5})(?:,(\d{2}))?\s*(?:reais|real)\b/gi, (m, a, b) => `R$ ${a},${b || '00'}`);
     // quem respondeu "quero imagem" à pergunta do anúncio não pode cair no vídeo
     if (session.memory.pendingAd && /\b(imagem|post|arte|banner|flyer)\b/i.test(message) && !/\bv[íi]deo\b/i.test(message)) {
       message = `${session.memory.pendingAd.request}. ${message}`;
@@ -938,7 +957,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     {
       const TC = require('../textCheck');
       const attached = (Array.isArray(req.body.images) && req.body.images.length) || req.body.image;
-      if (session.memory.pieceBase && (session.memory.pieceTexts || []).length && !attached && TC.isTextOnlyFix(message) && !require('../contract').isNewPiece(message)) {
+      if (!answeredPending && session.memory.pieceBase && (session.memory.pieceTexts || []).length && !attached && TC.isTextOnlyFix(message) && !require('../contract').isNewPiece(message)) {
         try {
           const texts = TC.mergePieceTexts(session.memory.pieceTexts, TC.pieceTexts(extractTextTokens(message), message));
           const png = await TC.overlayText(session.memory.pieceBase, texts, { ...(session.memory.pieceHex ? { hex: session.memory.pieceHex } : {}), ...(session.memory.pieceLayout || {}) });
@@ -985,7 +1004,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
         else if (require('../brandInfo').mentions(message, route.brand)) switchBrand(session, route.brand);
       }
       const reply = (text, extra = {}) => {
-        cerebro.pushHistory(session, 'user', message, null);
+        cerebro.pushHistory(session, 'user', shownMessage, null);
         cerebro.pushHistory(session, 'assistant', text, null);
         return res.json({ success: true, sessionId: session.id, reply: text, imageUrl: null, videoUrl: null, type: 'chat', memory: session.memory, history: session.history.slice(-20), ...extra });
       };
@@ -1031,6 +1050,9 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       if (route.action === 'ask' && route.question && !optionalQ) {
         if (/(v[íi]deo|an[úu]ncio|comercial|reels)/i.test(`${message} ${route.request}`)) {
           session.memory.pendingAd = { request: route.request || message, askedAt: Date.now() };
+        } else {
+          // guarda o pedido COMPLETO até aqui (o original + respostas já dadas)
+          session.memory.pendingCreate = { request: message, at: Date.now() };
         }
         return reply(route.question, { ask: [route.question], needInfo: true });
       }
