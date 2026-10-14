@@ -1028,6 +1028,54 @@ async function suggestPhraseFromRequest(raw, project) {
   }
 }
 
+// Comunicado longo colado (aviso de RH, texto de WhatsApp, release) → peça de imagem.
+// Uma IA de imagem não escreve parágrafos: sai texto embaralhado. Aqui escolhemos o que
+// vai IMPRESSO (título + até 2 linhas curtas) e o resto fica para a legenda.
+// Devolve { request, texts } ou null quando o pedido não é um comunicado longo.
+function isLongAnnouncement(raw) {
+  const s = String(raw || '');
+  if (/["“”]/.test(s)) return false; // o cliente já disse o texto exato
+  const lines = s.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  return s.length > 220 || lines.length >= 4;
+}
+const stripEmoji = (t) => String(t || '').replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, '').replace(/\s+/g, ' ').trim();
+function fallbackAnnouncementTexts(raw) {
+  const lines = String(raw || '').split(/\n+/).map(stripEmoji).filter((l) => l.length >= 3);
+  const short = (l, n) => l.replace(/[!.:]+$/, '').split(/\s+/).slice(0, n).join(' ');
+  return lines.slice(0, 2).map((l, i) => short(l, i === 0 ? 6 : 8));
+}
+async function condenseAnnouncement(raw, brand = '') {
+  if (!isLongAnnouncement(raw)) return null;
+  const s = String(raw).slice(0, 1500);
+  const sys = [
+    'O cliente colou um comunicado/texto longo e quer uma IMAGEM (post) a partir dele.',
+    'Escolha o que vai IMPRESSO na arte — pouco texto, porque IA de imagem erra texto longo:',
+    '- "titulo": até 5 palavras, a mensagem principal;',
+    '- "linhas": no máximo 2 frases curtas de apoio (até 7 palavras cada).',
+    'Copie nomes próprios e marcas EXATAMENTE como estão no texto (maiúsculas e grafia). Português do Brasil, sem emoji, sem hashtags.',
+    '"pedido": uma frase curta descrevendo a arte (tema, público, clima visual) sem repetir os textos.',
+    'Responda só JSON: {"titulo":"...","linhas":["..."],"pedido":"..."}'
+  ].join('\n');
+  let texts = null; let request = null;
+  try {
+    const out = parseJsonLoose(await callLLM(sys, s, { temperature: 0.3, maxTokens: 300, json: true }));
+    if (out && out.titulo) {
+      texts = [out.titulo, ...((Array.isArray(out.linhas) ? out.linhas : []).slice(0, 2))].map(stripEmoji).filter((t) => t && t.length <= 60);
+      request = stripEmoji(out.pedido || '');
+    }
+  } catch (e) {
+    console.error('condenseAnnouncement falhou:', e.message);
+  }
+  if (!texts || !texts.length) texts = fallbackAnnouncementTexts(raw);
+  if (!texts.length) return null;
+  const b = String(brand || '').trim();
+  const tema = request || stripEmoji(String(raw).split(/\n+/)[0]).slice(0, 120);
+  return {
+    texts,
+    request: `Post para Instagram${b ? ` da ${b}` : ''}: ${tema}. Textos impressos na arte, exatamente: ${texts.map((t) => `"${t}"`).join(', ')}. Pouco texto, letras grandes e legíveis.`
+  };
+}
+
 // Roteiro pronto para o "Anúncio Falado": a IA escreve a narração do vídeo que
 // apresenta o produto, no tom de vendedor animado de marketplace.
 async function generateAdScript(opts = {}) {
@@ -1182,4 +1230,4 @@ async function contentPlan30(project, extra) {
   return null;
 }
 
-module.exports = { parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript, extractIntent, createConcepts, campaignTexts, buildCampaignPrompts };
+module.exports = { condenseAnnouncement, isLongAnnouncement, fallbackAnnouncementTexts, parseEditRequest, callLLM, getProvider, enhanceImagePrompt, replyConversation, detectIntent, extractBriefValue, generateCaptions, contentPlan30, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript, extractIntent, createConcepts, campaignTexts, buildCampaignPrompts };
