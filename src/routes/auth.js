@@ -29,8 +29,8 @@ router.post('/register', async (req, res) => {
         password: hashedPassword,
         name: name || email.split('@')[0],
         monthlyResetDate: nextMonth,
-        creditsImages: 10,
-        creditsVideos: 2
+        creditsImages: require('../plans').FREE.images(),
+        creditsVideos: require('../plans').FREE.videoCredits()
       }
     });
 

@@ -1,30 +1,31 @@
-// 🎟️ LIMITE MENSAL DE VÍDEOS DO PLANO PREMIUM
+// 🎟️ LIMITE MENSAL DE VÍDEO DO PLANO PREMIUM — em CRÉDITOS (não em número de vídeos)
 //
-// O PREMIUM tinha vídeo ilimitado. Com o modelo novo (Kling 3), cada vídeo custa mais na
-// fal.ai, e um cliente que gera muito passaria a custar mais do que paga. Agora o PREMIUM
-// tem um limite por mês, configurável:
-//   PREMIUM_VIDEO_LIMIT  vídeos por mês (padrão 20; 0 = ilimitado, como era antes)
-// Conta os vídeos do mês (tabela generations, tipo VIDEO, que não falharam) — não precisa
-// de coluna nova no banco. O mês vira no dia 1, junto com o reset de créditos do cron.
+// Antes contava vídeos: 20 vídeos de 15 s custavam ~US$ 34 no fal para um plano de R$ 39,99.
+// Agora conta créditos (VIDEO_CREDITS_PER_5S a cada 5 s; padrão 10). O limite vem de
+// plans.PREMIUM.videoCredits() (PREMIUM_VIDEO_LIMIT; padrão 30 = 15 s/mês; 0 = ilimitado).
+// Soma o "cost" das gerações de VÍDEO do mês que não falharam. O mês vira no dia 1.
+
+const plans = require('./plans');
 
 function premiumLimit() {
   const raw = process.env.PREMIUM_VIDEO_LIMIT;
-  if (raw === undefined || raw === '') return 20;
-  const n = Math.round(Number(raw));
-  return Number.isFinite(n) && n > 0 ? n : 0; // 0 ou inválido negativo = ilimitado
+  if (raw === '0') return 0; // ilimitado
+  return plans.PREMIUM.videoCredits();
 }
 
 function monthStart(now = new Date()) {
   return new Date(now.getFullYear(), now.getMonth(), 1);
 }
 
-// { limit, used, left } — limit 0 significa ilimitado (left = Infinity)
+// { limit, used, left } em créditos — limit 0 significa ilimitado (left = Infinity)
 async function premiumUsage(prisma, userId, now = new Date()) {
   const limit = premiumLimit();
   if (!limit) return { limit: 0, used: 0, left: Infinity };
-  const used = await prisma.generation.count({
+  const agg = await prisma.generation.aggregate({
+    _sum: { cost: true },
     where: { userId, type: 'VIDEO', status: { not: 'FAILED' }, createdAt: { gte: monthStart(now) } }
   });
+  const used = (agg && agg._sum && agg._sum.cost) || 0;
   return { limit, used, left: Math.max(0, limit - used) };
 }
 
@@ -33,17 +34,17 @@ async function premiumBlock(prisma, user) {
   if (!user || user.plan !== 'PREMIUM') return null;
   const u = await premiumUsage(prisma, user.id);
   if (u.left > 0) return null;
-  return `Você já usou os ${u.limit} vídeos do plano neste mês. O limite renova no dia 1. Se precisar de mais agora, compre créditos de vídeo.`;
+  return `Você já usou os ${u.limit} créditos de vídeo do plano neste mês. O limite renova no dia 1. Se precisar de mais agora, compre um pacote de créditos.`;
 }
 
 // Texto curto de custo, mostrado ANTES de gerar ("Este vídeo usa 2 créditos…")
 function costLine({ user, cost, usage }) {
   if (user && user.plan === 'PREMIUM') {
     if (!usage || !usage.limit) return '';
-    return ` Plano PREMIUM: este é o vídeo ${usage.used + 1} de ${usage.limit} do mês.`;
+    return ` Plano PREMIUM: este vídeo usa ${cost} dos ${usage.left} créditos de vídeo que restam no mês.`;
   }
   const have = ((user && user.creditsVideos) || 0) + ((user && user.creditsPurchased) || 0);
-  return ` Este vídeo usa ${cost} crédito${cost > 1 ? 's' : ''} de vídeo (você tem ${have}).`;
+  return ` Este vídeo usa ${cost} crédito${cost > 1 ? 's' : ''} (você tem ${have}).`;
 }
 
 // Contas sem limite e sem cobrança de vídeo (o dono testando o app): e-mails separados
@@ -63,12 +64,13 @@ async function gate(prisma, user, cost) {
   if (isUnlimitedAccount(user)) return { ok: true, cost: 0, free: true, chargePurchased: false, line: '' };
   if (user.plan === 'PREMIUM') {
     const usage = await premiumUsage(prisma, user.id);
-    if (usage.left > 0) return { ok: true, cost: 0, free: true, chargePurchased: false, line: costLine({ user, cost: c, usage }) };
+    // free: não desconta nada, mas "cost" é o tamanho real (vai para generation.cost e conta no limite)
+    if (usage.left >= c) return { ok: true, cost: c, free: true, chargePurchased: false, line: costLine({ user, cost: c, usage }) };
     if ((user.creditsPurchased || 0) >= c) {
       return { ok: true, cost: c, free: false, chargePurchased: true,
-        line: ` Os ${usage.limit} vídeos do plano neste mês acabaram; este usa ${c} crédito${c > 1 ? 's' : ''} comprado${c > 1 ? 's' : ''}.` };
+        line: ` Os créditos de vídeo do plano neste mês não bastam para este vídeo; ele usa ${c} crédito${c > 1 ? 's' : ''} comprado${c > 1 ? 's' : ''}.` };
     }
-    return { ok: false, error: `Você já usou os ${usage.limit} vídeos do plano neste mês. O limite renova no dia 1. Se precisar de mais agora, compre créditos de vídeo.` };
+    return { ok: false, error: `Este vídeo usa ${c} créditos e restam ${usage.left === Infinity ? 0 : usage.left} do plano neste mês (renova no dia 1). Para fazer agora, compre um pacote de créditos ou escolha um vídeo mais curto.` };
   }
   const have = (user.creditsVideos || 0) + (user.creditsPurchased || 0);
   if (have < c) return { ok: false, error: null, have };

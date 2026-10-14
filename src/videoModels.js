@@ -10,7 +10,7 @@
 //   VIDEO_I2V_MODEL     endpoint de imagem→vídeo     (padrão abaixo)
 //   VIDEO_T2V_MODEL     endpoint de texto→vídeo      (padrão abaixo)
 //   VIDEO_LEGACY_MODEL  reserva de imagem→vídeo ("none" desliga)
-//   VIDEO_CREDITS_PER_5S créditos de vídeo a cada 5 s (padrão 1: 5 s = 1, 10 s = 2, 15 s = 3)
+//   VIDEO_CREDITS_PER_5S créditos de vídeo a cada 5 s (padrão 10: 5 s = 10, 15 s = 30)
 //
 // Esquemas conferidos na página de API de cada modelo no fal.ai (out/2026):
 //   image-to-video: image_url, prompt | multi_prompt[{prompt,duration}], duration "3".."15"
@@ -79,9 +79,9 @@ function splitDurations(total, n) {
 }
 
 // Créditos de vídeo pela duração: ceil(segundos / 5) × VIDEO_CREDITS_PER_5S.
-// Com o padrão, um vídeo de 5 s custa 1 crédito — igual a antes.
+// Com o padrão, um vídeo de 5 s custa 10 créditos (1 crédito ≈ 1 imagem em custo).
 function creditsFor(seconds) {
-  const per = Math.max(1, Math.round(Number(process.env.VIDEO_CREDITS_PER_5S) || 1));
+  const per = Math.max(1, Math.round(Number(process.env.VIDEO_CREDITS_PER_5S) || 10));
   return Math.ceil(clampDuration(seconds) / 5) * per;
 }
 

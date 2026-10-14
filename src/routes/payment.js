@@ -2,7 +2,8 @@ const express = require('express');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { authMiddleware } = require('../middleware');
 const { PrismaClient } = require('@prisma/client');
-const { CREDIT_PACKAGES } = require('./credits');
+const plans = require('../plans');
+const { CREDIT_PACKAGES } = plans;
 const router = express.Router();
 const prisma = new PrismaClient();
 
@@ -20,7 +21,7 @@ router.post('/create-checkout-session', authMiddleware, async (req, res) => {
     };
 
     if (type === 'subscription') {
-      // Assinatura mensal premium (R$ 39,99/mês)
+      // Assinatura mensal premium (valor em plans.js; STRIPE_PRICE_PREMIUM tem prioridade se existir)
       sessionConfig.mode = 'subscription';
       const lineItem = { quantity: 1 };
       if (process.env.STRIPE_PRICE_PREMIUM) {
@@ -29,8 +30,8 @@ router.post('/create-checkout-session', authMiddleware, async (req, res) => {
         // Cria o preço recorrente automaticamente (sem depender de price manual no painel)
         lineItem.price_data = {
           currency: 'brl',
-          product_data: { name: 'Premium Mensal', description: 'Imagens e vídeos ilimitados com IA em 4K' },
-          unit_amount: 3999,
+          product_data: { name: 'Premium Mensal', description: `${plans.PREMIUM.images()} imagens + ${plans.summary().premium.videoSeconds} s de vídeo por mês` },
+          unit_amount: plans.PREMIUM.priceCents(),
           recurring: { interval: 'month' }
         };
       }
@@ -44,12 +45,12 @@ router.post('/create-checkout-session', authMiddleware, async (req, res) => {
       sessionConfig.line_items = [{
         price_data: {
           currency: 'brl',
-          product_data: { name: pkg.name, description: `${pkg.images} imagens + ${pkg.videos} vídeos` },
+          product_data: { name: pkg.name, description: `${pkg.credits} créditos (1 imagem = 1 crédito; vídeo = ${plans.summary().videoCreditsPer5s} a cada 5 s). Não vencem.` },
           unit_amount: pkg.price
         },
         quantity: 1
       }];
-      sessionConfig.metadata = { userId: user.id, packageId: pkg.id, credits: pkg.images };
+      sessionConfig.metadata = { userId: user.id, packageId: pkg.id, credits: pkg.credits };
     }
 
     const session = await stripe.checkout.sessions.create(sessionConfig);
@@ -69,7 +70,7 @@ router.get('/recent', authMiddleware, async (req, res) => {
       created: { gte: Math.floor(Date.now() / 1000) - 30 * 60 },
       limit: 20,
     });
-    const paid = data.data.find(s => s.payment_status === 'paid');
+    const paid = data.data.find(s => s.payment_status === 'paid' && (s.client_reference_id === req.user.id || (s.metadata && s.metadata.userId === req.user.id)));
     if (paid) {
       return res.json({ sessionId: paid.id });
     }
@@ -107,14 +108,34 @@ async function applyPaidSession(session) {
   if (!userId) return;
 
   const isSubscription = session.mode === 'subscription';
+  const paymentId = session.payment_intent || session.id;
+
+  // Uma vez só por pagamento: /confirm e o webhook podem chegar os dois (ou repetidos).
+  // Antes os créditos eram somados ANTES dessa checagem, então repetir o /confirm somava de novo.
+  if (paymentId) {
+    const existing = await prisma.payment.findFirst({ where: { stripePaymentId: paymentId } });
+    if (existing) return;
+    await prisma.payment.create({
+      data: {
+        userId,
+        stripePaymentId: paymentId,
+        amount: session.amount_total,
+        currency: session.currency,
+        status: 'COMPLETED',
+        type: isSubscription ? 'SUBSCRIPTION' : 'CREDITS',
+        creditsAmount: !isSubscription ? parseInt(session.metadata?.credits) : null
+      }
+    });
+  }
 
   if (isSubscription) {
     await prisma.user.update({
       where: { id: userId },
       data: {
         plan: 'PREMIUM',
-        creditsImages: 500,
-        creditsVideos: 50,
+        creditsImages: plans.PREMIUM.images(),
+        creditsVideos: 0,
+        monthlyResetDate: plans.nextMonthStart(),
         stripeCustomerId: session.customer
       }
     });
@@ -124,27 +145,6 @@ async function applyPaidSession(session) {
       await prisma.user.update({
         where: { id: userId },
         data: { creditsPurchased: { increment: credits } }
-      });
-    }
-  }
-
-  // Registra o pagamento apenas UMA vez (idempotente por stripePaymentId)
-  const paymentId = session.payment_intent || session.id;
-  if (paymentId) {
-    const existing = await prisma.payment.findFirst({
-      where: { stripePaymentId: paymentId }
-    });
-    if (!existing) {
-      await prisma.payment.create({
-        data: {
-          userId,
-          stripePaymentId: paymentId,
-          amount: session.amount_total,
-          currency: session.currency,
-          status: 'COMPLETED',
-          type: isSubscription ? 'SUBSCRIPTION' : 'CREDITS',
-          creditsAmount: !isSubscription ? parseInt(session.metadata?.credits) : null
-        }
       });
     }
   }
@@ -183,7 +183,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
       if (customerId) {
         await prisma.user.updateMany({
           where: { stripeCustomerId: customerId },
-          data: { plan: 'FREE' }
+          data: { plan: 'FREE', creditsImages: plans.FREE.images(), creditsVideos: plans.FREE.videoCredits(), monthlyResetDate: plans.nextMonthStart() }
         });
       }
     } catch (err) {
