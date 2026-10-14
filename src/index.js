@@ -194,7 +194,7 @@ app.get('/api/admin/resumo', require('./middleware').authMiddleware, async (req,
     const paid = pays.filter((p) => p.status === 'COMPLETED');
     for (const p of paid) { const u = byUser.get(p.userId); if (u) { u.pagamentos++; u.pagoCentavos += p.amount || 0; } }
     // contas criadas pelos scripts de teste (…@example.com) não são clientes
-    const isTest = (e) => /@(example\.(com|org|net)|test\.com|teste\.com)$/i.test(String(e || ''));
+    const isTest = (e) => /@(example\.(com|org|net)|test\.com|teste\.com|teste\.local|criai\.com)$/i.test(String(e || ''));
     const todos = [...byUser.values()];
     const contasTeste = todos.filter((u) => isTest(u.email)).length;
     const clientes = todos.filter((u) => !admins.includes(String(u.email).toLowerCase()) && !isTest(u.email));
