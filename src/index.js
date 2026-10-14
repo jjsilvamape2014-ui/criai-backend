@@ -191,6 +191,7 @@ app.get('/api/admin/resumo', require('./middleware').authMiddleware, async (req,
       prisma.payment.findMany({ select: { userId: true, amount: true, currency: true, status: true, type: true, createdAt: true } }),
       require('./limitLog').byUserSince(since)
     ]);
+    const convites = await require('./invite').usage();
     const byUser = new Map(users.map((u) => [u.id, { email: u.email, plan: u.plan, createdAt: u.createdAt, imagens: 0, videos: 0, falhas: 0, ultimoUso: null, pagamentos: 0, pagoCentavos: 0,
       limite: (limites.get(u.id) || {}).vezes || 0,
       // grátis sem crédito agora = na próxima tentativa já cai no "créditos acabaram"
@@ -212,6 +213,7 @@ app.get('/api/admin/resumo', require('./middleware').authMiddleware, async (req,
     res.json({
       periodoDias: days,
       contasDeTesteIgnoradas: contasTeste,
+      convites,
       cadastros: { total: clientes.length, noPeriodo: clientes.filter((u) => u.createdAt >= since).length },
       usaram: { pessoas: ativos.length, imagens: ativos.reduce((a, u) => a + u.imagens, 0), videos: ativos.reduce((a, u) => a + u.videos, 0), falhas: ativos.reduce((a, u) => a + u.falhas, 0) },
       // funil: chegou na hora de pagar? (o registro de "limite" começou a contar com este deploy)
