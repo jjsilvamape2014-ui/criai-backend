@@ -172,6 +172,22 @@ app.get('/api/admin/conversas', require('./middleware').authMiddleware, async (r
   }
 });
 
+// Visitas do site (painel do dono). Público, sem login obrigatório; se vier o token,
+// liga a visita à conta. Sem IP e sem cookies: id aleatório do navegador.
+const trackLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: false, legacyHeaders: false });
+app.post('/api/track', trackLimiter, async (req, res) => {
+  res.status(204).end();
+  try {
+    let userId = null;
+    const token = String(req.headers.authorization || '').replace('Bearer ', '');
+    if (token && process.env.JWT_SECRET) {
+      try { userId = require('jsonwebtoken').verify(token, process.env.JWT_SECRET).userId || null; } catch (e) { /* token velho: visita anônima */ }
+    }
+    const b = req.body || {};
+    await require('./visits').record({ visitor: b.v, userId, path: b.p, referrer: b.r, utm: b.u, ua: req.headers['user-agent'] });
+  } catch (e) { /* nunca quebra a página */ }
+});
+
 // Admin: quem usou e quem comprou. Mesma regra de acesso de /api/admin/conversas.
 // GET /api/admin/resumo?days=30
 function isAdminUser(user) {
@@ -192,6 +208,10 @@ app.get('/api/admin/resumo', require('./middleware').authMiddleware, async (req,
       require('./limitLog').byUserSince(since)
     ]);
     const convites = await require('./invite').usage();
+    const isTestE = (e) => /@(example\.(com|org|net)|test\.com|teste\.com|teste\.local|criai\.com)$/i.test(String(e || ''));
+    const ignorar = users.filter((u) => admins.includes(String(u.email).toLowerCase()) || isTestE(u.email)).map((u) => u.id);
+    const visitas = await require('./visits').summary(since, ignorar);
+    const emailDe = new Map(users.map((u) => [u.id, u.email]));
     const byUser = new Map(users.map((u) => [u.id, { email: u.email, plan: u.plan, createdAt: u.createdAt, imagens: 0, videos: 0, falhas: 0, ultimoUso: null, pagamentos: 0, pagoCentavos: 0,
       limite: (limites.get(u.id) || {}).vezes || 0,
       // grátis sem crédito agora = na próxima tentativa já cai no "créditos acabaram"
@@ -214,6 +234,12 @@ app.get('/api/admin/resumo', require('./middleware').authMiddleware, async (req,
       periodoDias: days,
       contasDeTesteIgnoradas: contasTeste,
       convites,
+      visitas,
+      comprasRecentes: pays
+        .filter((p) => p.status === 'COMPLETED' && !ignorar.includes(p.userId))
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, 20)
+        .map((p) => ({ cliente: mask(emailDe.get(p.userId)), tipo: p.type === 'SUBSCRIPTION' ? 'Assinatura Premium' : 'Pacote de créditos', valorReais: (p.amount || 0) / 100, quando: p.createdAt })),
       cadastros: { total: clientes.length, noPeriodo: clientes.filter((u) => u.createdAt >= since).length },
       usaram: { pessoas: ativos.length, imagens: ativos.reduce((a, u) => a + u.imagens, 0), videos: ativos.reduce((a, u) => a + u.videos, 0), falhas: ativos.reduce((a, u) => a + u.falhas, 0) },
       // funil: chegou na hora de pagar? (o registro de "limite" começou a contar com este deploy)
