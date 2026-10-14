@@ -46,6 +46,13 @@ function costLine({ user, cost, usage }) {
   return ` Este vídeo usa ${cost} crédito${cost > 1 ? 's' : ''} de vídeo (você tem ${have}).`;
 }
 
+// Contas sem limite e sem cobrança de vídeo (o dono testando o app): e-mails separados
+// por vírgula em VIDEO_UNLIMITED_EMAILS.
+function isUnlimitedAccount(user) {
+  const list = String(process.env.VIDEO_UNLIMITED_EMAILS || '').toLowerCase().split(/[,;\s]+/).filter(Boolean);
+  return !!(user && user.email && list.includes(String(user.email).toLowerCase()));
+}
+
 // Portão único antes de qualquer vídeo. Devolve:
 //   { ok: true,  cost, free, chargePurchased, line }  → pode gerar
 //   { ok: false, error }                              → não pode (mensagem pronta)
@@ -53,6 +60,7 @@ function costLine({ user, cost, usage }) {
 // chargePurchased: PREMIUM acima do limite, pagando com créditos comprados.
 async function gate(prisma, user, cost) {
   const c = Math.max(1, Math.round(Number(cost) || 1));
+  if (isUnlimitedAccount(user)) return { ok: true, cost: 0, free: true, chargePurchased: false, line: '' };
   if (user.plan === 'PREMIUM') {
     const usage = await premiumUsage(prisma, user.id);
     if (usage.left > 0) return { ok: true, cost: 0, free: true, chargePurchased: false, line: costLine({ user, cost: c, usage }) };
@@ -67,4 +75,4 @@ async function gate(prisma, user, cost) {
   return { ok: true, cost: c, free: false, chargePurchased: false, line: costLine({ user, cost: c }) };
 }
 
-module.exports = { premiumLimit, monthStart, premiumUsage, premiumBlock, costLine, gate };
+module.exports = { premiumLimit, monthStart, premiumUsage, premiumBlock, costLine, gate, isUnlimitedAccount };
