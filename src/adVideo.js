@@ -214,10 +214,24 @@ async function generateNarration(text, voice) {
   }
 }
 
+// Sobe o arquivo para o armazenamento da fal. Uma falha ("Forbidden") fazia o vídeo final
+// voltar como dataURL de vários MB, que ia para a conversa e para o banco. Agora tenta
+// 2 vezes e registra o motivo real (status e corpo da resposta) para diagnosticar.
 async function uploadToFal(buffer, mime, fileName) {
   const { fal } = require('@fal-ai/client');
   fal.config({ credentials: process.env.FAL_KEY || '' });
-  return fal.storage.upload(new Blob([buffer], { type: mime }), { fileName });
+  let last = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await fal.storage.upload(new Blob([buffer], { type: mime }), { fileName });
+    } catch (e) {
+      last = e;
+      const detail = [e.status, e.body && JSON.stringify(e.body).slice(0, 200)].filter(Boolean).join(' ');
+      console.error(`upload fal (${fileName}, ${Math.round(buffer.length / 1024)} KB) falhou, tentativa ${attempt}/2:`, e.message, detail);
+      if (attempt < 2) await sleep(1500);
+    }
+  }
+  throw last;
 }
 
 // ---------------------------------------------------------------------------

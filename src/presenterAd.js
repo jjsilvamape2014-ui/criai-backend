@@ -117,7 +117,7 @@ async function planPresenter(request, project, refCaptions) {
           look: String(plan.look || fb.look).slice(0, 300),
           setting: String(plan.setting || fb.setting).slice(0, 300),
           scenes: plan.scenes.slice(0, 4).map((sc, i) => ({
-            voice: String(sc.voice || sc.caption || fb.scenes[i].voice).replace(/\s+/g, ' ').trim().slice(0, 160),
+            voice: pickVoiceLine(sc, fb.scenes[i].voice),
             caption: String(sc.caption || '').replace(/\s+/g, ' ').trim().slice(0, 40),
             shot: String(sc.shot || fb.scenes[i].shot).slice(0, 300)
           })),
@@ -129,6 +129,20 @@ async function planPresenter(request, project, refCaptions) {
     console.error('presenterAd: roteiro via LLM falhou, usando roteiro padrão:', e.message);
   }
   return fallbackPlan(request, p);
+}
+
+// Fala da cena. Antes, quando a IA esquecia a "voice", o app usava o LETREIRO como fala
+// e o apresentador lia "INSTALAÇÃO RÁPIDA" no meio da narração. Agora: fala ausente,
+// igual ao letreiro ou toda em maiúsculas (cara de letreiro) → fala padrão daquela cena.
+function pickVoiceLine(sc, fallback) {
+  const clean = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+  const v = clean(sc && sc.voice);
+  const cap = clean(sc && sc.caption);
+  const letters = v.replace(/[^\p{L}]/gu, '');
+  const shouting = letters.length >= 4 && letters === letters.toUpperCase();
+  const isCaption = cap && v.toLowerCase() === cap.toLowerCase();
+  if (!v || shouting || isCaption || v.split(' ').length < 3) return clean(fallback).slice(0, 160);
+  return v.slice(0, 160);
 }
 
 // a marca tem que ser dita pelo apresentador, mesmo se a IA esquecer
@@ -286,6 +300,18 @@ async function concatWithVoices(clips, durations, voices, outPath) {
 //   falQueue(endpoint, body, ms) → resposta, saveMedia(src, dest), mediaDuration(file),
 //   sceneClip({...})
 // }
+// Enquadramento mais fechado da mesma foto (rosto e ombros), para a 2ª fala parecer
+// outra câmera sem trocar a pessoa. Recorta 82% centralizado no alto e volta ao 9:16.
+async function closeUp(file) {
+  const img = sharp(file);
+  const { width, height } = await img.metadata();
+  const w = Math.round(width * 0.82);
+  const h = Math.round(height * 0.82);
+  const left = Math.round((width - w) / 2);
+  const top = Math.round(height * 0.04);
+  return img.extract({ left, top, width: w, height: Math.min(h, height - top) }).resize(width, height).jpeg({ quality: 90 }).toBuffer();
+}
+
 async function buildPresenterAd({ request, project, logo, product, refCaptions, voice, deps, onStatus }) {
   const status = (t) => { try { onStatus && onStatus(t); } catch (e) {} };
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-'));
@@ -344,8 +370,22 @@ async function buildPresenterAd({ request, project, logo, product, refCaptions, 
 
     status('Gravando as outras cenas com a mesma pessoa…');
     const refs = productRef ? [hero, productRef] : [hero];
-    const others = await Promise.all(plan.scenes.slice(1).map((sc, k) => {
+    const others = await Promise.all(plan.scenes.slice(1).map(async (sc, k) => {
       const i = k + 1;
+      // Cena de FALA usa a MESMA foto do apresentador, com um enquadramento mais fechado
+      // (como uma segunda câmera). Gerar uma imagem nova para cada fala trocava o rosto da
+      // pessoa entre as cenas, o que denuncia a IA na hora.
+      if (SHOT_TYPES[i] === 'talk') {
+        try {
+          const file = path.join(tmp, `hero-${i}.img`);
+          await deps.saveMedia(hero, file);
+          const buf = await closeUp(file);
+          return await toUrl(`data:image/jpeg;base64,${buf.toString('base64')}`, `cena${i}.jpg`);
+        } catch (e) {
+          console.error(`presenterAd: enquadramento da cena ${i + 1} falhou (usando a foto original):`, e.message);
+          return hero;
+        }
+      }
       const prompt = [
         'Photorealistic vertical 9:16 frame from the same TV commercial.',
         'The SAME person as in the first image: identical face, hair, skin tone and outfit, same setting and lighting.',
@@ -448,4 +488,4 @@ async function buildPresenterAd({ request, project, logo, product, refCaptions, 
   }
 }
 
-module.exports = { buildPresenterAd, planPresenter, isPresenterRequest, pickGender, _internals: { highlightOverlay, renderEndCard, concatWithVoices, findPhone, fallbackPlan, ensureBrandSpoken } };
+module.exports = { buildPresenterAd, planPresenter, isPresenterRequest, pickGender, _internals: { highlightOverlay, renderEndCard, concatWithVoices, findPhone, fallbackPlan, ensureBrandSpoken, pickVoiceLine, closeUp } };

@@ -165,3 +165,27 @@ test('tomada única é cortada nas cenas com a duração certa', async (t) => {
   }
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// --- conta do dono sem limite ------------------------------------------------
+test('VIDEO_UNLIMITED_EMAILS: dono não tem limite nem cobrança', async () => {
+  process.env.VIDEO_UNLIMITED_EMAILS = 'dono@exemplo.com, outro@x.com';
+  const g = await Q.gate(fakePrisma(999), { id: 'u', email: 'Dono@Exemplo.com', plan: 'PREMIUM', creditsPurchased: 0 }, 3);
+  assert.strictEqual(g.ok, true);
+  assert.strictEqual(g.free, true);
+  assert.strictEqual(g.cost, 0);
+  const other = await Q.gate(fakePrisma(999), { id: 'v', email: 'cliente@x.com', plan: 'PREMIUM', creditsPurchased: 0 }, 1);
+  assert.strictEqual(other.ok, false);
+  delete process.env.VIDEO_UNLIMITED_EMAILS;
+});
+
+// --- fala do apresentador nunca é o letreiro ------------------------------------
+test('apresentador: fala ausente, igual ao letreiro ou em maiúsculas → fala padrão', () => {
+  const { pickVoiceLine } = require('../src/presenterAd')._internals;
+  const fb = 'E o melhor: atendimento rápido e preço justo.';
+  assert.strictEqual(pickVoiceLine({ caption: 'INSTALAÇÃO RÁPIDA' }, fb), fb);
+  assert.strictEqual(pickVoiceLine({ voice: 'INSTALAÇÃO RÁPIDA', caption: 'INSTALAÇÃO RÁPIDA' }, fb), fb);
+  assert.strictEqual(pickVoiceLine({ voice: 'Instalação rápida', caption: 'INSTALAÇÃO RÁPIDA' }, fb), fb);
+  assert.strictEqual(pickVoiceLine({ voice: 'ECONOMIA E SILÊNCIO TOTAL', caption: 'x' }, fb), fb);
+  const ok = 'Instalamos no mesmo dia, sem bagunça na sua casa.';
+  assert.strictEqual(pickVoiceLine({ voice: ok, caption: 'INSTALAÇÃO RÁPIDA' }, fb), ok);
+});
