@@ -154,6 +154,7 @@ function composePrompt(memory, cmd, userMessage) {
 function aspectSizes(aspect) {
   if (aspect === '16:9') return { width: 1344, height: 768 };
   if (aspect === '9:16') return { width: 768, height: 1344 };
+  if (aspect === '4:5') return { width: 1088, height: 1360 }; // post de feed do Instagram
   return { width: 1024, height: 1024 };
 }
 
