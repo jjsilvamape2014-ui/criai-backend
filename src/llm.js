@@ -1051,7 +1051,7 @@ async function condenseAnnouncement(raw, brand = '') {
     'O cliente colou um comunicado/texto longo e quer uma IMAGEM (post) a partir dele.',
     'Escolha o que vai IMPRESSO na arte — pouco texto, porque IA de imagem erra texto longo:',
     '- "titulo": até 5 palavras, a mensagem principal;',
-    '- "linhas": no máximo 2 frases curtas de apoio (até 7 palavras cada).',
+    '- "linhas": no máximo 3 frases curtas de apoio (até 7 palavras cada), os pontos mais importantes.',
     'Copie nomes próprios e marcas EXATAMENTE como estão no texto (maiúsculas e grafia). Português do Brasil, sem emoji, sem hashtags.',
     '"pedido": uma frase curta descrevendo a arte (tema, público, clima visual) sem repetir os textos.',
     'Responda só JSON: {"titulo":"...","linhas":["..."],"pedido":"..."}'
@@ -1060,7 +1060,7 @@ async function condenseAnnouncement(raw, brand = '') {
   try {
     const out = parseJsonLoose(await callLLM(sys, s, { temperature: 0.3, maxTokens: 300, json: true }));
     if (out && out.titulo) {
-      texts = [out.titulo, ...((Array.isArray(out.linhas) ? out.linhas : []).slice(0, 2))].map(stripEmoji).filter((t) => t && t.length <= 60);
+      texts = [out.titulo, ...((Array.isArray(out.linhas) ? out.linhas : []).slice(0, 3))].map(stripEmoji).filter((t) => t && t.length <= 60);
       request = stripEmoji(out.pedido || '');
     }
   } catch (e) {
@@ -1072,7 +1072,7 @@ async function condenseAnnouncement(raw, brand = '') {
   const tema = request || stripEmoji(String(raw).split(/\n+/)[0]).slice(0, 120);
   return {
     texts,
-    request: `Post para Instagram${b ? ` da ${b}` : ''}: ${tema}. Textos impressos na arte, exatamente: ${texts.map((t) => `"${t}"`).join(', ')}. Pouco texto, letras grandes e legíveis.`
+    request: `Post para Instagram${b ? ` da ${b}` : ''}: ${tema}. Layout de comunicado organizado: título em destaque e cada frase em seu próprio bloco com ícone. Textos impressos na arte, exatamente: ${texts.map((t) => `"${t}"`).join(', ')}. Letras grandes e legíveis, nada cortado nas bordas.`
   };
 }
 

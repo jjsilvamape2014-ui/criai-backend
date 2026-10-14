@@ -15,8 +15,11 @@
 // Preços (página de cada modelo no fal.ai, out/2026): Ideogram 3 BALANCED US$ 0,06 por
 // imagem; FLUX 2 Pro US$ 0,03 o 1º megapixel (+ US$ 0,015 por megapixel extra).
 
-function pickImageModel({ hasReference = false, needsText = false } = {}) {
+// dense: arte com muito texto e layout (comunicado colado, cartaz informativo) →
+// Nano Banana Pro (IMAGE_MODEL_DENSE; "ideogram" volta ao anterior). ~US$ 0,15/imagem.
+function pickImageModel({ hasReference = false, needsText = false, dense = false } = {}) {
   if (hasReference) return undefined; // edição da imagem enviada: cadeia de edição de sempre
+  if (dense) return process.env.IMAGE_MODEL_DENSE || 'nanobananapro';
   if (needsText) return process.env.IMAGE_MODEL_TEXT || 'ideogram';
   return process.env.IMAGE_MODEL_PHOTO || 'flux2pro';
 }

@@ -1496,12 +1496,14 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     //     só título + 2 linhas (o resto vai para a legenda). Antes a IA tentava desenhar o
     //     parágrafo inteiro e saía texto embaralhado.
     let fullText = null;
+    session.memory.densePiece = false;
     try {
       const L = require('../llm');
       if (L.isLongAnnouncement(message) && !(session.memory.refImages || []).length) {
         const c = await L.condenseAnnouncement(message, session.memory.project && session.memory.project.brand);
         if (c) {
           fullText = message;
+          session.memory.densePiece = true;
           message = c.request;
           cmd.new_prompt = c.request;
         }
@@ -1776,7 +1778,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
             height,
             referenceImage: safeRef,
             strength: genStrength,
-            model: require('../imageModels').pickImageModel({ hasReference: !!safeRef, needsText })
+            model: require('../imageModels').pickImageModel({ hasReference: !!safeRef, needsText, dense: !!session.memory.densePiece })
           });
         }
 
@@ -1857,7 +1859,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
           const list = mustText.map((t) => `"${t}"`).join(', ');
           const retry = exact ? null : await generateRoutes.generateImageFromProviders(
             `${finalPrompt}\nThe image MUST contain exactly these printed texts, spelled letter by letter with correct accents: ${list}. No other words.`,
-            { width, height, model: require('../imageModels').pickImageModel({ needsText: true }) }).catch(() => null);
+            { width, height, model: require('../imageModels').pickImageModel({ needsText: true, dense: !!session.memory.densePiece }) }).catch(() => null);
           const r2 = retry && !exact ? await TC.verify(retry, mustText) : null;
           if (retry && r2 && r2.ok) {
             imageUrl = retry;

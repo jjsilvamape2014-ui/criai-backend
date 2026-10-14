@@ -131,9 +131,24 @@ async function generateImageFal(prompt, opts) {
 
   const isFlux2 = /flux[-_ ]?2/i.test(model) || model === 'flux2pro';
   const isIdeogram = /ideogram/i.test(model);
+  const isNanoPro = model === 'nanobananapro';
 
   // Monta lista de candidatos endpoint/payload em ordem de preferência.
   const buildAttempts = () => {
+    if (isNanoPro) {
+      // Nano Banana Pro (Gemini 3 Pro Image): o melhor para arte com MUITO texto e layout
+      // (comunicado, cartaz informativo). US$ 0,15 por imagem em 1K (página do fal, out/2026).
+      // Só aceita proporções fixas: escolhe a mais próxima do tamanho pedido.
+      const w = opts.width || 1024; const h = opts.height || 1024;
+      const ratios = ['21:9', '16:9', '3:2', '4:3', '5:4', '1:1', '4:5', '3:4', '2:3', '9:16'];
+      const val = (r) => { const [a, b] = r.split(':').map(Number); return a / b; };
+      const aspect = ratios.reduce((best, r) => (Math.abs(val(r) - w / h) < Math.abs(val(best) - w / h) ? r : best), '1:1');
+      return [
+        { endpoint: 'https://queue.fal.run/fal-ai/nano-banana-pro', payload: { prompt, num_images: 1, aspect_ratio: aspect, output_format: 'png', resolution: '1K' } },
+        // reserva: Ideogram 3 (bom em texto, mais barato)
+        { endpoint: 'https://queue.fal.run/fal-ai/ideogram/v3', payload: { prompt, image_size: { width: w, height: h }, num_images: 1, rendering_speed: 'BALANCED', expand_prompt: false } },
+      ];
+    }
     if (isIdeogram) {
       // NOTA: o caminho /fal-ai/ideogram/v4 NÃO existe na fal.ai (POST entra na fila mas
       // "conclui" sem gerar imagem). O v3 existe e é excelente em renderizar TEXTO em
