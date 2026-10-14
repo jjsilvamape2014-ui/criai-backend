@@ -286,7 +286,7 @@ function parseHeuristic(message, memory, aspect) {
     }
     // Não sabemos o nome → pergunta (não gera nem gasta crédito)
     return {
-      reply: 'Qual nome ou marca devo colocar na imagem? Ex: "colocar a logo Criativa AI".',
+      reply: 'Qual nome ou marca devo colocar na imagem? Ex: "colocar a logo Padaria São João".',
       needName: true,
       aspect_ratio: aspect
     };
@@ -1057,7 +1057,7 @@ async function generateAdScript(opts = {}) {
 // sem gerar imagem nem gastar crédito — o agente "conversa" como o ChatGPT.
 async function replyConversation(message, memory) {
   const sys = [
-    'You are the conversational assistant of "Criativa AI", an AI image/video creation platform.',
+    'You are the conversational assistant of "Linha Fácil IA", an AI image/video creation platform.',
     'You also help users design marketing pieces. Be friendly, concise, in PORTUGUESE (pt-BR).',
     'If the user asks something you cannot do, say so honestly and offer what you CAN do.',
     'Answer the user\'s question directly. Keep it short (2-5 sentences) unless they ask for details.',
