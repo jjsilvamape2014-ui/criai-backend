@@ -1492,6 +1492,24 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Créditos esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
     }
 
+    // 2z) Comunicado longo colado ("Lembrete importante, equipe…" com 10 linhas): a arte leva
+    //     só título + 2 linhas (o resto vai para a legenda). Antes a IA tentava desenhar o
+    //     parágrafo inteiro e saía texto embaralhado.
+    let fullText = null;
+    try {
+      const L = require('../llm');
+      if (L.isLongAnnouncement(message) && !(session.memory.refImages || []).length) {
+        const c = await L.condenseAnnouncement(message, session.memory.project && session.memory.project.brand);
+        if (c) {
+          fullText = message;
+          message = c.request;
+          cmd.new_prompt = c.request;
+        }
+      }
+    } catch (e) {
+      console.error('Cérebro: resumir comunicado falhou:', e.message);
+    }
+
     // 3) Compor o prompt técnico acumulado (memória fotográfica da conversa)
     let finalPrompt = cerebro.composePrompt(session.memory, cmd, message);
     const { width, height } = cerebro.aspectSizes(cmd.aspect_ratio || null);
@@ -1921,7 +1939,7 @@ router.post('/chat', authMiddleware, chatLimiter, async (req, res) => {
     if (imageUrl && process.env.LLM_API_KEY) {
       try {
         const C = require('../claims');
-        const capsRaw = await generateCaptions(finalPrompt, session.memory.project);
+        const capsRaw = await generateCaptions(fullText ? `${finalPrompt}\n\nTexto completo do cliente (use na legenda):\n${fullText.slice(0, 1200)}` : finalPrompt, session.memory.project);
         const capSrc = C.sourceOf({ request: message, project: session.memory.project });
         const caps = capsRaw && capsRaw.split('\n').map((l) => (/#/.test(l) ? C.cleanHashtags(l, capSrc) : C.cleanVoice(l, capSrc))).join('\n');
         if (caps && caps.trim()) {
