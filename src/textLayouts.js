@@ -64,10 +64,13 @@ function layoutSvg({ W, H, texts, hex = '#1d4ed8', look = 'moderno', layout = 'b
   return E.withWidth(st.widthK, () => {
     let [head, ...rest] = texts;
     head = String(head || '');
+    // linha de baixo nunca passa da borda: diminui a fonte até caber; se nem no mínimo
+    // couber (comunicado com 3 frases), tira frases do fim em vez de cortar no meio
+    const minSub = W * 0.024;
+    while (rest.length > 1 && E.textWidth(rest.join('  ·  '), minSub, 700) > W * 0.84) rest = rest.slice(0, -1);
     const sub = rest.join('  ·  ');
-    // linha de baixo nunca passa da borda: diminui a fonte até caber
     let subSize = Math.round(W * 0.042);
-    while (sub && subSize > W * 0.024 && E.textWidth(sub, subSize, 700) > W * 0.84) subSize -= 2;
+    while (sub && subSize > minSub && E.textWidth(sub, subSize, 700) > W * 0.84) subSize -= 2;
 
     if (layout === 'tag') {
       // selo de preço no canto + título alinhado à esquerda embaixo

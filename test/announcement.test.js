@@ -31,3 +31,10 @@ test('sem chave de IA, condenseAnnouncement ainda devolve pedido com textos entr
   assert.match(c.request, /"Lembrete importante, equipe XYZ"/);
   if (old) process.env.LLM_API_KEY = old;
 });
+
+test('texto escrito por código não passa da borda: frases demais saem do fim', () => {
+  const L = require('../src/textLayouts');
+  const svg = L.layoutSvg({ W: 1024, H: 1024, texts: ['XYZ', 'Benefícios MediQuo e TotalPass', 'Consultas 24h e academias disponíveis', 'Acesse agora pelo RH e comece a usar hoje mesmo'], layout: 'band' });
+  assert.ok(svg.includes('Benefícios MediQuo e TotalPass'));
+  assert.ok(!svg.includes('Acesse agora pelo RH e comece a usar hoje mesmo'));
+});
