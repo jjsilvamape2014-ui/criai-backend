@@ -668,6 +668,7 @@ router.post('/live-image', authMiddleware, generateLimiter, async (req, res) => 
     const isUnlimitedImage = user.plan === 'PREMIUM';
     const totalImageCredits = user.creditsImages + user.creditsPurchased;
     if (!isUnlimitedImage && totalImageCredits <= 0) {
+      require('../limitLog').record(user.id, req.originalUrl);
       send('error', { error: 'Créditos esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
       return res.end();
     }
@@ -1402,6 +1403,7 @@ router.post('/talking-ad', authMiddleware, async (req, res) => {
     }
     const talkGate = await require('../videoQuota').gate(prisma, user, 1);
     if (!talkGate.ok) {
+      require('../limitLog').record(user.id, req.originalUrl);
       send('error', { error: talkGate.error || 'Créditos de vídeo esgotados', code: 'NO_CREDITS', upgradeUrl: '/plans' });
       return res.end();
     }
