@@ -467,6 +467,10 @@ async function upscaleImage(imageUrl, opts, userPlan) {
 
 // Gerar imagem
 router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
+  // Estado DESTA requisição, declarado fora do try: é o catch que precisa
+  // devolver exatamente o que foi cobrado e marcar a geração como falha.
+  let generation = null;
+  let charge = null;
   try {
     const { prompt, negativePrompt, model = 'fluxpro', width = 1024, height = 1024, upscale = false, aspectRatio, referenceImage, strength } = req.body;
     const user = req.user;
@@ -498,7 +502,7 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
     }
 
     // Criar registro de geração
-    const generation = await prisma.generation.create({
+    generation = await prisma.generation.create({
       data: {
         userId: user.id,
         type: 'IMAGE',
@@ -510,16 +514,20 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
     });
 
     // Consumir crédito (plano PREMIUM não consome; primeiro os comprados, depois os mensais)
-    let creditsToDeduct = 1;
-    if (!isUnlimitedImage && user.creditsPurchased > 0) {
+    // `charge` guarda o que foi debitado de cada carteira — o catch devolve só isso.
+    charge = require('../imageQuota').cobrancaImagem({
+      ilimitado: isUnlimitedImage,
+      creditosComprados: user.creditsPurchased
+    });
+    if (charge.p) {
       await prisma.user.update({
         where: { id: user.id },
-        data: { creditsPurchased: { decrement: 1 } }
+        data: { creditsPurchased: { decrement: charge.p } }
       });
-    } else if (!isUnlimitedImage) {
+    } else if (charge.v) {
       await prisma.user.update({
         where: { id: user.id },
-        data: { creditsImages: { decrement: 1 } }
+        data: { creditsImages: { decrement: charge.v } }
       });
     }
 
@@ -581,25 +589,31 @@ router.post('/image', authMiddleware, generateLimiter, async (req, res) => {
   } catch (err) {
     console.error('Erro na geração:', err.message);
 
-    // Marcar como falha
-    if (req.body.generationId) {
-      await prisma.generation.update({
-        where: { id: req.body.generationId },
-        data: { status: 'FAILED' }
-      });
+    // Marcar como falha a geração DESTA requisição. Antes olhávamos só um
+    // req.body.generationId (que esta rota nunca preenche), então a linha
+    // ficava em "PROCESSING" pra sempre no histórico do usuário.
+    for (const id of [generation && generation.id, req.body && req.body.generationId].filter(Boolean)) {
+      try {
+        await prisma.generation.update({ where: { id }, data: { status: 'FAILED' } });
+      } catch (e) {
+        console.error('Falha ao marcar geração como falha:', e.message);
+      }
     }
 
-    // Devolver crédito em caso de falha
-    if (req.user) {
-      await prisma.user.update({
-        where: { id: req.user.id },
-        data: { creditsPurchased: { increment: 1 } }
-      });
+    // Devolver EXATAMENTE o que foi cobrado. Conta ilimitada, ou falha antes
+    // da cobrança, não devolve nada — antes criávamos 1 crédito comprado do nada.
+    const estorno = require('../imageQuota').estornoParaPrisma(charge);
+    if (req.user && Object.keys(estorno).length) {
+      try {
+        await prisma.user.update({ where: { id: req.user.id }, data: estorno });
+      } catch (e) {
+        console.error('Falha ao devolver crédito:', e.message);
+      }
     }
 
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Erro ao gerar imagem. Tente novamente.',
-      details: err.message 
+      details: err.message
     });
 
   }
