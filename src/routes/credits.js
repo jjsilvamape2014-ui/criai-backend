@@ -6,11 +6,15 @@ const prisma = new PrismaClient();
 
 // Pacotes e planos: valores em plans.js (um lugar só)
 const plans = require('../plans');
-const { CREDIT_PACKAGES } = plans;
 
-// Listar pacotes
+// Listar pacotes (imagens + vídeos, cada um com `kind`)
 router.get('/packages', (req, res) => {
-  res.json(CREDIT_PACKAGES);
+  res.json([...plans.creditPackages(), ...plans.videoPackages()]);
+});
+
+// Só os pacotes de vídeo (vendidos em clipes de 5 s)
+router.get('/video-packages', (req, res) => {
+  res.json(plans.videoPackages());
 });
 
 // Planos completos (grátis, PREMIUM e pacotes) — a tela de planos lê daqui
@@ -30,4 +34,4 @@ router.get('/balance', authMiddleware, async (req, res) => {
 // (A rota POST /add foi removida: qualquer conta logada podia se dar créditos sem pagar.
 //  Créditos só entram pelo pagamento confirmado em routes/payment.js.)
 
-module.exports = { router, CREDIT_PACKAGES };
+module.exports = { router, CREDIT_PACKAGES: plans.creditPackages() };

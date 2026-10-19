@@ -3,14 +3,13 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { authMiddleware } = require('../middleware');
 const { PrismaClient } = require('@prisma/client');
 const plans = require('../plans');
-const { CREDIT_PACKAGES } = plans;
 const router = express.Router();
 const prisma = new PrismaClient();
 
 // Criar sessão de checkout (assinatura premium)
 router.post('/create-checkout-session', authMiddleware, async (req, res) => {
   try {
-    const { type, packageId } = req.body; // type: 'subscription' | 'credits'
+    const { type, packageId } = req.body; // type: 'subscription' | 'credits' | 'video'
     const user = req.user;
 
     let sessionConfig = {
@@ -37,20 +36,27 @@ router.post('/create-checkout-session', authMiddleware, async (req, res) => {
       }
       sessionConfig.line_items = [lineItem];
     } else {
-      // Compra de créditos avulsos
-      const pkg = CREDIT_PACKAGES.find(p => p.id === packageId);
+      // Compra de créditos avulsos (imagem) ou de um pacote de vídeo (clipes de 5 s).
+      // O catálogo é decidido pelo próprio id (plans.findPackage recusa id inexistente).
+      const pkg = plans.findPackage(packageId);
       if (!pkg) return res.status(400).json({ error: 'Pacote inválido' });
 
+      const deVideo = pkg.kind === 'video';
       sessionConfig.mode = 'payment';
       sessionConfig.line_items = [{
         price_data: {
           currency: 'brl',
-          product_data: { name: `Linha Fácil IA — ${pkg.name}`, description: `${pkg.credits} créditos (1 imagem = 1 crédito; vídeo = ${plans.summary().videoCreditsPer5s} a cada 5 s). Não vencem.` },
+          product_data: {
+            name: `Linha Fácil IA — ${pkg.name}`,
+            description: deVideo
+              ? `${pkg.clips} vídeos de 5 s (${pkg.credits} créditos). Valem para imagem também. Não vencem.`
+              : `${pkg.credits} créditos (1 imagem = 1 crédito; vídeo = ${plans.summary().videoCreditsPer5s} a cada 5 s). Não vencem.`
+          },
           unit_amount: pkg.price
         },
         quantity: 1
       }];
-      sessionConfig.metadata = { userId: user.id, packageId: pkg.id, credits: pkg.credits };
+      sessionConfig.metadata = { userId: user.id, packageId: pkg.id, credits: pkg.credits, kind: pkg.kind };
     }
 
     const session = await stripe.checkout.sessions.create(sessionConfig);

@@ -47,6 +47,25 @@ function costLine({ user, cost, usage }) {
   return ` Este vídeo usa ${cost} crédito${cost > 1 ? 's' : ''} (você tem ${have}).`;
 }
 
+// CTA final das mensagens de saldo insuficiente (é o que vende o pacote): fala
+// em clipes de 5 s, não em linhas de banco.
+function ctaPacote(c, have) {
+  const per5 = plans.per5s();
+  const hClipes = Math.floor(have / per5);
+  const tem = have > 0
+    ? `Seus ${have} créditos comprados dão para ${hClipes} vídeo${hClipes > 1 ? 's' : ''} de 5 s.`
+    : 'Você tem nenhum crédito comprado.';
+  return `${tem} Compre um pacote de vídeo em /plans — não vencem e também valem para imagens.`;
+}
+
+// Mensagem para quem não tem saldo de vídeo suficiente. Mostra o pedido em CLIPES
+// de 5 s, porque é o que o cliente entende na hora de comprar.
+function semSaldo(c, have) {
+  const cClipes = Math.ceil(c / plans.per5s());
+  const status = have > 0 ? 'dá para vídeos menores, mas não para este' : 'você tem nenhum';
+  return `Este vídeo usa ${c} créditos${cClipes > 1 ? ` (≈ ${cClipes} vídeos de 5 s)` : ''} e ${status}. ${ctaPacote(c, have)}`;
+}
+
 // Contas sem limite e sem cobrança de vídeo (o dono testando o app): e-mails separados
 // por vírgula em VIDEO_UNLIMITED_EMAILS.
 function isUnlimitedAccount(user) {
@@ -70,11 +89,11 @@ async function gate(prisma, user, cost) {
       return { ok: true, cost: c, free: false, chargePurchased: true,
         line: ` Os créditos de vídeo do plano neste mês não bastam para este vídeo; ele usa ${c} crédito${c > 1 ? 's' : ''} comprado${c > 1 ? 's' : ''}.` };
     }
-    return { ok: false, error: `Este vídeo usa ${c} créditos e restam ${usage.left === Infinity ? 0 : usage.left} do plano neste mês (renova no dia 1). Para fazer agora, compre um pacote de créditos ou escolha um vídeo mais curto.` };
+    return { ok: false, error: `Este vídeo usa ${c} créditos e restam ${usage.left === Infinity ? 0 : usage.left} do plano neste mês (renova no dia 1). ${ctaPacote(c, user.creditsPurchased || 0)}` };
   }
   const have = (user.creditsVideos || 0) + (user.creditsPurchased || 0);
-  if (have < c) return { ok: false, error: null, have };
+  if (have < c) return { ok: false, error: semSaldo(c, have), have };
   return { ok: true, cost: c, free: false, chargePurchased: false, line: costLine({ user, cost: c }) };
 }
 
-module.exports = { premiumLimit, monthStart, premiumUsage, premiumBlock, costLine, gate, isUnlimitedAccount };
+module.exports = { premiumLimit, monthStart, premiumUsage, premiumBlock, costLine, ctaPacote, semSaldo, gate, isUnlimitedAccount };
