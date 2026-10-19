@@ -3,13 +3,14 @@ const test = require('node:test');
 const assert = require('node:assert');
 const P = require('../src/plans');
 
-test('padrões: grátis 10 imagens + 1 vídeo de 5 s; PREMIUM R$ 39,90 com 50 imagens + 15 s', () => {
+test('padrões: grátis 10 imagens + 1 vídeo de 5 s; PREMIUM R$ 49,90 com 50 imagens + 15 s', () => {
   const s = P.summary();
   assert.strictEqual(s.free.images, 10);
   assert.strictEqual(s.free.videoSeconds, 5);
-  // O preço padrão TEM de ser o mesmo que o site anuncia e que o assinante paga.
-  assert.strictEqual(s.premium.price, 3990);
-  assert.strictEqual(s.premium.priceFormatted.replace(/\s/g, ' '), 'R$ 39,90');
+  // R$ 49,90 é o preço anunciado no site no ar (landing + páginas de SEO): o padrão
+  // do checkout TEM de ser o mesmo, senão o cliente vê um valor e paga outro.
+  assert.strictEqual(s.premium.price, 4990);
+  assert.strictEqual(s.premium.priceFormatted.replace(/\s/g, ' '), 'R$ 49,90');
   assert.strictEqual(s.premium.images, 50);
   assert.strictEqual(s.premium.videoSeconds, 15);
   assert.deepStrictEqual(s.packages.map((p) => [p.credits, p.price]), [[30, 1990], [100, 5990], [250, 13990]]);

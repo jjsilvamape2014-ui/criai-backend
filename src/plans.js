@@ -34,10 +34,10 @@ const FREE = {
 };
 
 const PREMIUM = {
-  // R$ 39,90 é o preço que o site inteiro anuncia (landing, planos, mensagens de
-  // erro) e o que o assinante atual paga. O padrão TEM de ser o mesmo, senão o
-  // checkout do Stripe cobra um valor diferente do anunciado.
-  priceCents: () => num('PREMIUM_PRICE_CENTS', 3990),
+  // R$ 49,90 é o preço que o site no ar anuncia (landing e as páginas de SEO) e o
+  // padrão histórico do checkout. NÃO mexer sem trocar o texto dessas páginas junto,
+  // senão o Stripe cobra um valor diferente do anunciado (CDC art. 30).
+  priceCents: () => num('PREMIUM_PRICE_CENTS', 4990),
   images: () => num('PREMIUM_MONTHLY_IMAGES', 50),
   videoCredits: () => num('PREMIUM_VIDEO_LIMIT', 30), // 30 = 15 s de vídeo por mês
 };
