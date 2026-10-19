@@ -213,3 +213,57 @@ test('texto de anúncio colado não vira "personagem falando"', () => {
   assert.ok(C.detectSpeech('faz o mascote falando: bom dia, eu sou o Delta', true));
   assert.ok(C.detectSpeech('cria um video de apresentação, falando bom dia eu sou o delta', true));
 });
+
+// --- presets de movimento de câmera (slice 1) --------------------------------
+test('registry de movimentos: 65 presets, busca por id E por slug, nunca lança exceção', () => {
+  const M = require('../src/motionPresets');
+  assert.strictEqual(M.count, 65);
+  assert.strictEqual(M.list().length, 65);
+  const byId = M.get('cam_zoom_in');
+  const bySlug = M.get('zoom-in');
+  assert.ok(byId && bySlug);
+  assert.strictEqual(byId, bySlug); // mesmo objeto responde pelos dois caminhos
+  // preset faltando/vazio devolve null em vez de estourar
+  assert.strictEqual(M.get('preset-que-nao-existe'), null);
+  assert.strictEqual(M.get(''), null);
+  assert.strictEqual(M.get(null), null);
+  assert.strictEqual(M.get(undefined), null);
+  // agrupamento: todos os 65 entram em algum grupo, na ordem do arquivo
+  const { groups, count } = M.groups();
+  assert.strictEqual(count, 65);
+  assert.ok(Array.isArray(groups.base) && groups.base.length > 0);
+  assert.strictEqual(Object.values(groups).flat().length, 65);
+  // filtro por modelo (query ?models=)
+  assert.ok(M.groups('kling-v3-i2v').count <= 65);
+  assert.strictEqual(M.groups('modelo-que-nao-existe').count, 0);
+});
+test('preset de câmera só ADICIONA o movimento: não apaga o prompt já escolhido', () => {
+  const M = require('../src/motionPresets');
+  const preset = M.get('zoom-in');
+  const anuncio = 'Fritadeira Air Fryer 10L, Punchy marketplace ad: quick energetic push-in zoom toward the product';
+  const composto = M.composePrompt(anuncio, preset);
+  // o texto do anúncio/pedido sobrevive intacto como prefixo
+  assert.ok(composto.startsWith(anuncio));
+  assert.strictEqual(composto, `${anuncio}. ${preset.prompt}`);
+  // sem preset (ou sem texto base), nada muda: mesmo comportamento de antes
+  assert.strictEqual(M.composePrompt(anuncio, null), anuncio);
+  assert.strictEqual(M.composePrompt('', preset), preset.prompt);
+  assert.strictEqual(M.composePrompt('', null), '');
+});
+test('motionPresetId desconhecido → recusa com mensagem em pt-BR (rota devolve 400)', () => {
+  const M = require('../src/motionPresets');
+  // campo opcional: ausente segue ok sem preset
+  assert.deepStrictEqual(M.resolve(undefined), { ok: true, preset: null });
+  assert.deepStrictEqual(M.resolve(''), { ok: true, preset: null });
+  // id ou slug válidos são aceitos
+  const ok = M.resolve('cam_zoom_in');
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(ok.preset.id, 'cam_zoom_in');
+  assert.strictEqual(M.resolve('zoom-in').preset.id, 'cam_zoom_in');
+  // desconhecido: ok:false com a mensagem que a rota devolve em 400
+  const ruim = M.resolve('voo-drone-sobre-o-cristo');
+  assert.strictEqual(ruim.ok, false);
+  assert.strictEqual(ruim.preset, undefined);
+  assert.match(ruim.error, /Movimento de câmera inválido/);
+  assert.match(ruim.error, /voo-drone-sobre-o-cristo/);
+});

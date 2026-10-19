@@ -21,6 +21,7 @@ const cerebroRoutes = require('./routes/cerebro');
 const templatesRoutes = require('./routes/templates');
 const legendaRoutes = require('./routes/legenda');
 const montarRoutes = require('./routes/montar');
+const motionPresetsRoutes = require('./routes/motionPresets');
 const { startCron, resetMonthlyCredits } = require('./cron');
 
 const app = express();
@@ -69,6 +70,8 @@ app.use('/api/cerebro', cerebroRoutes);
 app.use('/api/templates', templatesRoutes);
 app.use('/api/legenda', legendaRoutes);
 app.use('/api/video', montarRoutes);
+// Registry de movimentos de câmera (65 presets, lidos do JSON — não toca o banco)
+app.use('/api/motion-presets', motionPresetsRoutes);
 
 // Health check
 app.get('/api/health', async (req, res) => {

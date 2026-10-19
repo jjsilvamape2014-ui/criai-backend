@@ -8,4 +8,4 @@ cmds = ["npm install"]
 cmds = []
 
 [start]
-cmd = "node src/index.js"
+cmd = "node src/boot.js"
