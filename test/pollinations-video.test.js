@@ -99,3 +99,102 @@ test('erroLegivel: outros status mantêm o detalhe do provedor', () => {
   assert.match(msg, /HTTP 500/);
   assert.match(msg, /boom interno/);
 });
+
+// --- generate() com servidor falso: valida o HTTP de verdade, sem gastar pollen ---
+
+const http = require('node:http');
+
+function comServidor(handler, fn) {
+  return new Promise((resolve, reject) => {
+    const srv = http.createServer(handler);
+    srv.listen(0, '127.0.0.1', async () => {
+      const porta = srv.address().port;
+      const antes = {
+        chave: process.env.POLLINATIONS_API_KEY,
+        base: process.env.POLLINATIONS_BASE_URL
+      };
+      process.env.POLLINATIONS_API_KEY = 'sk_fake';
+      process.env.POLLINATIONS_BASE_URL = `http://127.0.0.1:${porta}`;
+      try {
+        resolve(await fn(porta));
+      } catch (e) {
+        reject(e);
+      } finally {
+        srv.close();
+        if (antes.chave === undefined) delete process.env.POLLINATIONS_API_KEY;
+        else process.env.POLLINATIONS_API_KEY = antes.chave;
+        if (antes.base === undefined) delete process.env.POLLINATIONS_BASE_URL;
+        else process.env.POLLINATIONS_BASE_URL = antes.base;
+      }
+    });
+  });
+}
+
+test('generate: POST no /v1/images/generations com Bearer e devolve a URL do Link', async () => {
+  let visto = null;
+  const url = await comServidor(
+    (req, res) => {
+      let corpo = '';
+      req.on('data', (c) => (corpo += c));
+      req.on('end', () => {
+        visto = { metodo: req.method, caminho: req.url, auth: req.headers.authorization, corpo: JSON.parse(corpo) };
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          Link: '<https://media.pollinations.ai/video-abc>; rel="enclosure"'
+        });
+        res.end(JSON.stringify({ id: 'x', status: 'completed', output: [] }));
+      });
+    },
+    async () => {
+      const gerado = await P.generate({ prompt: 'um gato', image: 'data:image/png;base64,AAA', aspectRatio: '9:16' });
+      return gerado;
+    }
+  );
+
+  assert.equal(url, 'https://media.pollinations.ai/video-abc');
+  assert.equal(visto.metodo, 'POST');
+  assert.equal(visto.caminho, '/v1/images/generations');
+  assert.equal(visto.auth, 'Bearer sk_fake');
+  assert.equal(visto.corpo.model, 'alibaba/wan-2.2-fast');
+  assert.equal(visto.corpo.prompt, 'um gato');
+  assert.equal(visto.corpo.image, 'data:image/png;base64,AAA');
+  assert.equal(visto.corpo.size, '720x1280');
+});
+
+test('generate: 402 vira mensagem de saldo, não "Request failed with status code"', async () => {
+  const erro = await comServidor(
+    (req, res) => {
+      res.writeHead(402, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { code: 'INSUFFICIENT_BALANCE', message: 'Insufficient balance.' } }));
+    },
+    async () => {
+      try {
+        await P.generate({ prompt: 'x' });
+        return null;
+      } catch (e) {
+        return e.message;
+      }
+    }
+  );
+  assert.match(erro, /sem saldo/i);
+  assert.doesNotMatch(erro, /Request failed with status code/);
+});
+
+test('generate: 200 sem URL de vídeo é erro explícito', async () => {
+  const erro = await comServidor(
+    (req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 'x', status: 'completed', output: [] }));
+    },
+    async () => {
+      try {
+        await P.generate({ prompt: 'x' });
+        return null;
+      } catch (e) {
+        return e.message;
+      }
+    }
+  );
+  assert.match(erro, /sem URL de v/i);
+});
+

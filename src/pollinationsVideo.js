@@ -19,7 +19,10 @@
 
 const axios = require('axios');
 
-const BASE = 'https://gen.pollinations.ai';
+// Sobrescrevível só para teste local (servidor falso em node:test).
+function baseUrl() {
+  return (process.env.POLLINATIONS_BASE_URL || 'https://gen.pollinations.ai').replace(/\/+$/, '');
+}
 // Modelo mais barato com imagem de entrada: 0,01 pollen/s (0,05 por 5 s, 480p).
 // Trocar sem deploy: POLLINATIONS_VIDEO_MODEL=prunaai/p-video (0,02/s, 720p).
 const MODELO_PADRAO = 'alibaba/wan-2.2-fast';
@@ -112,16 +115,24 @@ async function generate({ prompt, image, duration, aspectRatio, model, timeoutMs
   const corpo = buildBody({ prompt, image, duration, aspectRatio, model });
   if (!corpo.prompt) throw new Error('Pollinations: prompt vazio');
 
-  const res = await axios.post(`${BASE}/v1/images/generations`, corpo, {
-    headers: {
-      Authorization: `Bearer ${apiKey()}`,
-      'Content-Type': 'application/json'
-    },
-    // vídeo leva de 30 s a poucos minutos; o teto evita pendurar a requisição
-    timeout: Math.max(60000, Number(timeoutMs) || 300000),
-    maxRedirects: 0,
-    validateStatus: (s) => s >= 200 && s < 300
-  });
+  let res;
+  try {
+    res = await axios.post(`${baseUrl()}/v1/images/generations`, corpo, {
+      headers: {
+        Authorization: `Bearer ${apiKey()}`,
+        'Content-Type': 'application/json'
+      },
+      // vídeo leva de 30 s a poucos minutos; o teto evita pendurar a requisição
+      timeout: Math.max(60000, Number(timeoutMs) || 300000),
+      validateStatus: (s) => s >= 200 && s < 300
+    });
+  } catch (e) {
+    // O axios lança fora da faixa 2xx (inclusive o 402 de saldo). Traduz aqui,
+    // senão o usuário recebe "Request failed with status code 402" em vez da
+    // explicação. Sem resposta = rede/timeout, que também precisa de texto claro.
+    if (e.response) throw new Error(erroLegivel(e.response));
+    throw new Error('Pollinations indisponível (rede/timeout): ' + String(e.message).slice(0, 160));
+  }
 
   const url = urlDoLink(res.headers && (res.headers.link || res.headers.Link)) || urlDoCorpo(res.data);
   if (!url) throw new Error('Pollinations respondeu sem URL de vídeo');
