@@ -1,6 +1,6 @@
 // Registry dos 65 presets de movimento de câmera (slice 1).
 // Fonte de verdade: src/data/motion-presets.json (cópia do JSON do plano,
-// aplicado no banco por src/scripts/seed-motion-presets.js). Ler daqui é
+// aplicado no banco por src/scripts/sync-motion-presets.js no boot). Ler daqui é
 // síncrono e não depende do banco: o JSON muda só por deploy, o banco serve a API.
 // Busca por id/slug nunca lança exceção — preset desconhecido devolve null.
 const PRESETS = require('./data/motion-presets.json');

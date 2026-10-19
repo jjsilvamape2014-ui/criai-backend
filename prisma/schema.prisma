@@ -40,16 +40,17 @@ model Generation {
   motionPresetId String? @map("motion_preset_id") // preset de câmera (opcional, slice 1)
 
   user        User     @relation(fields: [userId], references: [id])
-  motionPreset MotionPreset? @relation(fields: [motionPresetId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  // Sem @relation/foreign key de propósito: a FK saiu da migração para o re-aplicar
+  // no boot ser idempotente (ver prisma/migrations/20261018143052_add_motion_presets).
 
   @@index([motionPresetId])
   @@map("generations")
 }
 
 // Registry dos 65 presets de movimento de câmera (slice 1). A fonte de verdade é o
-// JSON em src/data/motion-presets.json; as linhas entram pelo seed idempotente
-// src/scripts/seed-motion-presets.js (upsert por slug). prompt/negative são em
-// inglês (o que vai para o modelo); labelPt é o rótulo da UI.
+// JSON em src/data/motion-presets.json; as linhas entram pelo sync idempotente
+// src/scripts/sync-motion-presets.js (upsert por slug, só com a tabela vazia).
+// prompt/negative são em inglês (o que vai para o modelo); labelPt é o rótulo da UI.
 model MotionPreset {
   id                String   @id
   slug              String   @unique
@@ -67,8 +68,6 @@ model MotionPreset {
   position          Int      @default(0)
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
-
-  generations Generation[]
 
   @@index([group, position])
   @@index([enabled, position])

@@ -1,10 +1,23 @@
 -- Slice 1: registry de movimentos de câmera (65 presets) + coluna em generations.
--- Escrito à mão (não rodar `prisma migrate dev`): espelho do plano em
--- replica-video/schema.sql, seções 1 e 2, adaptado às convenções do init
--- (TEXT id sem default, TIMESTAMP(3), FK ON DELETE SET NULL ON UPDATE CASCADE).
+--
+-- ATENÇÃO: este arquivo é aplicado mais de uma vez, sem histórico compartilhado —
+-- quem o aplica é o boot do servidor (src/boot.js → src/scripts/sync-motion-presets.js),
+-- porque o deploy da Railway NÃO tem passo de migração e o DATABASE_URL só resolve
+-- dentro da rede interna (ninguém consegue aplicar à mão). Por isso TUDO aqui é
+-- idempotente: cada instrução usa IF NOT EXISTS e re-aplicar vira no-op garantido.
+--
+-- Deliberadamente SEM foreign key e SEM constraints CHECK:
+--   • o Postgres não tem "ADD CONSTRAINT IF NOT EXISTS" → re-aplicar quebraria o boot;
+--   • a integridade do preset já é garantida pelo app (src/motionPresets.js valida o
+--     id contra o registry JSON ANTES de cobrar crédito) e badge/confidence já são
+--     cobertos pelos testes. A FK aqui só comprava uma classe nova de falha de deploy.
+--
+-- Este arquivo também não pode conter blocos dollar-quoted nem ';' dentro de string
+-- literal: o sync divide o arquivo em statements por split simples, com asserções que
+-- falham alto se alguém mudar essa forma.
 
--- CreateTable
-CREATE TABLE "motion_presets" (
+-- CreateTable (idempotente: tabela já existe → não mexe em nada do que já está lá)
+CREATE TABLE IF NOT EXISTS "motion_presets" (
     "id" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -25,20 +38,15 @@ CREATE TABLE "motion_presets" (
     CONSTRAINT "motion_presets_pkey" PRIMARY KEY ("id")
 );
 
--- Estado enum-ish sem criar tipo novo (mesma escolha do plano/schema.sql)
-ALTER TABLE "motion_presets" ADD CONSTRAINT "motion_presets_badge_check" CHECK ("badge" IN ('top_choice', 'new'));
-ALTER TABLE "motion_presets" ADD CONSTRAINT "motion_presets_confidence_check" CHECK ("confidence" IN ('high', 'medium', 'low'));
+-- CreateIndex (IF NOT EXISTS: índice já criado com o mesmo nome → no-op, não erro)
+CREATE UNIQUE INDEX IF NOT EXISTS "motion_presets_slug_key" ON "motion_presets"("slug");
+CREATE INDEX IF NOT EXISTS "motion_presets_group_position_idx" ON "motion_presets"("group", "position");
+CREATE INDEX IF NOT EXISTS "motion_presets_enabled_position_idx" ON "motion_presets"("enabled", "position");
 
--- CreateIndex
-CREATE UNIQUE INDEX "motion_presets_slug_key" ON "motion_presets"("slug");
-CREATE INDEX "motion_presets_group_position_idx" ON "motion_presets"("group", "position");
-CREATE INDEX "motion_presets_enabled_position_idx" ON "motion_presets"("enabled", "position");
+-- AlterTable: generations ganha a referência ao preset (TEXT puro, sem FK — ver topo).
+-- ADD COLUMN IF NOT EXISTS existe desde o Postgres 9.6 e é o que impede o erro
+-- P2022 ("coluna não existe") de derrubar toda a geração de vídeo no primeiro boot.
+ALTER TABLE "generations" ADD COLUMN IF NOT EXISTS "motion_preset_id" TEXT;
 
--- AlterTable: generations ganha a referência ao preset (opcional; SET NULL no delete)
-ALTER TABLE "generations" ADD COLUMN "motion_preset_id" TEXT;
-
--- CreateIndex
-CREATE INDEX "generations_motion_preset_id_idx" ON "generations"("motion_preset_id");
-
--- AddForeignKey
-ALTER TABLE "generations" ADD CONSTRAINT "generations_motion_preset_id_fkey" FOREIGN KEY ("motion_preset_id") REFERENCES "motion_presets"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- CreateIndex da coluna nova (mesmo contrato idempotente dos demais)
+CREATE INDEX IF NOT EXISTS "generations_motion_preset_id_idx" ON "generations"("motion_preset_id");
