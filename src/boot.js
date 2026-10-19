@@ -14,7 +14,16 @@
 //     melhor do que subir com a coluna faltando e derrubar a geração de vídeo.
 require('dotenv').config();
 
+// Estado do pagamento nos logs de deploy: produção com chave de teste (ou sem
+// webhook) é a diferença entre "o site não vende" e "ninguém consegue pagar".
+function avisaPagamento() {
+  const msg = require('./billingStatus').alerta();
+  if (msg) console.warn(msg);
+}
+
 async function main() {
+  avisaPagamento();
+
   if (!process.env.DATABASE_URL) {
     console.warn('⚠️ DATABASE_URL não configurada — sincronização do banco pulada (dev local). Subindo o servidor assim mesmo.');
     require('./index');

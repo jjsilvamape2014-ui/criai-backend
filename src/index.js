@@ -104,7 +104,9 @@ app.get('/api/diagnostics', (req, res) => {
     },
     video: require('./videoModels').describe(),
     vision: { enabled: process.env.VISION_ENABLED !== 'false' && has('FAL_KEY') },
-    region: process.env.RENDER_REGION || process.env.RAILWAY_REGION || null
+    region: process.env.RENDER_REGION || process.env.RAILWAY_REGION || null,
+    // Modo do Stripe (só rótulos): 'test' significa que ninguém consegue pagar de verdade
+    billing: require('./billingStatus').section()
   });
 });
 
