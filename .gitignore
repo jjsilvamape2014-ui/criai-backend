@@ -7,5 +7,7 @@ prisma/dev.db
 .DS_Store
 # memória de longo prazo (dados por usuário) — nunca versionar
 data/
+# exceto o registry de presets de câmera da API (é código do app, versionado)
+!src/data/
 
 src/scripts/fidelity-out/

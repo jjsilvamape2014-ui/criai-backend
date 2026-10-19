@@ -37,10 +37,42 @@ model Generation {
   status      Status   @default(PENDING)
   cost        Int      @default(1)  // créditos consumidos
   createdAt   DateTime @default(now()) @map("created_at")
+  motionPresetId String? @map("motion_preset_id") // preset de câmera (opcional, slice 1)
 
   user        User     @relation(fields: [userId], references: [id])
+  motionPreset MotionPreset? @relation(fields: [motionPresetId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
+  @@index([motionPresetId])
   @@map("generations")
+}
+
+// Registry dos 65 presets de movimento de câmera (slice 1). A fonte de verdade é o
+// JSON em src/data/motion-presets.json; as linhas entram pelo seed idempotente
+// src/scripts/seed-motion-presets.js (upsert por slug). prompt/negative são em
+// inglês (o que vai para o modelo); labelPt é o rótulo da UI.
+model MotionPreset {
+  id                String   @id
+  slug              String   @unique
+  name              String
+  group             String
+  labelPt           String?  @map("label_pt")
+  prompt            String
+  negative          String
+  supportedModels   String[] @default([]) @map("supported_models")
+  badge             String?  // 'top_choice' (curadoria própria)
+  confidence        String   @default("medium") // 'high' | 'medium' | 'low'
+  originalBaseModel String?  @map("original_base_model")
+  previewUrl        String?  @map("preview_url")
+  enabled           Boolean  @default(true)
+  position          Int      @default(0)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  generations Generation[]
+
+  @@index([group, position])
+  @@index([enabled, position])
+  @@map("motion_presets")
 }
 
 model Payment {

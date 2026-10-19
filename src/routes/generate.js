@@ -6,6 +6,8 @@ const { authMiddleware } = require('../middleware');
 const { PrismaClient } = require('@prisma/client');
 const { enhanceImagePrompt, extractTextTokens, ensureRequiredText, suggestPhraseFromRequest, generateAdScript, extractIntent, createConcepts, campaignTexts, buildCampaignPrompts } = require('../llm');
 const vision = require('../vision');
+// Registry dos 65 presets de movimento de câmera (JSON em src/data, sem banco)
+const motionPresets = require('../motionPresets');
 const router = express.Router();
 const prisma = new PrismaClient();
 
@@ -1277,12 +1279,19 @@ router.post('/video', authMiddleware, async (req, res) => {
   let generation = null;
   let charge = null;
   try {
-    const { imageUrl, mode, prompt, preset } = req.body;
+    const { imageUrl, mode, prompt, preset, motionPresetId } = req.body;
     const user = req.user;
     const imageData = req.body.imageData;
     const source = imageData || imageUrl;
     const duration = V.clampDuration(req.body.duration || V.parseDuration(prompt) || 5);
     const aspectRatio = ['9:16', '1:1', '16:9'].includes(req.body.aspectRatio) ? req.body.aspectRatio : (V.parseAspect(prompt) || '9:16');
+
+    // Movimento de câmera (opcional): valida ANTES de cobrar crédito.
+    // Id desconhecido → 400 com a mensagem do registry (pt-BR).
+    const motion = motionPresets.resolve(motionPresetId);
+    if (!motion.ok) {
+      return res.status(400).json({ error: motion.error });
+    }
 
     if (!source && !String(prompt || '').trim()) {
       return res.status(400).json({ error: 'Envie uma imagem de origem ou descreva o vídeo que você quer.' });
@@ -1299,7 +1308,9 @@ router.post('/video', authMiddleware, async (req, res) => {
         type: 'VIDEO',
         prompt: `[video${preset ? `:${preset}` : ''}${source ? '' : ':texto'} ${duration}s]`,
         status: 'PROCESSING',
-        cost: Math.max(1, gate.cost)
+        cost: Math.max(1, gate.cost),
+        // Preset de movimento escolhido fica na linha para histórico/auditoria
+        motionPresetId: motion.preset ? motion.preset.id : null
       }
     });
 
@@ -1316,8 +1327,9 @@ router.post('/video', authMiddleware, async (req, res) => {
 
     let videoUrl;
     if (source) {
-      // O movimento do vídeo vem do preset de anúncio (ou do prompt/campo livre do usuário)
-      const motionPrompt = buildVideoPrompt(mode, req.body);
+      // O movimento do vídeo vem do preset de anúncio (ou do prompt/campo livre do usuário).
+      // O preset de câmera só SOMA o movimento no final — não apaga o estilo já escolhido.
+      const motionPrompt = motionPresets.composePrompt(buildVideoPrompt(mode, req.body), motion.preset);
       videoUrl = await generateVideoFromProviders(source, motionPrompt, mode, {
         productName: req.body.productName,
         productDesc: req.body.productDesc,
@@ -1325,7 +1337,9 @@ router.post('/video', authMiddleware, async (req, res) => {
         duration
       });
     } else {
-      videoUrl = await generateTextToVideoFal(String(prompt).trim(), { duration, aspectRatio });
+      // Texto → vídeo: mesmo complemento, sobre o prompt que o usuário digitou
+      const textPrompt = motionPresets.composePrompt(String(prompt).trim(), motion.preset);
+      videoUrl = await generateTextToVideoFal(textPrompt, { duration, aspectRatio });
     }
 
     await prisma.generation.update({
