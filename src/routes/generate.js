@@ -1231,7 +1231,8 @@ async function generateVideoMagnific(imageDataOrUrl, prompt, opts = {}) {
   }
 }
 
-// Cadeia de vídeo: Magnific (Kling v3 Pro, se chave existir) → fal.ai (Kling v2.1).
+// Cadeia de vídeo: Magnific (Kling v3 Pro, se chave existir) → fal.ai (Kling) →
+// Pollinations (reserva barata, 8x mais barata por segundo que o Kling na fal).
 async function generateVideoFromProviders(source, prompt, mode, opts = {}) {
   if (process.env.MAGNIFIC_API_KEY) {
     try {
@@ -1259,12 +1260,13 @@ async function generateVideoFal(imageDataOrUrl, prompt, mode, opts = {}) {
   // cada segundo a mais é mais tempo de fila: 5 s ~ 1–3 min; 15 s com várias cenas ~ 3–8 min
   const deadline = Math.max(300000, duration * 40000);
 
+  const promptReserva = finalPrompt || (opts.shots || []).map((s) => s.prompt).join(' Then: ');
   const models = [V.i2vModel(), V.legacyModel()].filter((m, i, a) => m && a.indexOf(m) === i);
   let lastErr = null;
   for (const model of models) {
     // a reserva (Kling 2.1) não faz várias cenas: junta os prompts num só
     const shots = V.isKling3(model) ? opts.shots : null;
-    const flatPrompt = finalPrompt || (opts.shots || []).map((s) => s.prompt).join(' Then: ');
+    const flatPrompt = promptReserva;
     try {
       const out = await falQueue(model, V.i2vBody(model, { imageUrl: imageDataOrUrl, prompt: flatPrompt, duration, shots }), deadline);
       const url = V.videoUrlFrom(out);
@@ -1277,20 +1279,42 @@ async function generateVideoFal(imageDataOrUrl, prompt, mode, opts = {}) {
       console.error(`vídeo ${model} falhou${model !== models[models.length - 1] ? ', tentando a reserva' : ''}:`, e.message);
     }
   }
-  throw lastErr || new Error('fal.ai não gerou o vídeo');
+  const falErro = lastErr || new Error('fal.ai não gerou o vídeo');
+
+  // Última reserva: Pollinations. Só entra se POLLINATIONS_API_KEY existir, para
+  // não mascarar o erro da fal em quem não configurou a reserva.
+  const P = require('../pollinationsVideo');
+  if (!P.enabled()) throw falErro;
+  console.error('vídeo fal.ai indisponível (' + String(falErro.message).slice(0, 160) + '), tentando Pollinations');
+  try {
+    return await P.generate({ prompt: promptReserva, image: imageDataOrUrl, duration });
+  } catch (e2) {
+    throw new Error(`${falErro.message} | reserva Pollinations: ${e2.message}`);
+  }
 }
 
 // Texto → vídeo (sem imagem): Kling 3 Turbo Standard, 9:16 / 1:1 / 16:9, 3 a 15 s.
 async function generateTextToVideoFal(prompt, opts = {}) {
-  if (!process.env.FAL_KEY) throw new Error('fal.ai não configurada (necessário saldo)');
   const V = require('../videoModels');
-  const { falQueue } = require('../adVideo')._internals;
   const duration = V.clampDuration(opts.duration || 5);
-  const body = V.t2vBody({ prompt, duration, aspectRatio: opts.aspectRatio, shots: opts.shots });
-  const out = await falQueue(V.t2vModel(), body, Math.max(300000, duration * 40000));
-  const url = V.videoUrlFrom(out);
-  if (!url) throw new Error('Sem vídeo no retorno da fal.ai: ' + JSON.stringify(out).slice(0, 200));
-  return url;
+  try {
+    if (!process.env.FAL_KEY) throw new Error('fal.ai não configurada (necessário saldo)');
+    const { falQueue } = require('../adVideo')._internals;
+    const body = V.t2vBody({ prompt, duration, aspectRatio: opts.aspectRatio, shots: opts.shots });
+    const out = await falQueue(V.t2vModel(), body, Math.max(300000, duration * 40000));
+    const url = V.videoUrlFrom(out);
+    if (!url) throw new Error('Sem vídeo no retorno da fal.ai: ' + JSON.stringify(out).slice(0, 200));
+    return url;
+  } catch (e) {
+    const P = require('../pollinationsVideo');
+    if (!P.enabled()) throw e;
+    console.error('texto→vídeo fal.ai indisponível (' + String(e.message).slice(0, 160) + '), tentando Pollinations');
+    try {
+      return await P.generate({ prompt, duration, aspectRatio: opts.aspectRatio });
+    } catch (e2) {
+      throw new Error(`${e.message} | reserva Pollinations: ${e2.message}`);
+    }
+  }
 }
 
 // Gerar vídeo: imagem → vídeo, ou só texto → vídeo (sem imagem), via fal.ai.
