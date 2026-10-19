@@ -3,6 +3,7 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { authMiddleware } = require('../middleware');
 const { PrismaClient } = require('@prisma/client');
 const plans = require('../plans');
+const { checkoutUrls } = require('../returnUrl');
 const router = express.Router();
 const prisma = new PrismaClient();
 
@@ -11,10 +12,13 @@ router.post('/create-checkout-session', authMiddleware, async (req, res) => {
   try {
     const { type, packageId } = req.body; // type: 'subscription' | 'credits' | 'video'
     const user = req.user;
+    const urls = checkoutUrls();
 
     let sessionConfig = {
-      success_url: `${process.env.FRONTEND_URL}/dashboard?success=true&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/plans?canceled=true`,
+      // URLs de volta ao front: FRONTEND_URL é uma lista separada por vírgula
+      // (ver src/returnUrl.js — usar o valor cru quebrava o checkout inteiro).
+      success_url: urls.success_url,
+      cancel_url: urls.cancel_url,
       client_reference_id: user.id,
       customer_email: user.email,
     };
